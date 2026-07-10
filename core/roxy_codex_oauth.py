@@ -23,6 +23,9 @@ from core.roxy_registration import (
     _submit_email_step,
     _click_email_entry_option,
     _type_otp,
+    _clear_otp_inputs,
+    _click_resend_email_otp,
+    _email_otp_page_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,22 +99,80 @@ def _fill_email_and_otp(driver, email: str, otp_provider, auth_url: str) -> None
     # 提交邮箱后不再执行任何全局“继续/授权/分支”兜底点击；后续只等待验证码页。
     # 避免页面已进入 OAuth consent 时误点授权按钮。
 
-    logger.info("[Codex][Roxy] 等待邮箱 OTP：%s", email)
-    code = otp_provider(email, after_ts=otp_after_ts)
-    logger.info("[Codex][Roxy] 邮箱 OTP 收到：%s", code)
-    _type_otp(driver, code)
-    logger.info("[Codex][Roxy] 已填写邮箱 OTP")
-    human_delay("otp_input")
-    if _click_if_present(driver, [
-        "button[type='submit']",
-        "//button[contains(., 'Continue')]",
-        "//button[contains(., '继续')]",
-        "//button[contains(., 'Verify')]",
-        "//button[contains(., '验证')]",
-    ], timeout=8):
-        logger.info("[Codex][Roxy] 已提交邮箱 OTP，等待后续授权/手机号页面")
-        _wait_after_email_otp_submit(driver, timeout=45)
+    used_codes: set[str] = set()
+    max_otp_attempts = 3
+    for otp_attempt in range(1, max_otp_attempts + 1):
+        logger.info("[Codex][Roxy] 等待邮箱 OTP：%s（第 %s/%s 次）", email, otp_attempt, max_otp_attempts)
+        code = _wait_for_fresh_email_otp(
+            otp_provider,
+            email,
+            after_ts=otp_after_ts,
+            used_codes=used_codes,
+            timeout=90,
+        )
+        used_codes.add(str(code))
+        logger.info("[Codex][Roxy] 邮箱 OTP 收到：%s", code)
+        _clear_otp_inputs(driver)
+        _type_otp(driver, code)
+        logger.info("[Codex][Roxy] 已填写邮箱 OTP")
+        human_delay("otp_input")
+        clicked = _click_if_present(driver, [
+            "button[type='submit']",
+            "//button[contains(., 'Continue')]",
+            "//button[contains(., '继续')]",
+            "//button[contains(., 'Verify')]",
+            "//button[contains(., '验证')]",
+        ], timeout=8)
+        if clicked:
+            logger.info("[Codex][Roxy] 已提交邮箱 OTP，等待后续授权/手机号页面")
+        else:
+            logger.info("[Codex][Roxy] 未找到显式提交按钮，继续等待页面状态")
 
+        outcome = _wait_after_email_otp_submit(driver, timeout=45)
+        logger.info("[Codex][Roxy] 邮箱 OTP 提交后状态：%s", outcome)
+        if outcome == "accepted":
+            return
+
+        if otp_attempt >= max_otp_attempts:
+            raise RuntimeError("Codex 邮箱验证码连续错误/过期，已达到最大重试次数")
+
+        logger.warning(
+            "[Codex][Roxy] 邮箱验证码错误/过期或页面未跳转，准备重新发送并重新获取最新验证码（%s/%s）",
+            otp_attempt + 1,
+            max_otp_attempts,
+        )
+        otp_after_ts = time.time()
+        try:
+            _click_resend_email_otp(driver, timeout=25)
+        except Exception as exc:
+            logger.warning("[Codex][Roxy] 点击重新发送邮箱验证码失败，仍将继续轮询最新验证码：%s", str(exc)[:200])
+        human_delay("api")
+
+
+
+def _wait_for_fresh_email_otp(otp_provider, email: str, after_ts: float, used_codes: set[str] | None = None, timeout: int = 90) -> str:
+    """获取一个未提交过的邮箱 OTP。
+
+    通用 API 邮箱的取码接口有时会先返回缓存旧码；验证码错误后重发时，
+    这里会拒绝复用已失败的 code，持续轮询直到出现新 code 或超时。
+    """
+    used_codes = {str(x) for x in (used_codes or set()) if x}
+    end = time.time() + timeout
+    last_code = ""
+    while True:
+        code = str(otp_provider(email, after_ts=after_ts) or "").strip()
+        if code and code not in used_codes:
+            return code
+        last_code = code or last_code
+        remaining = int(end - time.time())
+        if remaining <= 0:
+            raise RuntimeError(f"等待新的邮箱验证码超时，取码接口仍返回已失败验证码：{last_code or '-'}")
+        logger.warning(
+            "[Codex][Roxy] 取码接口仍返回已提交过的旧 OTP=%s，继续等待最新验证码（剩余 %ss）",
+            last_code or "-",
+            remaining,
+        )
+        time.sleep(min(5, max(1, remaining)))
 
 def _is_email_verification_page(driver) -> bool:
     try:
@@ -121,12 +182,13 @@ def _is_email_verification_page(driver) -> bool:
         return False
 
 
-def _wait_after_email_otp_submit(driver, timeout: int = 45) -> None:
+def _wait_after_email_otp_submit(driver, timeout: int = 45) -> str:
     """
-    邮箱 OTP 提交后必须等 auth 流程自己从 /email-verification 跳到下一步。
+    提交邮箱 OTP 后等待页面离开 /email-verification。
 
-    不能在 /email-verification 尚未完成时强行打开 /add-phone，否则 OpenAI 会返回：
-      error_code: invalid_auth_step
+    返回：
+      - accepted：已离开邮箱验证码页 / 进入手机号页 / 进入 callback；
+      - invalid：页面明确报错、输入框标红，或长时间停留验证码页。
     """
     end = time.time() + timeout
     last_url = ""
@@ -138,19 +200,38 @@ def _wait_after_email_otp_submit(driver, timeout: int = 45) -> None:
                 logger.info("[Codex][Roxy] 邮箱 OTP 后等待跳转：url=%s", url)
                 last_url = url
             if _is_callback_url(url):
-                return
+                return "accepted"
             if _has_strict_add_phone_form(driver) or _is_phone_code_page(driver):
-                return
+                return "accepted"
             # 已经离开 email-verification，交给后续授权/手机号/consent 流程处理。
             if "email-verification" not in url.lower():
-                return
+                return "accepted"
+
+            state = _email_otp_page_state(driver)
+            invalid = any(str(i.get("ariaInvalid") or "").lower() == "true" for i in (state.get("inputs") or []))
+            errors = [str(x) for x in (state.get("errors") or []) if str(x).strip()]
+            body_text = str(state.get("text") or "").lower()
+            error_hit = any(x in body_text for x in (
+                "invalid code", "incorrect code", "wrong code", "expired",
+                "验证码错误", "验证码无效", "验证码已过期", "コードが正しく", "無効", "期限",
+            ))
+            if invalid or errors or error_hit:
+                logger.warning(
+                    "[Codex][Roxy] 邮箱 OTP 提交后检测到错误/仍需验证码：errors=%s invalid=%s url=%s",
+                    errors[:3],
+                    invalid,
+                    url,
+                )
+                return "invalid"
+
             if time.time() - last_log > 6:
                 logger.info("[Codex][Roxy] 邮箱 OTP 后仍在 email-verification，继续等待页面自动跳转")
                 last_log = time.time()
         except Exception:
             pass
         time.sleep(0.5)
-    logger.warning("[Codex][Roxy] 邮箱 OTP 后等待跳转超时，当前 url=%s，继续后续流程", getattr(driver, "current_url", ""))
+    logger.warning("[Codex][Roxy] 邮箱 OTP 后等待跳转超时，当前 url=%s，按验证码无效/过期处理", getattr(driver, "current_url", ""))
+    return "invalid"
 
 
 def _phone_page_state(driver) -> dict:
