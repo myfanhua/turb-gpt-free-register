@@ -337,6 +337,8 @@ def get_config() -> list[dict]:
         path = _config_path(field["file"])
         source = path.read_text(encoding="utf-8") if path.exists() else ""
         value = _parse_value_from_source(source, field["key"], field["type"])
+        if field["type"] in ("str", "list_str_multiline"):
+            value = _normalize_config_value(value, field["type"])
         item = dict(field)
         item["value"] = value
         out.append(item)
@@ -346,6 +348,38 @@ def get_config() -> list[dict]:
 # ============================================================
 # 写：行级精确替换右值，保留注释和格式
 # ============================================================
+
+
+_PLACEHOLDER_EMPTY = {
+    "", "-", "—", "无", "空", "none", "null", "n/a", "na", "未设置", "未配置",
+}
+
+
+def _normalize_config_value(value, vtype: str):
+    """把前端/历史占位空值规范化，避免 '-' 被当成真实配置。"""
+    if vtype == "str":
+        s = "" if value is None else str(value).strip()
+        if s.lower() in {x.lower() for x in _PLACEHOLDER_EMPTY}:
+            return ""
+        return s
+    if vtype == "list_str_multiline":
+        if value is None:
+            return []
+        if isinstance(value, str):
+            lines = value.splitlines()
+        elif isinstance(value, (list, tuple)):
+            lines = list(value)
+        else:
+            lines = [str(value)]
+        out = []
+        for item in lines:
+            s = str(item or "").strip()
+            if not s or s.lower() in {x.lower() for x in _PLACEHOLDER_EMPTY}:
+                continue
+            out.append(s)
+        return out
+    return value
+
 
 def _format_literal(value, vtype: str) -> str:
     """把前端传来的值格式化成 Python 字面量字符串。"""
@@ -442,9 +476,12 @@ def update_config(updates: dict) -> dict:
         source = path.read_text(encoding="utf-8")
         for field, value in items:
             if field["type"] == "list_str_multiline":
+                value = _normalize_config_value(value, field["type"])
                 lines = value if isinstance(value, list) else str(value).splitlines()
                 source = _replace_proxy_pool(source, lines)
             else:
+                if field["type"] == "str":
+                    value = _normalize_config_value(value, field["type"])
                 literal = _format_literal(value, field["type"])
                 source = _replace_scalar(source, field["key"], literal)
             updated.append(field["key"])

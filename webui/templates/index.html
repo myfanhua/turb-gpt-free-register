@@ -504,6 +504,16 @@ function pagerSetSize(id, val) {
 // ---------- 工具 ----------
 function fmt(v) { return v == null || v === '' ? '-' : String(v); }
 function esc(v) { return fmt(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+// 配置表单必须用这个：空值保持空，不能把 '' 显示成 '-'，否则一点保存就会写回 config
+function attrEsc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function isPlaceholderEmpty(v) {
+  const s = String(v == null ? '' : v).trim();
+  return !s || ['-', '—', '无', '空', 'none', 'null', 'n/a', 'na'].includes(s.toLowerCase());
+}
 function short(v, n=40) { const s = v || ''; return s.length > n ? s.slice(0,n)+'…' : s; }
 function copyId(v) { if (!v) return ''; const id = 'c'+(++copySeq); copyStore.set(id, v); return id; }
 function cbtn(label, value, cls='') { const id = copyId(value); return `<button class="${cls}" data-copy-id="${id}" ${id?'':'disabled'}>${label}</button>`; }
@@ -1458,15 +1468,17 @@ function configGroups() {
 function renderConfigField(f) {
   let html = `<label class="fld">${esc(f.label)}<span class="hint">${esc(f.help)} · <span class="mono">${esc(f.key)}</span></span>`;
   if (f.type === 'bool') {
-    html += `<select data-key="${esc(f.key)}"><option value="true"${f.value?' selected':''}>开启 (True)</option><option value="false"${!f.value?' selected':''}>关闭 (False)</option></select>`;
+    html += `<select data-key="${attrEsc(f.key)}"><option value="true"${f.value?' selected':''}>开启 (True)</option><option value="false"${!f.value?' selected':''}>关闭 (False)</option></select>`;
   } else if (f.type === 'int') {
-    html += `<input type="number" data-key="${esc(f.key)}" value="${esc(f.value)}">`;
+    html += `<input type="number" data-key="${attrEsc(f.key)}" value="${attrEsc(f.value == null ? '' : f.value)}">`;
   } else if (f.type === 'float') {
-    html += `<input type="number" step="0.1" data-key="${esc(f.key)}" value="${esc(f.value)}">`;
+    html += `<input type="number" step="0.1" data-key="${attrEsc(f.key)}" value="${attrEsc(f.value == null ? '' : f.value)}">`;
   } else if (f.type === 'list_str_multiline') {
-    html += `<textarea data-key="${esc(f.key)}">${esc((f.value||[]).join('\n'))}</textarea>`;
+    html += `<textarea data-key="${attrEsc(f.key)}" placeholder="每行一条，可留空">${attrEsc((f.value||[]).join('\n'))}</textarea>`;
   } else {
-    html += `<input type="text" data-key="${esc(f.key)}" value="${esc(f.value)}">`;
+    // 空字符串/占位符 '-' 都显示为空输入框，避免误保存成真实值
+    const shown = isPlaceholderEmpty(f.value) ? '' : f.value;
+    html += `<input type="text" data-key="${attrEsc(f.key)}" value="${attrEsc(shown)}" placeholder="可留空">`;
   }
   return html + `</label>`;
 }
@@ -1620,7 +1632,7 @@ $('#btnSaveConfig').addEventListener('click', async () => {
     else if (f.type === 'bool') updates[f.key] = el.value === 'true';
     else if (f.type === 'int') updates[f.key] = parseInt(el.value || '0', 10);
     else if (f.type === 'float') updates[f.key] = parseFloat(el.value || '0');
-    else updates[f.key] = el.value;
+    else updates[f.key] = isPlaceholderEmpty(el.value) ? '' : el.value.trim();
   });
   $('#btnSaveConfig').disabled = true;
   try {
