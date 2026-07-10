@@ -13,6 +13,7 @@
 # - 邮箱可以是 @outlook.com 或 @hotmail.com（同一套 Microsoft OAuth 系统）
 # - clientId 是 Microsoft 应用注册的 GUID，refreshToken 是离线刷新令牌
 
+
 # 示例（值是占位符，请替换成真实凭证）：
 example1@hotmail.com----PasswordA----00000000-0000-0000-0000-000000000000----M.C5xx_BAY.0.U.MsaArtifacts.-FAKE_REFRESH_TOKEN_PLACEHOLDER_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 example2@outlook.com----PasswordB----00000000-0000-0000-0000-000000000000----M.C5xx_BAY.0.U.MsaArtifacts.-FAKE_REFRESH_TOKEN_PLACEHOLDER_yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
