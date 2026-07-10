@@ -1,0 +1,18 @@
+# Outlook 邮箱池示例。把本文件复制为 `用于注册的邮箱.txt`（去掉 .example 后缀），每行一个账号。
+# 程序启动时会自动导入到 `用于注册的邮箱.json`，注册时按顺序原子领取。
+#
+# 4 段格式（基础）：
+#   email----password----clientId----refreshToken
+#
+# 6 段格式（带恢复信息，可选）：
+#   email----password----clientId----refreshToken----recoveryEmail----recoveryCode
+#
+# 注意：
+# - 分隔符是连续 4 个减号（----），不要混入 ====
+# - 行首 # 开头的视为注释，会被忽略
+# - 邮箱可以是 @outlook.com 或 @hotmail.com（同一套 Microsoft OAuth 系统）
+# - clientId 是 Microsoft 应用注册的 GUID，refreshToken 是离线刷新令牌
+
+# 示例（值是占位符，请替换成真实凭证）：
+example1@hotmail.com----PasswordA----00000000-0000-0000-0000-000000000000----M.C5xx_BAY.0.U.MsaArtifacts.-FAKE_REFRESH_TOKEN_PLACEHOLDER_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+example2@outlook.com----PasswordB----00000000-0000-0000-0000-000000000000----M.C5xx_BAY.0.U.MsaArtifacts.-FAKE_REFRESH_TOKEN_PLACEHOLDER_yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy

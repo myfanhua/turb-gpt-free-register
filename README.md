@@ -1,0 +1,571 @@
+# Turb GPT Free Register
+
+ChatGPT / OpenAI 账号自动注册与 Codex OAuth 授权工具。当前项目支持两套注册驱动：
+
+- **protocol**：原纯协议注册，基于 `curl_cffi` + Sentinel/PoW。
+- **roxy**：RoxyBrowser 指纹浏览器 + Selenium 自动化注册，兼容新版页面流，例如 `create-account/password`、`about-you` 年龄/生日表单、地区本地化页面等。
+
+项目提供 **CLI** 和 **本地 WebUI** 两种使用方式。日常推荐使用 WebUI。
+
+- TG 交流群：[https://t.me/+gu_cvEKq_vcyZWRl](https://t.me/+gu_cvEKq_vcyZWRl)
+
+> 开源版说明：仓库只保留源码、配置模板和文档；运行时账号、Token、邮箱池、Codex 凭证、日志等真实数据均已通过 `.gitignore` 排除。
+
+---
+
+## 功能概览
+
+### 注册
+
+- 批量注册 ChatGPT 账号。
+- 支持注册驱动切换：
+  - `REGISTRATION_DRIVER = "protocol"`
+  - `REGISTRATION_DRIVER = "roxy"`
+- 支持 RoxyBrowser 一号一环境：自动创建、打开、关闭、删除 Roxy Profile。
+- 支持 Roxy 无头启动：`ROXY_OPEN_HEADLESS=True`。
+- Roxy 注册已兼容：
+  - 填邮箱后直接进入邮箱验证码页；
+  - 填邮箱后先进入 `create-account/password`，自动设置密码再继续；
+  - `about-you/profile` 页面直接输入年龄数字；
+  - `about-you/profile` 页面输入年月日生日；
+  - React Aria birthday select / spinbutton 年月日控件；
+  - 非日本出口 IP 下按钮顺序/语言变化导致的三方登录误点问题。
+
+### 邮箱来源
+
+支持多种邮箱来源：
+
+- Outlook 邮箱池：`email----password----clientId----refreshToken`
+- Cloudflare 域名邮箱 + QQ 邮箱 IMAP 收信
+- 通用 API 邮箱：`email----取码地址`
+- `EMAIL_SOURCE` 支持多个来源组合，例如：
+
+```python
+EMAIL_SOURCE = "outlook,generic_api"
+```
+
+### Codex OAuth
+
+- 注册成功后可自动跑 Codex OAuth。
+- Codex 授权驱动可选：
+  - `CODEX_OAUTH_DRIVER = "protocol"`
+  - `CODEX_OAUTH_DRIVER = "roxy"`
+  - `CODEX_OAUTH_DRIVER = "same_as_registration"`
+- 支持 CPA 管理接口生成授权 URL，并提交 OAuth callback。
+- 支持接码平台：
+  - GrizzlySMS
+  - 本地 L 取号服务，见 `L_API.md`
+- 手机验证支持自动取号、填号、收码、提交、失败换号重试。
+- Codex 凭证落盘到 `codex_accounts/`。
+
+### WebUI
+
+- 批量启动注册任务。
+- 实时查看任务日志。
+- 动态调整注册线程数，提交后新任务立即使用最新值。
+- 批量补跑 Codex，补跑线程数每次提交即时生效。
+- 管理账号、邮箱池、Codex 凭证。
+- 配置页支持热加载，保存后无需重启。
+- Roxy 团队/项目可在配置页获取并保存。
+
+---
+
+## 环境要求
+
+- Python 3.10+
+- Node.js 18+
+- 可用代理或 RoxyBrowser 代理环境
+- 如使用 Roxy 注册：需要本机 RoxyBrowser API 可访问
+- 如启用 Codex 自动授权：需要接码平台配置
+
+安装依赖：
+
+```bash
+pip install -r requirements.txt
+node --version
+```
+
+---
+
+## 快速开始
+
+### 1. 配置邮箱源
+
+#### Outlook 邮箱池
+
+复制示例文件：
+
+```bash
+cp 用于注册的邮箱.txt.example 用于注册的邮箱.txt
+```
+
+每行格式：
+
+```text
+email----password----clientId----refreshToken
+```
+
+也可以在 WebUI 的「邮箱池」页面导入。
+
+#### 通用 API 邮箱
+
+每行格式：
+
+```text
+email----code_url
+```
+
+在 `config/email.py` 设置：
+
+```python
+EMAIL_SOURCE = "generic_api"
+```
+
+或使用组合来源：
+
+```python
+EMAIL_SOURCE = "outlook,generic_api"
+```
+
+#### Cloudflare 域名邮箱
+
+在 `config/email.py` 设置：
+
+```python
+EMAIL_SOURCE = "cloudflare_domain"
+EMAIL_DOMAIN = "你的域名"
+QQ_EMAIL = "你的QQ邮箱"
+QQ_IMAP_PASSWORD = "QQ邮箱IMAP授权码"
+```
+
+Cloudflare Email Routing 需要把域名邮件转发到 QQ 邮箱。
+
+---
+
+### 2. 配置注册驱动
+
+编辑 `config/roxybrowser.py`，或直接在 WebUI「配置」页修改。
+
+#### 使用 RoxyBrowser 注册
+
+```python
+REGISTRATION_DRIVER = "roxy"
+ROXY_API_BASE = "http://127.0.0.1:50100"
+ROXY_API_TOKEN = "你的Roxy API Key"
+ROXY_WORKSPACE_ID = "你的workspaceId"
+ROXY_PROJECT_ID = "你的projectId"
+ROXY_ONE_PROFILE_PER_ACCOUNT = True
+ROXY_DELETE_PROFILE_AFTER_RUN = True
+ROXY_CREATE_USE_PROXY_POOL = True
+```
+
+如要无头：
+
+```python
+ROXY_OPEN_HEADLESS = True
+```
+
+#### 使用协议注册
+
+```python
+REGISTRATION_DRIVER = "protocol"
+```
+
+协议注册会使用 `curl_cffi`、Sentinel/PoW、代理池等配置。
+
+---
+
+### 3. 配置代理
+
+编辑 `config/proxy.py`：
+
+```python
+PROXY_POOL = [
+    "http://user:pass@host:port",
+]
+```
+
+Roxy 一号一环境开启 `ROXY_CREATE_USE_PROXY_POOL=True` 时，会从这里随机取代理写入 Roxy Profile。
+
+---
+
+### 4. 配置 Codex OAuth
+
+如不需要 Codex，关闭：
+
+```python
+ENABLE_CODEX_AUTO = False
+```
+
+如需要自动授权：
+
+```python
+ENABLE_CODEX_AUTO = True
+CODEX_OAUTH_DRIVER = "roxy"  # 或 protocol / same_as_registration
+```
+
+接码配置在 `config/codex.py`：
+
+```python
+SMS_PROVIDER = "l"        # 或 grizzly
+SMS_API_KEY = "你的key"
+SMS_SERVICE = "openai"
+SMS_COUNTRY = "国家代码"
+SMS_MAX_RETRIES = 10
+SMS_CODE_WAIT = 120
+SMS_POLL_INTERVAL = 5
+```
+
+CPA 授权地址来源：
+
+```python
+CODEX_AUTH_URL_SOURCE = "cpa"
+CPA_MANAGEMENT_URL = "你的CPA管理地址"
+CPA_MANAGEMENT_KEY = "你的CPA管理密钥"
+```
+
+---
+
+## 使用方式
+
+## WebUI 推荐方式
+
+启动：
+
+```bash
+python web.py --open-browser
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:5000
+```
+
+可指定端口：
+
+```bash
+python web.py --port 8000 --open-browser
+```
+
+允许局域网访问：
+
+```bash
+python web.py --host 0.0.0.0 --port 5000
+```
+
+WebUI 页面说明：
+
+| 页面 | 功能 |
+|---|---|
+| 注册 | 设置注册数量、线程数，启动批量注册，查看任务和日志 |
+| 账号 | 查看账号、复制 token、补跑 Codex、批量删除账号 |
+| Codex 授权 | 查看/下载/删除 `codex_accounts/` 凭证 |
+| 邮箱池 | 导入邮箱、筛选来源、标记可用/失败、删除邮箱 |
+| 配置 | 修改运行配置并热加载，含 Roxy、Codex、邮箱、代理、人工节奏等 |
+
+### 线程数说明
+
+- 注册线程数在每次点击「开始注册」时读取。
+- 如果线程数和上次不同，新提交任务会使用新线程池。
+- 旧线程池里已经排队/运行的任务会继续跑完，不会被强制取消。
+- Codex 批量补跑每次都会按本次提交的补跑线程数创建独立线程池。
+
+---
+
+## CLI 使用方式
+
+注册 1 个：
+
+```bash
+python main.py
+```
+
+批量注册 10 个，3 线程：
+
+```bash
+python main.py -n 10 --workers 3 --continue-on-fail
+```
+
+详细日志：
+
+```bash
+python main.py -n 1 --verbose
+```
+
+参数：
+
+| 参数 | 说明 | 默认 |
+|---|---|---|
+| `-n, --count` | 注册数量 | 1 |
+| `--workers` | 并发线程数 | 1 |
+| `--delay` | 每次注册结束后的间隔秒数 | 0 |
+| `--continue-on-fail` | 单个失败后继续 | False |
+| `--verbose` | DEBUG 日志 | False |
+
+---
+
+## Codex 补跑
+
+WebUI 账号页可单个或批量补跑 Codex。
+
+CLI 单独补跑：
+
+```bash
+python tools/test_codex_oauth.py --email <已注册邮箱> --verbose
+```
+
+补跑会消耗：
+
+- 1 次邮箱 OTP
+- 1 个接码号码
+
+补跑日志在：
+
+```text
+注册日志/codex-retry-邮箱.log
+```
+
+---
+
+## 注册密码说明
+
+Roxy 注册如果遇到新版流程：
+
+```text
+/create-account/password
+```
+
+会自动设置密码。
+
+密码来源：
+
+1. 优先使用 `config/register.py`：
+
+```python
+REGISTER_PASSWORD = "你的固定密码"
+```
+
+2. 如果为空，自动生成 14 位强密码，包含大写、小写、数字、符号。
+
+保存位置：
+
+- 账号 `extra_json.registration_password`
+- 批次归档 `accounts/YYYYMMDD-.../注册成功账号.json` 的 `extra.registration_password`
+
+注意：账号表里的 `password` 字段仍用于 Outlook 邮箱素材密码，不会被 OpenAI 注册密码覆盖。
+
+---
+
+## 重要配置文件
+
+| 文件 | 说明 |
+|---|---|
+| `config/roxybrowser.py` | 注册驱动、Roxy API、Roxy 环境生命周期、Codex Roxy 授权 |
+| `config/codex.py` | Codex OAuth、CPA 管理接口、接码平台 |
+| `config/email.py` | 邮箱来源、OTP 轮询、QQ IMAP、域名邮箱 |
+| `config/proxy.py` | 代理池 |
+| `config/register.py` | 默认邮箱、密码、显示名 |
+| `config/twofa.py` | 2FA 开关 |
+| `config/humanize.py` | 随机停顿/人工节奏 |
+| `config/flow_trigger.py` | 注册成功后触发 Flow |
+| `config/browser.py` | 协议模式浏览器指纹 |
+| `config/openai_protocol.py` | OpenAI OAuth/Sentinel 参数 |
+
+WebUI 配置页保存后会调用热加载；Roxy、Codex、邮箱、代理、人工节奏等常用项可立即生效。
+
+---
+
+## 数据与产物
+
+| 路径 | 内容 |
+|---|---|
+| `用于注册的邮箱.txt/json` | Outlook 邮箱池及状态 |
+| `用于注册的API邮箱.txt/json` | 通用 API 邮箱池及状态 |
+| `注册成功的邮箱.txt/json` | 注册成功账号 |
+| `注册成功的token.txt` | ChatGPT access token |
+| `accounts/` | 每次运行的批次归档 |
+| `codex_accounts/` | Codex OAuth 凭证 JSON |
+| `注册任务.json` | WebUI 注册任务表 |
+| `注册日志/` | 注册任务日志、Codex 补跑日志 |
+| `accounts_viewer.html` | 本地账号查看页 |
+
+批次目录示例：
+
+```text
+accounts/20260709-10个-3线程/
+├── 注册成功的邮箱.txt
+├── 注册成功的token.txt
+├── 注册成功整行.txt
+└── 注册成功账号.json
+```
+
+---
+
+## 当前主流程
+
+### Roxy 注册流程
+
+```text
+创建/打开 Roxy Profile
+  ↓
+打开 chatgpt.com/auth/login
+  ↓
+按 DOM 技术属性定位邮箱输入框，避免误点 Google/Apple/Microsoft
+  ↓
+提交邮箱表单
+  ↓
+如进入 create-account/password：设置密码并提交
+  ↓
+等待邮箱验证码页
+  ↓
+读取邮箱 OTP 并提交
+  ↓
+如进入 about-you/profile：填写姓名 + 年龄或生日
+  ↓
+进入 ChatGPT，读取 /api/auth/session accessToken
+  ↓
+可选 2FA
+  ↓
+可选 Codex OAuth
+  ↓
+保存账号与批次归档
+  ↓
+关闭/删除 Roxy Profile
+```
+
+### Codex Roxy 授权流程
+
+```text
+获取 Codex 授权地址（CPA 或 local PKCE）
+  ↓
+Roxy 打开授权页
+  ↓
+邮箱登录 + 邮箱 OTP
+  ↓
+手机号验证：取号 → 填号 → 发送 → 等短信 → 填 OTP
+  ↓
+等待 consent/workspace/callback
+  ↓
+提交 callback 给 CPA 或本地换 token
+  ↓
+保存 codex_accounts/codex-邮箱*.json
+```
+
+---
+
+## 常见问题
+
+### 配置保存后没生效？
+
+WebUI 配置页保存后会热加载。Codex 补跑线程启动前也会重新热加载一次配置。
+
+如果你直接手改 `config/*.py`，CLI 进程需要重启；WebUI 建议在配置页修改。
+
+### Roxy 无头保存后仍弹窗口？
+
+检查：
+
+```python
+ROXY_OPEN_HEADLESS = True
+```
+
+并确认 Roxy 版本支持 `/browser/open` 的 `headless` 参数。日志会打印实际传入的 `headless`。
+
+### 出口 IP 不是日本时点到 Google 登录？
+
+当前 Roxy 注册邮箱入口已改为只按 DOM 技术属性定位，并排除三方登录按钮。不会再靠按钮文字匹配“Continue”。
+
+### Codex 显示 `Check your phone` 被误判失败？
+
+已兼容：`Check your phone / Enter the verification code...` 会识别为手机验证码页，进入等待短信验证码流程。
+
+### 手机 OTP 提交后日志曾显示失败，但后面成功？
+
+已修复：提交手机 OTP 后会等待页面离开手机号流程或 callback，不再 3 秒后用旧页面文案误判失败。
+
+### Codex 失败但注册成功怎么办？
+
+账号会保存，Codex 状态会标记失败。可以在 WebUI 账号页点击补跑，或使用：
+
+```bash
+python tools/test_codex_oauth.py --email <邮箱> --verbose
+```
+
+### 没有接码平台能注册吗？
+
+可以。关闭：
+
+```python
+ENABLE_CODEX_AUTO = False
+```
+
+注册主流程不依赖接码，Codex 自动授权才需要。
+
+---
+
+## 项目结构
+
+```text
+.
+├── main.py                         # CLI 入口
+├── web.py                          # WebUI 入口
+├── config/                         # 配置
+│   ├── roxybrowser.py              # RoxyBrowser 注册/Codex 驱动
+│   ├── codex.py                    # Codex OAuth + 接码
+│   ├── email.py                    # 邮箱来源/OTP
+│   ├── proxy.py                    # 代理池
+│   ├── register.py                 # 默认注册信息
+│   └── ...
+├── core/
+│   ├── roxy_registration.py        # Roxy 注册流程
+│   ├── roxy_codex_oauth.py         # Roxy Codex OAuth
+│   ├── roxybrowser_client.py       # Roxy API 客户端
+│   ├── registration_service.py     # WebUI 注册线程池
+│   ├── codex_oauth.py              # Codex 协议/Roxy 调度
+│   ├── email_provider.py           # 邮箱来源调度
+│   ├── sms_provider.py             # 接码平台
+│   ├── account_export.py           # 保存账号/批次归档
+│   └── db.py                       # 文件数据库
+├── webui/
+│   ├── app.py                      # Flask API
+│   ├── config_editor.py            # 配置读写/热加载
+│   └── templates/index.html        # 单页控制台
+├── sentinel/
+│   ├── sdk.js
+│   └── sentinel-runner.js
+├── tools/
+│   └── test_codex_oauth.py         # Codex 单独补跑
+└── L_API.md                        # 本地 L 接码接口说明
+```
+
+---
+
+## 使用建议
+
+- 日常批量使用 WebUI，不建议直接同时开多个 CLI 进程。
+- 注册线程数建议不超过可用代理数。
+- Roxy 一号一环境建议保持开启，降低环境污染。
+- 调试页面问题时可临时设置：
+
+```python
+ROXY_KEEP_BROWSER_OPEN = True
+ROXY_OPEN_HEADLESS = False
+```
+
+- 调试完再改回自动关闭/删除环境。
+
+---
+
+## 🙏 致谢
+
+- [LINUX DO](https://linux.do) — 社区交流与用户反馈
+- [RoxyBrowser](https://roxybrowser.cn/invite/NvH4Jx) — 免费提供 5 个窗口
+- [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) — Codex OAuth 凭证格式参考
+- [curl_cffi](https://github.com/yifeikong/curl_cffi) — 底层 HTTP 库，提供 TLS 指纹 impersonate 能力
+
+---
+
+## License
+
+MIT

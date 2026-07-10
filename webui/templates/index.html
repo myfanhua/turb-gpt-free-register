@@ -1,0 +1,1622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GPT 注册控制台</title>
+  <style>
+    * { box-sizing: border-box; }
+    html { max-width: 100%; overflow-x: hidden; }
+    :root {
+      --bg: #eef3f8; --surface: #ffffff; --soft: #f7f9fc; --text: #172033;
+      --muted: #667085; --line: #d9e2ec; --blue: #2563eb; --green: #16803c;
+      --red: #c2413a; --amber: #b7791f;
+      --page-max-width: 1500px;
+      --page-gutter: 16px;
+    }
+    body {
+      margin: 0; max-width: 100%; overflow-x: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg); color: var(--text);
+    }
+    body.modal-open { overflow: hidden; position: fixed; left: 0; right: 0; width: 100%; }
+    h1, h2, h3, p { margin: 0; }
+    header {
+      width: 100%; max-width: 100%; overflow: hidden;
+      padding: 18px 0; background: #101827; color: #fff; text-align: center;
+    }
+    .header-inner {
+      width: calc(100% - var(--page-gutter) * 2); max-width: var(--page-max-width); margin: 0 auto;
+      display: flex; justify-content: center; gap: 28px; align-items: center; flex-wrap: wrap;
+    }
+    header h1 { font-size: 22px; }
+    header .meta { margin-top: 4px; color: #b8c7d9; font-size: 12px; }
+    .header-links { margin-top: 8px; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+    .header-links a {
+      color: #dbeafe; text-decoration: none; font-size: 12px; font-weight: 800;
+      border: 1px solid rgba(219,234,254,.28); border-radius: 999px; padding: 4px 10px;
+      background: rgba(37,99,235,.18);
+    }
+    .header-links a:hover { color: #fff; background: rgba(37,99,235,.36); }
+    .stats { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+    .stat {
+      min-width: 96px; padding: 8px 12px; border: 1px solid rgba(255,255,255,.16);
+      border-radius: 8px; background: rgba(255,255,255,.08);
+    }
+    .stat span { display: block; color: #b8c7d9; font-size: 11px; }
+    .stat strong { display: block; margin-top: 3px; font-size: 18px; }
+    nav {
+      width: 100%; max-width: 100%; overflow: hidden;
+      padding: 0; background: #1b2538;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+    .nav-inner {
+      width: calc(100% - var(--page-gutter) * 2); max-width: var(--page-max-width); margin: 0 auto;
+      display: flex; justify-content: center; align-items: center; gap: 4px;
+    }
+    nav button {
+      border: none; background: transparent; color: #b8c7d9; font: inherit; font-weight: 700;
+      padding: 12px 18px; cursor: pointer; border-bottom: 3px solid transparent;
+    }
+    nav button:hover { color: #fff; }
+    nav button.active { color: #fff; border-bottom-color: var(--blue); }
+    main { width: calc(100% - var(--page-gutter) * 2); max-width: var(--page-max-width); min-width: 0; margin: 18px auto 44px; display: grid; gap: 18px; }
+    main > div:not(.hidden) { display: grid; gap: 18px; }
+    section.card {
+      min-width: 0; max-width: 100%; overflow: hidden;
+      border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+      box-shadow: 0 8px 22px rgba(15,23,42,.06);
+    }
+    .head { padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--soft); }
+    .head p { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .body { padding: 16px; }
+    label.fld { display: block; margin-bottom: 14px; font-size: 13px; font-weight: 700; }
+    label.fld .hint { display: block; margin-top: 3px; color: var(--muted); font-weight: 400; font-size: 12px; }
+    input, textarea, select {
+      width: 100%; min-height: 38px; border: 1px solid var(--line); border-radius: 6px;
+      padding: 8px 12px; font: inherit; margin-top: 6px;
+    }
+    textarea { min-height: 120px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; resize: vertical; }
+    .row { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
+    .row > * { flex: 1; min-width: 160px; }
+    .row label.fld { margin-bottom: 0; }
+    .row .action-cell {
+      flex: 0 0 auto; min-width: auto; align-self: flex-end;
+      display: inline-flex; gap: 8px; align-items: center;
+    }
+    .row .action-cell .btn { min-height: 38px; }
+    button.btn {
+      min-height: 38px; border: 1px solid var(--line); border-radius: 7px; background: #fff;
+      padding: 0 14px; font-weight: 800; cursor: pointer; font-size: 13px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap;
+    }
+    button.btn:hover { background: var(--soft); }
+    button.btn.primary { border-color: var(--blue); background: var(--blue); color: #fff; }
+    button.btn.good { border-color: #2f855a; background: #edf8f1; color: #166534; }
+    button.btn.danger { border-color: #e7a3a0; color: #b3261e; background: #fff; }
+    button.btn:disabled { color: #98a2b3; cursor: not-allowed; background: #f2f4f7; border-color: var(--line); }
+    .toolbar { padding: 14px 16px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .search { flex: 1; min-width: min(420px, 100%); }
+    .search input { margin-top: 0; }
+    .buttons { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .inline-num { display:inline-flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; font-weight:700; white-space:nowrap; }
+    .inline-num input { width:70px; min-height:38px; margin-top:0; padding:4px 8px; }
+    .table-wrap { overflow: auto; border-top: 1px solid #edf1f5; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid #edf1f5; text-align: left; white-space: nowrap; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
+    th { user-select: none; }
+    td.wrap, th.wrap { white-space: normal; word-break: break-word; }
+    td.center, th.center { text-align: center; }
+    .col-check { width: 42px; }
+    .col-id { width: 72px; }
+    .col-status { width: 96px; }
+    .col-email { width: 260px; }
+    .col-source { width: 96px; }
+    .col-token { width: 220px; }
+    .col-small { width: 78px; }
+    .col-plan { width: 82px; }
+    .col-account { width: 180px; }
+    .col-time { width: 168px; }
+    .col-expire { width: 168px; }
+    .col-error { width: 320px; }
+    .col-actions { width: 220px; }
+    .jobs-table .col-actions { width: 230px; }
+    .accounts-table .col-actions { width: 360px; }
+    .outlook-table .col-actions { width: 220px; }
+    .codex-table .col-actions { width: 260px; }
+    th { position: sticky; top: 0; background: #fbfcfe; color: #475467; z-index: 1; font-size: 12px; }
+    tr:hover td { background: #fbfdff; }
+    .main-cell { font-weight: 700; }
+    .sub-cell { margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .mono { font-family: ui-monospace, "JetBrains Mono", Consolas, monospace; font-size: 12px; }
+    .muted { color: var(--muted); }
+    .pill { display: inline-flex; min-width: 48px; justify-content: center; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .status-available, .status-pending { color: var(--blue); background: #eef4ff; }
+    .status-used, .status-cancelled, .status-stopped { color: #475467; background: #f2f4f7; }
+    .status-stopping { color: var(--amber); background: #fff7e6; }
+    .status-failed { color: var(--red); background: #fff0ef; }
+    .status-running { color: var(--amber); background: #fff7e6; }
+    .status-success { color: var(--green); background: #e9f7ef; }
+    .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .jobs-table td.actions-cell { text-align: center; vertical-align: middle; overflow: visible; }
+    .job-actions { justify-content: center; flex-wrap: nowrap; width: 100%; }
+    .job-actions button { flex: 0 0 auto; }
+    .actions button { min-height: 30px; border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 0 10px; font-weight: 800; cursor: pointer; font-size: 12px; line-height: 1; display:inline-flex; align-items:center; justify-content:center; white-space:nowrap; }
+    .actions button.primary { border-color: var(--blue); background: var(--blue); color: #fff; }
+    .actions button.good { border-color: #2f855a; background: #edf8f1; color: #166534; }
+    .actions button.danger { border-color: #e7a3a0; color: #b3261e; background: #fff; }
+    .banner { padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
+    .banner.warn { background: #fff7e6; color: #92600a; border: 1px solid #f3d99b; }
+    .banner.info { background: #eef4ff; color: #1d4ed8; border: 1px solid #c3d4fb; }
+    .log {
+      margin-top: 8px; background: #0c1322; color: #cbd5e1; border-radius: 6px; padding: 12px;
+      font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+      white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+      width: 100%; max-width: 100%; min-width: 0;
+      max-height: 320px; overflow: auto; line-height: 1.5;
+    }
+    #logPanel, #retryLogPanel { min-width: 0; max-width: 100%; overflow-x: hidden; }
+    #logPanel:not(.hidden), #retryLogPanel:not(.hidden) {
+      position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      z-index: 1000; display: block; width: min(1100px, calc(100vw - 48px));
+      max-height: min(760px, calc(100vh - 48px)); overflow: hidden;
+      padding: 16px; border: 1px solid var(--line); border-radius: 12px;
+      background: var(--surface); box-shadow: 0 0 0 9999px rgba(15,23,42,.45), 0 24px 70px rgba(15,23,42,.34);
+    }
+    #logPanel h3, #retryLogPanel h3 { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+    #logPanel h3 .btn, #retryLogPanel h3 .btn { margin-left:auto; float:none !important; }
+    #logPanel .log, #retryLogPanel .log { max-height: calc(min(760px, calc(100vh - 48px)) - 74px); margin-top:0; }
+    .hidden { display: none !important; }
+    #toast {
+      position: fixed; right: 18px; bottom: 18px; padding: 10px 14px; border-radius: 8px;
+      background: #101827; color: #fff; box-shadow: 0 14px 30px rgba(15,23,42,.24);
+      opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .18s ease, transform .18s ease;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    /* 分页条 */
+    .pager-bar {
+      display: flex; align-items: center; gap: 8px; padding: 10px 16px;
+      border-top: 1px solid var(--line); font-size: 13px; flex-wrap: wrap;
+    }
+    .pager-bar button {
+      min-height: 30px; border: 1px solid var(--line); border-radius: 6px;
+      background: #fff; padding: 0 12px; cursor: pointer; font-size: 12px; font-weight: 700;
+    }
+    .pager-bar button:disabled { color: #98a2b3; cursor: not-allowed; background: #f2f4f7; }
+    .pager-bar button:not(:disabled):hover { background: var(--soft); }
+    .pager-bar .pager-info { color: var(--muted); font-size: 12px; flex: 1; text-align: center; }
+    .pager-bar select {
+      min-height: 30px; width: auto; border: 1px solid var(--line); border-radius: 6px;
+      padding: 4px 8px; font: inherit; font-size: 12px; margin-top: 0;
+    }
+    .config-tabs {
+      display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 14px;
+      padding-bottom: 12px; border-bottom: 1px solid var(--line);
+    }
+    .config-tabs button {
+      border: 1px solid var(--line); background: #fff; color: #475467;
+      border-radius: 999px; min-height: 34px; padding: 0 14px;
+      cursor: pointer; font-weight: 800; font-size: 13px;
+    }
+    .config-tabs button:hover { background: var(--soft); color: var(--text); }
+    .config-tabs button.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .config-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px 18px; }
+    .config-panel h3 { grid-column: 1 / -1; margin: 2px 0 0; }
+    .config-count { opacity: .72; font-weight: 700; margin-left: 4px; }
+    .roxy-workspace-box {
+      grid-column: 1 / -1; border: 1px solid #c3d4fb; background: #eef4ff;
+      border-radius: 8px; padding: 12px; display: grid; gap: 10px;
+    }
+    .roxy-workspace-box .row { align-items: flex-end; }
+    .roxy-invite-link {
+      display: inline-flex; align-items: center; justify-content: center; width: fit-content;
+      min-height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid #9bbcff;
+      background: #fff; color: var(--blue); text-decoration: none; font-size: 12px; font-weight: 800;
+    }
+    .roxy-invite-link:hover { background: #e0ebff; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="header-inner">
+    <div>
+      <h1>GPT 注册控制台</h1>
+      <p class="meta">本地 Web 控制台 · 数据更新于 <span id="updatedAt">-</span></p>
+      <div class="header-links"><a href="https://t.me/+gu_cvEKq_vcyZWRl" target="_blank" rel="noopener noreferrer">TG 交流群</a></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><span>已注册</span><strong id="statAccounts">0</strong></div>
+      <div class="stat"><span>邮箱总数</span><strong id="statOutlook">0</strong></div>
+      <div class="stat"><span>可用</span><strong id="statAvailable">0</strong></div>
+      <div class="stat"><span>已用</span><strong id="statUsed">0</strong></div>
+      <div class="stat"><span>失败</span><strong id="statFailed">0</strong></div>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <div class="nav-inner">
+    <button data-tab="register" class="active">注册</button>
+    <button data-tab="accounts">账号</button>
+    <button data-tab="codex">Codex 授权</button>
+    <button data-tab="outlook">邮箱池</button>
+    <button data-tab="config">配置</button>
+  </div>
+</nav>
+
+<main>
+  <!-- ============ 注册 ============ -->
+  <div id="tab-register">
+    <section class="card">
+      <div class="head"><h2>启动批量注册</h2><p>从邮箱池自动领取邮箱并并发注册，下方实时查看任务进度与日志。</p></div>
+      <div class="body">
+        <div id="regWarn"></div>
+        <div class="row">
+          <div>
+            <label class="fld">注册数量
+              <input id="regCount" type="number" min="1" max="200" value="1">
+            </label>
+          </div>
+          <div>
+            <label class="fld">并发线程数
+              <input id="regWorkers" type="number" min="1" max="16" value="3">
+            </label>
+          </div>
+          <div class="action-cell">
+            <button class="btn primary" id="btnStart">开始注册</button>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="card">
+      <div class="toolbar">
+        <div><h2>任务列表</h2></div>
+        <div class="buttons">
+          <span class="muted" id="jobsSelectedHint" style="font-size:12px;align-self:center;margin-right:4px;">已选 0</span>
+          <button class="btn" id="btnDeleteSelectedJobs" disabled title="删除选中的非运行中任务，并同时删除对应日志">删除选中</button>
+          <button class="btn" id="btnCancelPending" title="把所有 status=排队 的任务标记为已取消，不再执行（已运行中的不影响）">取消所有排队</button>
+          <button class="btn" id="btnRefreshJobs">手动刷新</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="jobs-table">
+          <colgroup>
+            <col class="col-check"><col class="col-id"><col class="col-status"><col class="col-email">
+            <col class="col-time"><col class="col-time"><col class="col-error"><col class="col-actions">
+          </colgroup>
+          <thead><tr>
+            <th><input type="checkbox" id="jobsSelectAll" title="全选/取消全选当前页可删除任务"></th>
+            <th>ID</th><th>状态</th><th>邮箱</th><th>开始</th><th>完成</th><th class="wrap">错误</th><th>操作</th>
+          </tr></thead>
+          <tbody id="jobsBody"></tbody>
+        </table>
+      </div>
+      <div class="pager-bar" id="pager-jobs"></div>
+      <div class="body hidden" id="logPanel">
+        <h3>任务 #<span id="logJobId"></span> 日志 <button class="btn" id="btnCloseLog" style="float:right;min-height:28px;">关闭</button></h3>
+        <div class="log" id="logContent">加载中…</div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============ 账号 ============ -->
+  <div id="tab-accounts" class="hidden">
+    <section class="card">
+      <div class="toolbar">
+        <div class="search"><input id="qAccounts" placeholder="搜索邮箱、token、来源…"></div>
+        <div class="buttons">
+          <span class="muted" id="accountsSelectedHint" style="font-size:12px;align-self:center;margin-right:4px;">已选 0</span>
+          <label class="inline-num" title="批量补跑 Codex 的并发线程数">补跑线程
+            <input id="codexBulkWorkers" type="number" min="1" max="16" value="3">
+          </label>
+          <button class="btn primary" id="btnRetrySelectedCodex" disabled title="给选中的账号批量补跑 Codex 授权">批量补跑 Codex</button>
+          <button class="btn" id="btnDeleteSelectedAccounts" disabled title="删除选中的本地账号/token记录">删除选中</button>
+          <button class="btn primary" id="copyAllTokens">复制全部 Token</button>
+          <button class="btn good" id="copyAllLines">复制全部整行</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="accounts-table">
+          <colgroup><col class="col-check"><col class="col-id"><col class="col-email"><col class="col-source"><col class="col-token"><col class="col-small"><col class="col-status"><col class="col-time"><col class="col-actions"></colgroup>
+          <thead><tr>
+            <th><input type="checkbox" id="accountsSelectAll" title="全选/取消全选当前页账号"></th>
+            <th>ID</th><th>邮箱</th><th>来源</th><th>Token</th><th>2FA</th><th>Codex</th><th>创建时间</th><th>操作</th>
+          </tr></thead>
+          <tbody id="accountsBody"></tbody>
+        </table>
+      </div>
+      <div class="pager-bar" id="pager-accounts"></div>
+      <div class="body hidden" id="retryLogPanel">
+        <h3>补跑日志：<span id="retryLogEmail" style="font-size:13px;font-weight:400;color:var(--muted);"></span>
+          <button class="btn" id="btnCloseRetryLog" style="float:right;min-height:28px;">关闭</button>
+        </h3>
+        <div class="log" id="retryLogContent">加载中…</div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============ Codex 授权 ============ -->
+  <div id="tab-codex" class="hidden">
+    <section class="card">
+      <div class="toolbar">
+        <div>
+          <h2>Codex 授权账号</h2>
+          <p class="muted" style="font-size:12px;margin-top:4px;">
+            注册时自动跑 Codex 授权产出的 CPA 兼容凭证。点"下载 JSON"导出后可直接放到 CLIProxyAPI 的 <span class="mono">auths/</span> 目录使用。下载后会自动标记为已导出。
+          </p>
+        </div>
+        <div class="buttons">
+          <button class="btn" id="btnRefreshCodex">刷新</button>
+        </div>
+      </div>
+      <div class="body" style="display:flex;gap:14px;flex-wrap:wrap;padding:14px 16px;border-bottom:1px solid var(--line);">
+        <div class="stat" style="background:#eef4ff;border-color:#c3d4fb;color:#1d4ed8;min-width:110px;padding:8px 12px;border-radius:6px;border:1px solid;">
+          <span style="font-size:11px;color:#475467;">总数</span>
+          <strong id="codexStatTotal" style="display:block;font-size:18px;margin-top:3px;">0</strong>
+        </div>
+        <div class="stat" style="background:#e9f7ef;border-color:#a7d4bc;color:#166534;min-width:110px;padding:8px 12px;border-radius:6px;border:1px solid;">
+          <span style="font-size:11px;color:#475467;">已导出</span>
+          <strong id="codexStatExported" style="display:block;font-size:18px;margin-top:3px;">0</strong>
+        </div>
+        <div class="stat" style="background:#fff7e6;border-color:#f3d99b;color:#92600a;min-width:110px;padding:8px 12px;border-radius:6px;border:1px solid;">
+          <span style="font-size:11px;color:#475467;">未导出</span>
+          <strong id="codexStatPending" style="display:block;font-size:18px;margin-top:3px;">0</strong>
+        </div>
+      </div>
+      <div class="toolbar" style="padding-top:10px;padding-bottom:10px;">
+        <div class="search"><input id="qCodex" placeholder="搜索邮箱、plan、account_id…"></div>
+        <div class="buttons">
+          <span class="muted" id="codexSelectedHint" style="font-size:12px;align-self:center;margin-right:4px;">已选 0</span>
+          <button class="btn primary" id="btnCodexDownloadBulk" disabled title="把选中的多个凭证打包成一个 JSON 文件下载（备份/迁移用，CPA 不能直接读，需先解包）">批量下载选中</button>
+          <button class="btn" id="btnCodexDeleteBulk" disabled title="删除选中的本地 Codex JSON 凭证文件">删除选中</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="codex-table">
+          <colgroup><col class="col-check"><col class="col-email"><col class="col-plan"><col class="col-status"><col class="col-account"><col class="col-time"><col class="col-expire"><col class="col-actions"></colgroup>
+          <thead><tr>
+            <th><input type="checkbox" id="codexSelectAll" title="全选/取消全选当前页"></th>
+            <th>邮箱</th><th>Plan</th><th>状态</th><th>Account ID</th><th>更新时间</th><th>过期时间</th><th>操作</th>
+          </tr></thead>
+          <tbody id="codexBody"></tbody>
+        </table>
+      </div>
+      <div class="pager-bar" id="pager-codex"></div>
+    </section>
+  </div>
+
+  <!-- ============ 邮箱池 ============ -->
+  <div id="tab-outlook" class="hidden">
+    <section class="card">
+      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址（---- 或 ==== 分隔均可），已存在的邮箱会自动跳过。</p></div>
+      <div class="body">
+        <div id="importResult"></div>
+        <label class="fld">导入类型
+          <select id="importSource">
+            <option value="outlook">Outlook 邮箱池</option>
+            <option value="generic_api">通用 API 取码邮箱</option>
+          </select>
+          <span class="hint">注册来源可在配置里填多个，例如：outlook,generic_api</span>
+        </label>
+        <textarea id="importText" placeholder="Outlook: email----password----clientId----refreshToken
+通用API: email----取码地址"></textarea>
+        <div style="margin-top:10px;"><button class="btn primary" id="btnImport">导入到邮箱池</button></div>
+      </div>
+    </section>
+    <section class="card">
+      <div class="toolbar">
+        <div class="search">
+          <div class="row" style="gap:8px;align-items:center;">
+            <select id="poolSource" style="flex:0 0 180px;margin-top:0;">
+              <option value="all">全部邮箱池</option>
+              <option value="outlook">Outlook 邮箱池</option>
+              <option value="generic_api">通用 API 邮箱池</option>
+              <option value="cloudflare_domain">域名邮箱池</option>
+            </select>
+            <input id="qOutlook" placeholder="搜索邮箱、状态…">
+          </div>
+        </div>
+        <div class="buttons">
+          <span class="muted" id="outlookSelectedHint" style="font-size:12px;align-self:center;margin-right:4px;">已选 0</span>
+          <button class="btn good" id="btnMarkSelectedOutlookAvailable" disabled title="把选中的邮箱批量标记为未使用/可用">标记未使用</button>
+          <button class="btn" id="btnDeleteSelectedOutlook" disabled title="批量删除选中的邮箱素材">删除选中</button>
+          <button class="btn" id="copyAllEmails">复制全部邮箱素材</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="outlook-table">
+          <colgroup><col class="col-check"><col class="col-email"><col class="col-source"><col class="col-status"><col class="col-token"><col class="col-time"><col class="col-actions"></colgroup>
+          <thead><tr>
+            <th><input type="checkbox" id="outlookSelectAll" title="全选/取消全选当前页邮箱"></th>
+            <th>邮箱</th><th>类型</th><th>状态</th><th>Token</th><th>已用时间</th><th>操作</th>
+          </tr></thead>
+          <tbody id="outlookBody"></tbody>
+        </table>
+      </div>
+      <div class="pager-bar" id="pager-outlook"></div>
+    </section>
+  </div>
+
+  <!-- ============ 配置 ============ -->
+  <div id="tab-config" class="hidden">
+    <section class="card">
+      <div class="head"><h2>运行配置</h2><p>仅开放运行时安全的开关与数值。协议级常量（client_id / sentinel 版本）不在此处，避免误改废号。</p></div>
+      <div class="body">
+        <div id="configBanner" class="banner info">修改后点"保存"，<b>立即生效</b>（自动热加载，无需重启）。</div>
+        <div id="configTabs" class="config-tabs"></div>
+        <div id="configForm">加载中…</div>
+        <div style="margin-top:8px;"><button class="btn primary" id="btnSaveConfig">保存配置</button></div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<div id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => Array.from(document.querySelectorAll(s));
+let copySeq = 0;
+const copyStore = new Map();
+let ACCOUNTS = [], OUTLOOK = [], CONFIG = [];
+const ACCOUNT_SELECTED = new Set();
+const OUTLOOK_SELECTED = new Set();
+let JOBS = [];
+const JOB_SELECTED = new Set();
+let activeLogJob = null, logTimer = null, jobsTimer = null;
+
+// ---------- 分页状态 ----------
+const PAGERS = {
+  jobs:     { page: 1, size: 20 },
+  accounts: { page: 1, size: 20 },
+  outlook:  { page: 1, size: 20 },
+  codex:    { page: 1, size: 20 },
+};
+
+function _renderPager(id, total) {
+  const p = PAGERS[id];
+  const totalPages = Math.max(1, Math.ceil(total / p.size));
+  if (p.page > totalPages) p.page = Math.max(1, totalPages);
+  const start = total > 0 ? (p.page - 1) * p.size + 1 : 0;
+  const end = Math.min(p.page * p.size, total);
+  const el = document.getElementById('pager-' + id);
+  if (!el) return;
+  const sizes = [20, 50, 100];
+  el.innerHTML = `
+    <button onclick="pagerGo('${id}',-1)"${p.page <= 1 ? ' disabled' : ''}>← 上一页</button>
+    <span class="pager-info">${total > 0 ? `第 ${start}–${end} 条 / 共 ${total} 条（第 ${p.page} / ${totalPages} 页）` : '无数据'}</span>
+    <button onclick="pagerGo('${id}',1)"${p.page >= totalPages ? ' disabled' : ''}>下一页 →</button>
+    <select onchange="pagerSetSize('${id}',this.value)">${sizes.map(s =>
+      `<option value="${s}"${p.size === s ? ' selected' : ''}>${s} 条/页</option>`
+    ).join('')}</select>`;
+}
+
+function pagerGo(id, dir) {
+  PAGERS[id].page = Math.max(1, PAGERS[id].page + dir);
+  ({ jobs: renderJobs, accounts: renderAccounts, outlook: renderOutlook, codex: renderCodex })[id]?.();
+}
+function pagerSetSize(id, val) {
+  PAGERS[id].size = parseInt(val, 10) || 20;
+  PAGERS[id].page = 1;
+  ({ jobs: renderJobs, accounts: renderAccounts, outlook: renderOutlook, codex: renderCodex })[id]?.();
+}
+
+// ---------- 工具 ----------
+function fmt(v) { return v == null || v === '' ? '-' : String(v); }
+function esc(v) { return fmt(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function short(v, n=40) { const s = v || ''; return s.length > n ? s.slice(0,n)+'…' : s; }
+function copyId(v) { if (!v) return ''; const id = 'c'+(++copySeq); copyStore.set(id, v); return id; }
+function cbtn(label, value, cls='') { const id = copyId(value); return `<button class="${cls}" data-copy-id="${id}" ${id?'':'disabled'}>${label}</button>`; }
+function pill(status) {
+  const map = { available:'可用', used:'已用', failed:'失败', pending:'排队', running:'运行中', stopping:'停止中', stopped:'已停止', success:'成功', cancelled:'已取消' };
+  return `<span class="pill status-${esc(status)}">${esc(map[status]||status||'-')}</span>`;
+}
+function showToast(t) { const el=$('#toast'); el.textContent=t; el.classList.add('show'); clearTimeout(showToast.t); showToast.t=setTimeout(()=>el.classList.remove('show'),1400); }
+async function copyText(text) {
+  if (!text) return;
+  try {
+    if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+    else { const a=document.createElement('textarea'); a.value=text; a.style.position='fixed'; a.style.opacity='0'; document.body.appendChild(a); a.select(); document.execCommand('copy'); a.remove(); }
+    showToast('已复制');
+  } catch(e) { showToast('复制失败'); }
+}
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  const j = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP '+r.status));
+  return j;
+}
+
+// ---------- Tab 切换 ----------
+function activateTab(tab, persist=true) {
+  const allowed = ['register','accounts','codex','outlook','config'];
+  if (!allowed.includes(tab)) tab = 'register';
+  $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
+  allowed.forEach(t => $('#tab-'+t).classList.toggle('hidden', t !== tab));
+  if (persist) localStorage.setItem('gpt_console_active_tab', tab);
+  if (tab === 'accounts') loadAccounts();
+  if (tab === 'codex') loadCodex();
+  if (tab === 'outlook') loadOutlook();
+  if (tab === 'config') loadConfig();
+  if (tab === 'register') refreshJobs();
+}
+$$('nav button').forEach(b => b.addEventListener('click', () => activateTab(b.dataset.tab)));
+
+// ---------- 概览 ----------
+async function loadSummary() {
+  try {
+    const s = await api('/api/summary');
+    $('#statAccounts').textContent = s.accounts;
+    $('#statOutlook').textContent = s.outlook_total;
+    $('#statAvailable').textContent = s.outlook_available;
+    $('#statUsed').textContent = s.outlook_used;
+    $('#statFailed').textContent = s.outlook_failed;
+    $('#updatedAt').textContent = new Date().toLocaleTimeString();
+  } catch(e) {}
+}
+
+// ---------- 注册 / 任务 ----------
+$('#btnStart').addEventListener('click', async () => {
+  const count = parseInt($('#regCount').value || '1', 10);
+  const workers = parseInt($('#regWorkers').value || '3', 10);
+  const active = JOBS.filter(j => ['pending','running','stopping'].includes(j.status));
+  if (active.length > 0) {
+    const ok = confirm(
+      `当前任务表里已有 ${active.length} 个任务在跑或排队，` +
+      `这次会再加 ${count} 个，合计 ${active.length + count} 个，确定继续？\n\n` +
+      `（如果只是想跑这 ${count} 个，建议先点"取消所有排队"清掉残留再提交）`
+    );
+    if (!ok) return;
+  }
+  $('#btnStart').disabled = true;
+  const restoreBtn = () => { $('#btnStart').disabled = false; };
+  try {
+    const r = await api('/api/jobs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count, workers}) });
+    $('#regWarn').innerHTML = r.warning ? `<div class="banner warn">${esc(r.warning)}（本次并发 ${r.workers || workers}）</div>` : `<div class="banner info">已提交 ${r.submitted} 个任务，本次并发 ${r.workers || workers}</div>`;
+    refreshJobs();
+  } catch(e) { $('#regWarn').innerHTML = `<div class="banner warn">${esc(e.message)}</div>`; }
+  finally { setTimeout(restoreBtn, 3000); }
+});
+$('#btnRefreshJobs').addEventListener('click', refreshJobs);
+$('#jobsSelectAll').addEventListener('change', (e) => {
+  const p = PAGERS.jobs;
+  const pageRows = JOBS.slice((p.page - 1) * p.size, p.page * p.size)
+    .filter(j => j.status !== 'running');
+  if (e.target.checked) pageRows.forEach(j => JOB_SELECTED.add(Number(j.id)));
+  else pageRows.forEach(j => JOB_SELECTED.delete(Number(j.id)));
+  renderJobs();
+});
+$('#btnDeleteSelectedJobs').addEventListener('click', deleteSelectedJobs);
+$('#btnCancelPending').addEventListener('click', async () => {
+  const pendingCount = JOBS.filter(j => j.status === 'pending').length;
+  if (pendingCount === 0) { showToast('当前没有排队任务'); return; }
+  if (!confirm(`确定取消 ${pendingCount} 个排队中的任务吗？已运行中的任务不受影响。`)) return;
+  $('#btnCancelPending').disabled = true;
+  try {
+    const r = await api('/api/jobs/cancel-pending', { method:'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
+    showToast(`已取消 ${r.cancelled} 个排队任务`);
+    refreshJobs();
+  } catch(e) { showToast('取消失败: ' + e.message); }
+  finally { $('#btnCancelPending').disabled = false; }
+});
+
+function renderJobs() {
+  const p = PAGERS.jobs;
+  const total = JOBS.length;
+  const rows = JOBS.slice((p.page - 1) * p.size, p.page * p.size);
+  const selectableIdsAll = new Set(JOBS.filter(j => j.status !== 'running').map(j => Number(j.id)));
+  for (const id of Array.from(JOB_SELECTED)) {
+    if (!selectableIdsAll.has(Number(id))) JOB_SELECTED.delete(id);
+  }
+  $('#jobsBody').innerHTML = rows.map(j => `
+    <tr>
+      <td><input type="checkbox" class="job-row-check" data-job-id="${esc(j.id)}" ${JOB_SELECTED.has(Number(j.id)) ? 'checked' : ''} ${j.status === 'running' ? 'disabled title="运行中的任务不能选择删除"' : ''}></td>
+      <td class="muted">#${esc(j.id)}</td>
+      <td>${pill(j.status)}</td>
+      <td title="${esc(j.email || '-')}">${esc(j.email || '-')}</td>
+      <td class="muted" title="${esc(j.started_at || '-')}">${esc(j.started_at || '-')}</td>
+      <td class="muted" title="${esc(j.completed_at || '-')}">${esc(j.completed_at || '-')}</td>
+      <td class="muted wrap" title="${esc(j.error_message || '')}">${esc(short(j.error_message || '', 90))}</td>
+      <td class="actions-cell">
+        <div class="actions job-actions">
+          <button data-log-job="${esc(j.id)}">日志</button>
+          ${['pending','running','stopping'].includes(j.status) ? `<button class="danger" data-stop-job="${esc(j.id)}">${j.status === 'stopping' ? '停止/修复' : '停止'}</button>` : ''}
+          <button class="danger" data-delete-job="${esc(j.id)}" ${j.status === 'running' ? 'disabled title="运行中的任务不能删除；如需删除请先停止"' : ''}>删除</button>
+        </div>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="8" class="muted">暂无任务</td></tr>';
+  updateJobsSelectionUi(rows);
+  _renderPager('jobs', total);
+}
+
+function updateJobsSelectionUi(pageRows = null) {
+  const hint = $('#jobsSelectedHint');
+  const bulkBtn = $('#btnDeleteSelectedJobs');
+  if (hint) hint.textContent = `已选 ${JOB_SELECTED.size}`;
+  if (bulkBtn) bulkBtn.disabled = JOB_SELECTED.size === 0;
+
+  const cbAll = $('#jobsSelectAll');
+  if (!cbAll) return;
+  if (!pageRows) {
+    const p = PAGERS.jobs;
+    pageRows = JOBS.slice((p.page - 1) * p.size, p.page * p.size);
+  }
+  const selectableIds = pageRows.filter(j => j.status !== 'running').map(j => Number(j.id));
+  const checkedCount = selectableIds.filter(id => JOB_SELECTED.has(id)).length;
+  cbAll.checked = selectableIds.length > 0 && checkedCount === selectableIds.length;
+  cbAll.indeterminate = checkedCount > 0 && checkedCount < selectableIds.length;
+  cbAll.disabled = selectableIds.length === 0;
+}
+
+async function refreshJobs() {
+  try {
+    JOBS = await api('/api/jobs?limit=500');
+    renderJobs();
+    loadSummary();
+  } catch(e) {}
+}
+
+let modalScrollY = 0;
+function updateModalScrollLock() {
+  const opened = !$('#logPanel').classList.contains('hidden') || !$('#retryLogPanel').classList.contains('hidden');
+  const locked = document.body.classList.contains('modal-open');
+  if (opened && !locked) {
+    modalScrollY = window.scrollY || document.documentElement.scrollTop || 0;
+    document.body.style.top = `-${modalScrollY}px`;
+    document.body.classList.add('modal-open');
+    document.documentElement.style.overflow = 'hidden';
+  } else if (!opened && locked) {
+    document.body.classList.remove('modal-open');
+    document.body.style.top = '';
+    document.documentElement.style.overflow = '';
+    window.scrollTo(0, modalScrollY || 0);
+  }
+}
+function closeLogModal() {
+  activeLogJob = null;
+  clearInterval(logTimer);
+  $('#logPanel').classList.add('hidden');
+  updateModalScrollLock();
+}
+function closeRetryLogModal() {
+  retryLogEmail = null;
+  clearInterval(retryLogTimer);
+  $('#retryLogPanel').classList.add('hidden');
+  updateModalScrollLock();
+}
+
+$('#jobsBody').addEventListener('click', (e) => {
+  const logBtn = e.target.closest('[data-log-job]');
+  if (logBtn) {
+    openLog(parseInt(logBtn.dataset.logJob, 10));
+    return;
+  }
+  const stopBtn = e.target.closest('[data-stop-job]');
+  if (stopBtn) {
+    stopJob(parseInt(stopBtn.dataset.stopJob, 10), stopBtn);
+    return;
+  }
+  const delBtn = e.target.closest('[data-delete-job]');
+  if (delBtn) {
+    deleteJob(parseInt(delBtn.dataset.deleteJob, 10), delBtn);
+  }
+});
+$('#jobsBody').addEventListener('change', (e) => {
+  const cb = e.target.closest('.job-row-check');
+  if (!cb) return;
+  const id = Number(cb.dataset.jobId);
+  if (cb.checked) JOB_SELECTED.add(id);
+  else JOB_SELECTED.delete(id);
+  updateJobsSelectionUi();
+});
+$('#btnCloseLog').addEventListener('click', closeLogModal);
+
+async function stopJob(jobId, btn) {
+  const job = JOBS.find(j => Number(j.id) === Number(jobId));
+  const statusText = job?.status || '-';
+  const emailText = job?.email || '未分配邮箱';
+  if (!confirm(`确定停止任务 #${jobId}？\n\n状态：${statusText}\n邮箱：${emailText}\n\n排队任务会直接取消；运行中的任务会发送停止信号，并在当前步骤检查点退出。`)) return;
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/jobs/${jobId}/stop`, { method:'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
+    showToast(r.message || '已发送停止信号');
+    refreshJobs();
+    if (activeLogJob === jobId) pollLog();
+  } catch(e) {
+    showToast('停止失败: ' + e.message);
+    btn.disabled = false;
+  }
+}
+
+async function deleteJob(jobId, btn) {
+  const job = JOBS.find(j => Number(j.id) === Number(jobId));
+  const statusText = job?.status || '-';
+  const emailText = job?.email || '未分配邮箱';
+  if (!confirm(`确定删除任务 #${jobId}？\n\n状态：${statusText}\n邮箱：${emailText}\n\n会同时删除该任务日志。排队任务删除后将不会执行。`)) return;
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/jobs/${jobId}/delete`, { method:'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
+    if (activeLogJob === jobId) closeLogModal();
+    showToast(r.deleted ? '任务已删除' : '任务不存在');
+    JOB_SELECTED.delete(Number(jobId));
+    refreshJobs();
+  } catch(e) {
+    showToast('删除失败: ' + e.message);
+    btn.disabled = false;
+  }
+}
+
+async function deleteSelectedJobs() {
+  const ids = Array.from(JOB_SELECTED);
+  if (ids.length === 0) { showToast('请先选择任务'); return; }
+  const selectedJobs = ids.map(id => JOBS.find(j => Number(j.id) === Number(id))).filter(Boolean);
+  const runningCount = selectedJobs.filter(j => ['running','stopping'].includes(j.status)).length;
+  const deletableCount = selectedJobs.length - runningCount;
+  if (deletableCount <= 0) { showToast('选中的任务都在运行中，不能删除'); return; }
+  const msg = `确定删除选中的 ${deletableCount} 个任务吗？\n\n` +
+              `会同时删除对应日志。排队任务删除后将不会执行。` +
+              (runningCount ? `\n\n另外 ${runningCount} 个运行中任务会自动跳过。` : '');
+  if (!confirm(msg)) return;
+
+  $('#btnDeleteSelectedJobs').disabled = true;
+  try {
+    const r = await api('/api/jobs/delete-bulk', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({job_ids: ids}),
+    });
+    (r.deleted || []).forEach(id => JOB_SELECTED.delete(Number(id)));
+    if (activeLogJob != null && (r.deleted || []).map(Number).includes(Number(activeLogJob))) closeLogModal();
+    const skippedCount = (r.skipped || []).length;
+    showToast(skippedCount ? `已删除 ${r.deleted_count || 0} 个，跳过 ${skippedCount} 个` : `已删除 ${r.deleted_count || 0} 个`);
+    refreshJobs();
+  } catch(e) {
+    showToast('批量删除失败: ' + e.message);
+    updateJobsSelectionUi();
+  }
+}
+
+function openLog(jobId) {
+  activeLogJob = jobId;
+  $('#logJobId').textContent = jobId;
+  $('#logPanel').classList.remove('hidden');
+  updateModalScrollLock();
+  $('#logContent').textContent = '加载中…';
+  pollLog();
+  clearInterval(logTimer);
+  logTimer = setInterval(pollLog, 2000);
+}
+async function pollLog() {
+  if (activeLogJob == null) return;
+  try {
+    const r = await api(`/api/jobs/${activeLogJob}/log`);
+    const c = $('#logContent');
+    const atBottom = c.scrollTop + c.clientHeight >= c.scrollHeight - 30;
+    c.textContent = r.log || '(暂无日志)';
+    if (atBottom) c.scrollTop = c.scrollHeight;
+    if (r.job && ['success','failed'].includes(r.job.status)) clearInterval(logTimer);
+  } catch(e) {}
+}
+
+// ---------- 账号 ----------
+async function loadAccounts() {
+  try { ACCOUNTS = await api('/api/accounts?limit=2000'); renderAccounts(); } catch(e) {}
+}
+function _codexCell(r) {
+  const s = r.codex_status || '';
+  const err = r.codex_error || '';
+  const titleAttr = err ? ` title="${esc(err)}"` : '';
+  if (s === 'success') return `<span class="pill status-success">成功</span>`;
+  if (s === 'retrying') return `<span class="pill status-running">补跑中</span>`;
+  if (s === 'failed') return `<span class="pill status-failed"${titleAttr}>失败</span>`;
+  if (s === 'skipped') return `<span class="pill status-used">已跳过</span>`;
+  if (s === 'deactivated') return `<span class="pill status-failed" title="账号已被 OpenAI 删除/停用/封禁，无法授权">已废号</span>`;
+  return `<span class="muted">-</span>`;
+}
+function _codexAction(r) {
+  const s = r.codex_status || '';
+  if (s === 'retrying') {
+    return `<button data-codex-reset-retrying="${esc(r.email)}" title="将补跑中状态重置为失败，之后可重新补跑">重置补跑状态</button>`;
+  }
+  if (s === 'deactivated') return '';
+  const label = s === 'success' ? '重新补跑 Codex' : '补跑 Codex';
+  return `<button data-codex-retry="${esc(r.email)}" title="重新跑一次 Codex 授权（会消耗 1 封邮箱 OTP + 1 个接码短信）">${label}</button>`;
+}
+function renderAccounts() {
+  const q = $('#qAccounts').value.trim().toLowerCase();
+  const filtered = ACCOUNTS.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+  const p = PAGERS.accounts;
+  const total = filtered.length;
+  const rows = filtered.slice((p.page - 1) * p.size, p.page * p.size);
+  const existingIds = new Set(ACCOUNTS.map(r => Number(r.id)));
+  for (const id of Array.from(ACCOUNT_SELECTED)) {
+    if (!existingIds.has(Number(id))) ACCOUNT_SELECTED.delete(id);
+  }
+  $('#accountsBody').innerHTML = rows.map(r => `
+    <tr>
+      <td><input type="checkbox" class="account-row-check" data-account-id="${esc(r.id)}" ${ACCOUNT_SELECTED.has(Number(r.id)) ? 'checked' : ''}></td>
+      <td class="muted">#${esc(r.id)}</td>
+      <td><div class="main-cell">${esc(r.email)}</div><div class="sub-cell">${esc(r.user_name || '-')}</div></td>
+      <td>${esc(r.email_source || '-')}</td>
+      <td><span class="mono">${esc(short(r.access_token || '', 42))}</span></td>
+      <td>${r.totp_secret ? '已启用' : '<span class="muted">未启用</span>'}</td>
+      <td>${_codexCell(r)}</td>
+      <td class="muted">${esc(r.created_at || '-')}</td>
+      <td class="actions">${cbtn('复制Token', r.access_token, 'primary')} ${cbtn('复制整行', r.copy_line, 'good')} ${_codexAction(r)} <button data-codex-log="${esc(r.email)}" title="查看该账号最近一次 Codex 补跑日志">补跑日志</button> <button class="danger" data-account-delete="${esc(r.id)}" data-email="${esc(r.email)}">删除</button></td>
+    </tr>`).join('') || '<tr><td colspan="9" class="muted">暂无账号</td></tr>';
+  updateAccountSelectionUi(rows);
+  _renderPager('accounts', total);
+}
+
+function updateAccountSelectionUi(pageRows = null) {
+  const hint = $('#accountsSelectedHint');
+  const bulkBtn = $('#btnDeleteSelectedAccounts');
+  const retryBulkBtn = $('#btnRetrySelectedCodex');
+  if (hint) hint.textContent = `已选 ${ACCOUNT_SELECTED.size}`;
+  if (bulkBtn) bulkBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  if (retryBulkBtn) retryBulkBtn.disabled = ACCOUNT_SELECTED.size === 0;
+
+  const cbAll = $('#accountsSelectAll');
+  if (!cbAll) return;
+  if (!pageRows) {
+    const q = $('#qAccounts').value.trim().toLowerCase();
+    const filtered = ACCOUNTS.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+    const p = PAGERS.accounts;
+    pageRows = filtered.slice((p.page - 1) * p.size, p.page * p.size);
+  }
+  const pageIds = pageRows.map(r => Number(r.id));
+  const checkedCount = pageIds.filter(id => ACCOUNT_SELECTED.has(id)).length;
+  cbAll.checked = pageIds.length > 0 && checkedCount === pageIds.length;
+  cbAll.indeterminate = checkedCount > 0 && checkedCount < pageIds.length;
+  cbAll.disabled = pageIds.length === 0;
+}
+
+// ---------- 补跑日志面板 ----------
+let retryLogEmail = null, retryLogTimer = null;
+
+function openRetryLog(email) {
+  retryLogEmail = email;
+  $('#retryLogEmail').textContent = email;
+  $('#retryLogPanel').classList.remove('hidden');
+  updateModalScrollLock();
+  $('#retryLogContent').textContent = '加载中…';
+  pollRetryLog();
+  clearInterval(retryLogTimer);
+  retryLogTimer = setInterval(pollRetryLog, 2000);
+}
+async function pollRetryLog() {
+  if (!retryLogEmail) return;
+  try {
+    const r = await api(`/api/codex/retry-log?email=${encodeURIComponent(retryLogEmail)}`);
+    const c = $('#retryLogContent');
+    const atBottom = c.scrollTop + c.clientHeight >= c.scrollHeight - 30;
+    c.textContent = r.log || '(暂无日志，等待任务写入…)';
+    if (atBottom) c.scrollTop = c.scrollHeight;
+    if (!r.running) {
+      clearInterval(retryLogTimer);
+      loadAccounts();
+    }
+  } catch(e) {}
+}
+$('#btnCloseRetryLog').addEventListener('click', closeRetryLogModal);
+
+// 账号操作按钮（事件委托）
+$('#accountsBody').addEventListener('click', async (e) => {
+  const delBtn = e.target.closest('[data-account-delete]');
+  if (delBtn) {
+    await deleteAccount(Number(delBtn.dataset.accountDelete), delBtn.dataset.email, delBtn);
+    return;
+  }
+
+  const logBtn = e.target.closest('[data-codex-log]');
+  if (logBtn) {
+    openRetryLog(logBtn.dataset.codexLog);
+    return;
+  }
+
+  const resetBtn = e.target.closest('[data-codex-reset-retrying]');
+  if (resetBtn) {
+    const email = resetBtn.dataset.codexResetRetrying;
+    if (!confirm(`确定重置该账号的 Codex「补跑中」状态吗？\n\n${email}\n\n重置后状态会变为“失败”，可再次点击“补跑 Codex”。`)) return;
+    resetBtn.disabled = true;
+    try {
+      const r = await api('/api/codex/reset-retrying', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, status:'failed'}) });
+      showToast(r.message || '已重置补跑状态');
+      if (retryLogEmail === email) {
+        clearInterval(retryLogTimer);
+        pollRetryLog();
+      }
+      loadAccounts();
+    } catch(err) {
+      showToast('重置失败: ' + err.message);
+      resetBtn.disabled = false;
+    }
+    return;
+  }
+
+  const btn = e.target.closest('[data-codex-retry]');
+  if (!btn) return;
+  const email = btn.dataset.codexRetry;
+  if (!confirm(`重新跑 Codex 授权？\n\n${email}\n\n将消耗：\n  • 1 封邮箱 OTP（自动收）\n  • 1 个接码短信（约 $0.13）\n\n补跑会在后台进行（~1-2 分钟），完成后状态自动更新。`)) return;
+  btn.disabled = true;
+  try {
+    const r = await api('/api/codex/retry', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email}) });
+    showToast(r.message || '已开始补跑');
+    loadAccounts();
+    openRetryLog(email);
+    const poll = setInterval(async () => {
+      const acc = ACCOUNTS.find(a => a.email === email);
+      if (!acc || acc.codex_status !== 'retrying') clearInterval(poll);
+    }, 5000);
+    setTimeout(() => clearInterval(poll), 5 * 60 * 1000);
+  } catch(err) {
+    showToast('触发补跑失败: ' + err.message);
+    btn.disabled = false;
+  }
+});
+$('#accountsBody').addEventListener('change', (e) => {
+  const cb = e.target.closest('.account-row-check');
+  if (!cb) return;
+  const id = Number(cb.dataset.accountId);
+  if (cb.checked) ACCOUNT_SELECTED.add(id);
+  else ACCOUNT_SELECTED.delete(id);
+  updateAccountSelectionUi();
+});
+$('#accountsSelectAll').addEventListener('change', (e) => {
+  const q = $('#qAccounts').value.trim().toLowerCase();
+  const filtered = ACCOUNTS.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+  const p = PAGERS.accounts;
+  const pageRows = filtered.slice((p.page - 1) * p.size, p.page * p.size);
+  if (e.target.checked) pageRows.forEach(r => ACCOUNT_SELECTED.add(Number(r.id)));
+  else pageRows.forEach(r => ACCOUNT_SELECTED.delete(Number(r.id)));
+  renderAccounts();
+});
+$('#btnDeleteSelectedAccounts').addEventListener('click', deleteSelectedAccounts);
+$('#btnRetrySelectedCodex').addEventListener('click', retrySelectedCodex);
+
+async function deleteAccount(id, email, btn) {
+  if (!confirm(`确定删除账号 #${id}？\n\n${email || ''}\n\n会从本地账号列表、注册成功邮箱和 token 文件中移除。`)) return;
+  btn.disabled = true;
+  try {
+    await api(`/api/accounts/${id}/delete`, { method:'POST', headers:{'Content-Type':'application/json'}, body: '{}' });
+    ACCOUNT_SELECTED.delete(Number(id));
+    showToast('账号已删除');
+    loadAccounts(); loadSummary();
+  } catch(err) {
+    showToast('删除失败: ' + err.message);
+    btn.disabled = false;
+  }
+}
+
+async function deleteSelectedAccounts() {
+  const ids = Array.from(ACCOUNT_SELECTED);
+  if (ids.length === 0) { showToast('请先选择账号'); return; }
+  if (!confirm(`确定删除选中的 ${ids.length} 个账号吗？\n\n会从本地账号列表、注册成功邮箱和 token 文件中移除。`)) return;
+  $('#btnDeleteSelectedAccounts').disabled = true;
+  try {
+    const r = await api('/api/accounts/delete-bulk', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({account_ids: ids}),
+    });
+    (r.deleted || []).forEach(item => ACCOUNT_SELECTED.delete(Number(item.id)));
+    const skippedCount = (r.skipped || []).length;
+    showToast(skippedCount ? `已删除 ${r.deleted_count || 0} 个，跳过 ${skippedCount} 个` : `已删除 ${r.deleted_count || 0} 个`);
+    loadAccounts(); loadSummary();
+  } catch(err) {
+    showToast('批量删除失败: ' + err.message);
+    updateAccountSelectionUi();
+  }
+}
+
+async function retrySelectedCodex() {
+  const ids = Array.from(ACCOUNT_SELECTED);
+  if (ids.length === 0) { showToast('请先选择账号'); return; }
+  const workersEl = $('#codexBulkWorkers');
+  const workers = Math.max(1, Math.min(16, Number(workersEl?.value || 1)));
+  if (workersEl) workersEl.value = workers;
+  const selectedAccounts = ids.map(id => ACCOUNTS.find(a => Number(a.id) === Number(id))).filter(Boolean);
+  const retryingCount = selectedAccounts.filter(a => (a.codex_status || '') === 'retrying').length;
+  const deactivatedCount = selectedAccounts.filter(a => (a.codex_status || '') === 'deactivated').length;
+  let msg = `批量补跑选中的 ${ids.length} 个账号 Codex 授权？
+
+并发线程数：${workers}
+
+将按账号消耗邮箱 OTP 和接码短信。`;
+  if (retryingCount || deactivatedCount) msg += `
+
+其中：补跑中 ${retryingCount} 个、已废号 ${deactivatedCount} 个会自动跳过。`;
+  if (!confirm(msg)) return;
+  const btn = $('#btnRetrySelectedCodex');
+  btn.disabled = true;
+  try {
+    const r = await api('/api/codex/retry-bulk', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({account_ids: ids, workers}),
+    });
+    const skippedCount = (r.skipped || []).length;
+    showToast(skippedCount ? `已开始 ${r.started_count || 0} 个，跳过 ${skippedCount} 个` : (r.message || '已开始批量补跑'));
+    loadAccounts();
+    const first = (r.started || [])[0];
+    if (first && first.email) openRetryLog(first.email);
+    const poll = setInterval(loadAccounts, 5000);
+    setTimeout(() => clearInterval(poll), 10 * 60 * 1000);
+  } catch(err) {
+    showToast('批量补跑失败: ' + err.message);
+    updateAccountSelectionUi();
+  }
+}
+
+$('#qAccounts').addEventListener('input', () => { PAGERS.accounts.page = 1; renderAccounts(); });
+$('#copyAllTokens').addEventListener('click', () => copyText(ACCOUNTS.map(r=>r.access_token).filter(Boolean).join('\n')));
+$('#copyAllLines').addEventListener('click', () => copyText(ACCOUNTS.map(r=>r.copy_line).filter(Boolean).join('\n')));
+
+// ---------- 邮箱池 ----------
+function poolKey(r) { return `${r.source || $('#poolSource')?.value || 'outlook'}|${r.email || ''}`; }
+function poolLabel(src) {
+  return ({outlook:'Outlook', generic_api:'通用API', cloudflare_domain:'域名邮箱'})[src] || src || '-';
+}
+async function loadOutlook() {
+  try {
+    const source = $('#poolSource')?.value || 'outlook';
+    OUTLOOK = await api(`/api/outlook?limit=2000&source=${encodeURIComponent(source)}`);
+    OUTLOOK_SELECTED.clear();
+    renderOutlook();
+  } catch(e) {}
+}
+function renderOutlook() {
+  const q = $('#qOutlook').value.trim().toLowerCase();
+  const filtered = OUTLOOK.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+  const p = PAGERS.outlook;
+  const total = filtered.length;
+  const rows = filtered.slice((p.page - 1) * p.size, p.page * p.size);
+  const existingKeys = new Set(OUTLOOK.map(r => poolKey(r)));
+  for (const key of Array.from(OUTLOOK_SELECTED)) {
+    if (!existingKeys.has(key)) OUTLOOK_SELECTED.delete(key);
+  }
+  $('#outlookBody').innerHTML = rows.map(r => `
+    <tr>
+      <td><input type="checkbox" class="outlook-row-check" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}" ${OUTLOOK_SELECTED.has(poolKey(r)) ? 'checked' : ''}></td>
+      <td><div class="main-cell">${esc(r.email)}</div><div class="sub-cell mono">${esc(short(r.copy_line, 70))}</div></td>
+      <td>${esc(poolLabel(r.source))}</td>
+      <td>${pill(r.status)}</td>
+      <td><span class="mono">${esc(short(r.access_token || '', 36) || '未生成')}</span></td>
+      <td class="muted">${esc(r.used_at || '-')}</td>
+      <td class="actions">
+        ${cbtn('复制邮箱', r.copy_line)} ${cbtn('复制Token', r.access_token, 'primary')} ${cbtn('复制整行', r.account_copy_line, 'good')}
+        ${r.status === 'failed'
+          ? `<button data-pool-act="available" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}">恢复可用</button>`
+          : `<button data-pool-act="failed" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}">标失败</button>`}
+        <button data-pool-act="delete" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}" style="border-color:#e7a3a0;color:#b3261e;">删除</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="7" class="muted">邮箱池为空</td></tr>';
+  updateOutlookSelectionUi(rows);
+  _renderPager('outlook', total);
+}
+function updateOutlookSelectionUi(pageRows = null) {
+  const hint = $('#outlookSelectedHint');
+  const bulkBtn = $('#btnDeleteSelectedOutlook');
+  const markAvailBtn = $('#btnMarkSelectedOutlookAvailable');
+  if (hint) hint.textContent = `已选 ${OUTLOOK_SELECTED.size}`;
+  if (bulkBtn) bulkBtn.disabled = OUTLOOK_SELECTED.size === 0;
+  if (markAvailBtn) markAvailBtn.disabled = OUTLOOK_SELECTED.size === 0;
+
+  const cbAll = $('#outlookSelectAll');
+  if (!cbAll) return;
+  if (!pageRows) {
+    const q = $('#qOutlook').value.trim().toLowerCase();
+    const filtered = OUTLOOK.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+    const p = PAGERS.outlook;
+    pageRows = filtered.slice((p.page - 1) * p.size, p.page * p.size);
+  }
+  const pageKeys = pageRows.map(r => poolKey(r)).filter(Boolean);
+  const checkedCount = pageKeys.filter(key => OUTLOOK_SELECTED.has(key)).length;
+  cbAll.checked = pageKeys.length > 0 && checkedCount === pageKeys.length;
+  cbAll.indeterminate = checkedCount > 0 && checkedCount < pageKeys.length;
+  cbAll.disabled = pageKeys.length === 0;
+}
+$('#qOutlook').addEventListener('input', () => { PAGERS.outlook.page = 1; renderOutlook(); });
+$('#poolSource').addEventListener('change', () => {
+  PAGERS.outlook.page = 1;
+  OUTLOOK_SELECTED.clear();
+  if ($('#poolSource').value !== 'all' && $('#poolSource').value !== 'cloudflare_domain') $('#importSource').value = $('#poolSource').value;
+  loadOutlook();
+});
+$('#importSource').addEventListener('change', () => {
+  $('#poolSource').value = $('#importSource').value;
+  PAGERS.outlook.page = 1;
+  OUTLOOK_SELECTED.clear();
+  loadOutlook();
+});
+$('#copyAllEmails').addEventListener('click', () => copyText(OUTLOOK.map(r=>r.copy_line).filter(Boolean).join('\n')));
+$('#outlookSelectAll').addEventListener('change', (e) => {
+  const q = $('#qOutlook').value.trim().toLowerCase();
+  const filtered = OUTLOOK.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+  const p = PAGERS.outlook;
+  const pageRows = filtered.slice((p.page - 1) * p.size, p.page * p.size);
+  if (e.target.checked) pageRows.forEach(r => r.email && OUTLOOK_SELECTED.add(poolKey(r)));
+  else pageRows.forEach(r => OUTLOOK_SELECTED.delete(poolKey(r)));
+  renderOutlook();
+});
+$('#btnDeleteSelectedOutlook').addEventListener('click', deleteSelectedOutlook);
+$('#btnMarkSelectedOutlookAvailable').addEventListener('click', () => bulkMarkOutlookStatus('available'));
+$('#outlookBody').addEventListener('click', async (e) => {
+  const t = e.target.closest('[data-pool-act]');
+  if (!t) return;
+  const { poolAct, email } = t.dataset;
+  const source = t.dataset.source || $('#poolSource').value;
+  try {
+    if (poolAct === 'delete') {
+      if (!confirm(`确定从邮箱池删除 ${email}？此操作不可撤销。`)) return;
+      await api('/api/outlook/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, source}) });
+      OUTLOOK_SELECTED.delete(`${source}|${email}`);
+      showToast('已删除');
+    } else {
+      await api('/api/outlook/status', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, status: poolAct, source, note: poolAct==='failed'?'手动标记失败':'手动恢复可用'}) });
+      showToast(poolAct === 'failed' ? '已标失败' : '已恢复可用');
+    }
+    loadOutlook(); loadSummary();
+  } catch(err) { showToast('操作失败: ' + err.message); }
+});
+$('#outlookBody').addEventListener('change', (e) => {
+  const cb = e.target.closest('.outlook-row-check');
+  if (!cb) return;
+  const email = cb.dataset.email;
+  const source = cb.dataset.source || $('#poolSource').value;
+  const key = `${source}|${email}`;
+  if (cb.checked) OUTLOOK_SELECTED.add(key);
+  else OUTLOOK_SELECTED.delete(key);
+  updateOutlookSelectionUi();
+});
+
+async function bulkMarkOutlookStatus(status) {
+  const items = Array.from(OUTLOOK_SELECTED).map(key => {
+    const [source, ...rest] = key.split('|');
+    return {source, email: rest.join('|')};
+  });
+  if (items.length === 0) { showToast('请先选择邮箱'); return; }
+  const label = status === 'available' ? '未使用/可用' : status;
+  if (!confirm(`确定把选中的 ${items.length} 个邮箱标记为${label}吗？`)) return;
+  const btn = $('#btnMarkSelectedOutlookAvailable');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('/api/outlook/status-bulk', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({items, status, source: $('#poolSource').value, note: '批量标记未使用'}),
+    });
+    OUTLOOK_SELECTED.clear();
+    const skippedCount = (r.skipped || []).length;
+    showToast(skippedCount ? `已更新 ${r.updated_count || 0} 个，跳过 ${skippedCount} 个` : `已更新 ${r.updated_count || 0} 个`);
+    loadOutlook(); loadSummary();
+  } catch(err) {
+    showToast('批量标记失败: ' + err.message);
+    updateOutlookSelectionUi();
+  }
+}
+
+async function deleteSelectedOutlook() {
+  const items = Array.from(OUTLOOK_SELECTED).map(key => {
+    const [source, ...rest] = key.split('|');
+    return {source, email: rest.join('|')};
+  });
+  if (items.length === 0) { showToast('请先选择邮箱'); return; }
+  if (!confirm(`确定从邮箱池删除选中的 ${items.length} 个邮箱吗？\n\n此操作不可撤销。`)) return;
+  $('#btnDeleteSelectedOutlook').disabled = true;
+  try {
+    const r = await api('/api/outlook/delete-bulk', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({items, source: $('#poolSource').value}),
+    });
+    (r.deleted || []).forEach(item => OUTLOOK_SELECTED.delete(`${item.source}|${item.email}`));
+    const skippedCount = (r.skipped || []).length;
+    showToast(skippedCount ? `已删除 ${r.deleted_count || 0} 个，跳过 ${skippedCount} 个` : `已删除 ${r.deleted_count || 0} 个`);
+    loadOutlook(); loadSummary();
+  } catch(err) {
+    showToast('批量删除失败: ' + err.message);
+    updateOutlookSelectionUi();
+  }
+}
+$('#btnImport').addEventListener('click', async () => {
+  const text = $('#importText').value;
+  if (!text.trim()) { showToast('请粘贴邮箱素材'); return; }
+  $('#btnImport').disabled = true;
+  try {
+    const source = $('#importSource').value;
+    const r = await api('/api/outlook/import', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, source}) });
+    $('#importResult').innerHTML = `<div class="banner info">解析 ${r.parsed} 行，新增 ${r.inserted}，跳过 ${r.skipped}</div>`;
+    $('#importText').value = '';
+    $('#poolSource').value = source;
+    loadOutlook(); loadSummary();
+  } catch(e) { $('#importResult').innerHTML = `<div class="banner warn">${esc(e.message)}</div>`; }
+  finally { $('#btnImport').disabled = false; }
+});
+
+// ---------- Codex 授权 ----------
+let CODEX = [];
+async function loadCodex() {
+  try {
+    const r = await api('/api/codex');
+    CODEX = r.accounts || [];
+    $('#codexStatTotal').textContent = r.summary?.total ?? 0;
+    $('#codexStatExported').textContent = r.summary?.exported ?? 0;
+    $('#codexStatPending').textContent = r.summary?.pending ?? 0;
+    renderCodex();
+  } catch(e) { showToast('加载 Codex 列表失败: ' + e.message); }
+}
+const CODEX_SELECTED = new Set();
+function _codexUpdateSelectedHint() {
+  $('#codexSelectedHint').textContent = `已选 ${CODEX_SELECTED.size}`;
+  $('#btnCodexDownloadBulk').disabled = CODEX_SELECTED.size === 0;
+  const delBtn = $('#btnCodexDeleteBulk');
+  if (delBtn) delBtn.disabled = CODEX_SELECTED.size === 0;
+}
+function renderCodex() {
+  const q = $('#qCodex').value.trim().toLowerCase();
+  const filtered = CODEX.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+  const p = PAGERS.codex;
+  const total = filtered.length;
+  const rows = filtered.slice((p.page - 1) * p.size, p.page * p.size);
+  $('#codexBody').innerHTML = rows.map(r => {
+    const exported = (r.exported_count || 0) > 0;
+    const statusBadge = exported
+      ? `<span class="pill status-used" title="导出 ${esc(r.exported_count)} 次，最近 ${esc(r.exported_at || '-')}">已导出</span>`
+      : `<span class="pill status-available">未导出</span>`;
+    const checked = CODEX_SELECTED.has(r.filename) ? 'checked' : '';
+    return `
+    <tr>
+      <td><input type="checkbox" class="codex-row-check" data-fname="${esc(r.filename)}" ${checked}></td>
+      <td><div class="main-cell">${esc(r.email || '-')}</div><div class="sub-cell mono">${esc(r.filename)}</div></td>
+      <td>${esc(r.plan || '-')}</td>
+      <td>${statusBadge}</td>
+      <td><span class="mono">${esc(r.account_id || '-')}</span></td>
+      <td class="muted">${esc(r.mtime || '-')}</td>
+      <td class="muted">${esc(r.expired || '-')}</td>
+      <td class="actions">
+        <button class="primary" data-codex-download="${esc(r.filename)}">下载 JSON</button>
+        ${exported ? `<button data-codex-reset="${esc(r.filename)}" title="重新标记为未导出">重置标记</button>` : ''}
+        <button class="danger" data-codex-delete="${esc(r.filename)}" title="删除本地 Codex JSON 凭证文件">删除</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="8" class="muted">还没有 Codex 凭证。注册成功并跑通 Codex 授权后会自动出现。</td></tr>';
+  // 全选 checkbox：仅反映当前页状态
+  const pageFilenames = rows.map(r => r.filename);
+  const allChecked = pageFilenames.length > 0 && pageFilenames.every(f => CODEX_SELECTED.has(f));
+  $('#codexSelectAll').checked = allChecked;
+  $('#codexSelectAll').indeterminate = !allChecked && pageFilenames.some(f => CODEX_SELECTED.has(f));
+  _codexUpdateSelectedHint();
+  _renderPager('codex', total);
+}
+$('#qCodex').addEventListener('input', () => { PAGERS.codex.page = 1; renderCodex(); });
+$('#btnRefreshCodex').addEventListener('click', loadCodex);
+
+// 全选 / 取消全选（仅当前页可见行）
+$('#codexSelectAll').addEventListener('change', (e) => {
+  const q = $('#qCodex').value.trim().toLowerCase();
+  const filtered = CODEX.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+  const p = PAGERS.codex;
+  const pageRows = filtered.slice((p.page - 1) * p.size, p.page * p.size);
+  if (e.target.checked) pageRows.forEach(r => CODEX_SELECTED.add(r.filename));
+  else pageRows.forEach(r => CODEX_SELECTED.delete(r.filename));
+  renderCodex();
+});
+
+// 行 checkbox 变化（事件委托）
+$('#codexBody').addEventListener('change', (e) => {
+  const cb = e.target.closest('.codex-row-check');
+  if (!cb) return;
+  if (cb.checked) CODEX_SELECTED.add(cb.dataset.fname);
+  else CODEX_SELECTED.delete(cb.dataset.fname);
+  _codexUpdateSelectedHint();
+  const q = $('#qCodex').value.trim().toLowerCase();
+  const filtered = CODEX.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+  const p = PAGERS.codex;
+  const pageFilenames = filtered.slice((p.page - 1) * p.size, p.page * p.size).map(r => r.filename);
+  const allChecked = pageFilenames.length > 0 && pageFilenames.every(f => CODEX_SELECTED.has(f));
+  $('#codexSelectAll').checked = allChecked;
+  $('#codexSelectAll').indeterminate = !allChecked && pageFilenames.some(f => CODEX_SELECTED.has(f));
+});
+
+// 批量下载
+$('#btnCodexDownloadBulk').addEventListener('click', async () => {
+  if (CODEX_SELECTED.size === 0) return;
+  const filenames = Array.from(CODEX_SELECTED);
+  const note = `选中 ${filenames.length} 个凭证，打包到一个 JSON 文件下载。\n\n` +
+               `⚠ 这个聚合格式 CPA 不能直接读，主要用于备份/迁移。\n` +
+               `要给 CPA 用请用每行的"下载 JSON"单个下载。\n\n继续？`;
+  if (!confirm(note)) return;
+  $('#btnCodexDownloadBulk').disabled = true;
+  try {
+    const resp = await fetch('/api/codex/download-bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filenames }),
+    });
+    if (!resp.ok) {
+      const e = await resp.json().catch(() => ({}));
+      throw new Error(e.error || ('HTTP ' + resp.status));
+    }
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="([^"]+)"/);
+    const dlname = m ? m[1] : `codex-bulk-${Date.now()}.json`;
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = dlname;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 800);
+    showToast(`已打包下载 ${filenames.length} 个`);
+    CODEX_SELECTED.clear();
+    setTimeout(loadCodex, 600);
+  } catch(err) {
+    showToast('批量下载失败: ' + err.message);
+  } finally {
+    _codexUpdateSelectedHint();
+  }
+});
+
+$('#btnCodexDeleteBulk').addEventListener('click', async () => {
+  if (CODEX_SELECTED.size === 0) return;
+  const filenames = Array.from(CODEX_SELECTED);
+  if (!confirm(`确定删除选中的 ${filenames.length} 个 Codex 凭证吗？\n\n会删除本地 codex_accounts/ 下的 JSON 文件，并清理导出标记。此操作不可撤销。`)) return;
+  $('#btnCodexDeleteBulk').disabled = true;
+  try {
+    const r = await api('/api/codex/delete-bulk', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({filenames}),
+    });
+    (r.deleted || []).forEach(fname => CODEX_SELECTED.delete(fname));
+    const skipped = (r.skipped || []).length;
+    showToast(skipped ? `已删除 ${r.deleted_count || 0} 个，跳过 ${skipped} 个` : `已删除 ${r.deleted_count || 0} 个`);
+    loadCodex();
+  } catch(err) {
+    showToast('批量删除失败: ' + err.message);
+    _codexUpdateSelectedHint();
+  }
+});
+
+$('#codexBody').addEventListener('click', async (e) => {
+  const dl = e.target.closest('[data-codex-download]');
+  if (dl) {
+    const fname = dl.dataset.codexDownload;
+    window.location.href = `/api/codex/download/${encodeURIComponent(fname)}`;
+    setTimeout(loadCodex, 800);
+    return;
+  }
+  const del = e.target.closest('[data-codex-delete]');
+  if (del) {
+    const fname = del.dataset.codexDelete;
+    if (!confirm(`确定删除 Codex 凭证？\n\n${fname}\n\n会删除本地 JSON 文件，并清理导出标记。此操作不可撤销。`)) return;
+    del.disabled = true;
+    try {
+      await api('/api/codex/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({filename: fname}) });
+      CODEX_SELECTED.delete(fname);
+      showToast('Codex 凭证已删除');
+      loadCodex();
+    } catch(err) {
+      showToast('删除失败: ' + err.message);
+      del.disabled = false;
+    }
+    return;
+  }
+  const rs = e.target.closest('[data-codex-reset]');
+  if (rs) {
+    const fname = rs.dataset.codexReset;
+    if (!confirm(`把 ${fname} 标记重置为未导出？`)) return;
+    try {
+      await api('/api/codex/reset-export', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({filename: fname}) });
+      showToast('已重置');
+      loadCodex();
+    } catch(err) { showToast('重置失败: ' + err.message); }
+  }
+});
+
+// ---------- 配置 ----------
+let CONFIG_ACTIVE_GROUP = '';
+
+function configGroups() {
+  const groups = {};
+  CONFIG.forEach(f => { (groups[f.group || '其他'] = groups[f.group || '其他'] || []).push(f); });
+  return groups;
+}
+
+function renderConfigField(f) {
+  let html = `<label class="fld">${esc(f.label)}<span class="hint">${esc(f.help)} · <span class="mono">${esc(f.key)}</span></span>`;
+  if (f.type === 'bool') {
+    html += `<select data-key="${esc(f.key)}"><option value="true"${f.value?' selected':''}>开启 (True)</option><option value="false"${!f.value?' selected':''}>关闭 (False)</option></select>`;
+  } else if (f.type === 'int') {
+    html += `<input type="number" data-key="${esc(f.key)}" value="${esc(f.value)}">`;
+  } else if (f.type === 'float') {
+    html += `<input type="number" step="0.1" data-key="${esc(f.key)}" value="${esc(f.value)}">`;
+  } else if (f.type === 'list_str_multiline') {
+    html += `<textarea data-key="${esc(f.key)}">${esc((f.value||[]).join('\n'))}</textarea>`;
+  } else {
+    html += `<input type="text" data-key="${esc(f.key)}" value="${esc(f.value)}">`;
+  }
+  return html + `</label>`;
+}
+
+function renderConfigTabs() {
+  const groups = configGroups();
+  const names = Object.keys(groups);
+  if (!CONFIG_ACTIVE_GROUP || !groups[CONFIG_ACTIVE_GROUP]) CONFIG_ACTIVE_GROUP = names[0] || '';
+  $('#configTabs').innerHTML = names.map(name => `
+    <button type="button" data-config-group="${esc(name)}" class="${name === CONFIG_ACTIVE_GROUP ? 'active' : ''}">
+      ${esc(name)} <span class="config-count">${groups[name].length}</span>
+    </button>
+  `).join('');
+}
+
+function renderRoxyWorkspaceTools() {
+  if (CONFIG_ACTIVE_GROUP !== 'RoxyBrowser') return '';
+  const current = (CONFIG.find(f => f.key === 'ROXY_WORKSPACE_ID') || {}).value || '';
+  return `
+    <div class="roxy-workspace-box">
+      <div>
+        <b>团队 / 项目选择</b>
+        <div class="hint">点击“获取团队”调用 Roxy <span class="mono">/browser/workspace</span>，选择后保存 <span class="mono">ROXY_WORKSPACE_ID</span> 和 <span class="mono">ROXY_PROJECT_ID</span>。</div>
+        <a class="roxy-invite-link" href="https://roxybrowser.cn/invite/NvH4Jx" target="_blank" rel="noopener noreferrer">打开 RoxyBrowser 官网（免费 5 个窗口）</a>
+      </div>
+      <div class="row">
+        <div>
+          <label class="fld">团队 / 项目
+            <select id="roxyWorkspaceSelect"><option value="">当前团队：${esc(current || '未设置')}</option></select>
+          </label>
+        </div>
+        <div class="action-cell">
+          <button class="btn" type="button" id="btnLoadRoxyWorkspaces">获取团队</button>
+          <button class="btn primary" type="button" id="btnSaveRoxyWorkspace" disabled>保存选择</button>
+        </div>
+      </div>
+      <div id="roxyWorkspaceStatus" class="muted" style="font-size:12px;">未加载</div>
+    </div>
+  `;
+}
+
+function bindRoxyWorkspaceTools() {
+  const loadBtn = $('#btnLoadRoxyWorkspaces');
+  const saveBtn = $('#btnSaveRoxyWorkspace');
+  const sel = $('#roxyWorkspaceSelect');
+  if (!loadBtn || !saveBtn || !sel) return;
+  sel.addEventListener('change', () => { saveBtn.disabled = !sel.value; });
+  loadBtn.addEventListener('click', loadRoxyWorkspaces);
+  saveBtn.addEventListener('click', saveRoxyWorkspaceSelection);
+}
+
+function renderConfigPanel() {
+  const groups = configGroups();
+  const fields = groups[CONFIG_ACTIVE_GROUP] || [];
+  if (!fields.length) {
+    $('#configForm').innerHTML = '<div class="banner warn">暂无配置项</div>';
+    return;
+  }
+  $('#configForm').innerHTML = `
+    <div class="config-panel">
+      <h3>${esc(CONFIG_ACTIVE_GROUP)}</h3>
+      ${renderRoxyWorkspaceTools()}
+      ${fields.map(renderConfigField).join('')}
+    </div>
+  `;
+  bindRoxyWorkspaceTools();
+}
+
+async function loadConfig() {
+  try {
+    CONFIG = await api('/api/config');
+    renderConfigTabs();
+    renderConfigPanel();
+  } catch(e) {
+    $('#configTabs').innerHTML = '';
+    $('#configForm').innerHTML = `<div class="banner warn">${esc(e.message)}</div>`;
+  }
+}
+
+$('#configTabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-config-group]');
+  if (!btn) return;
+  CONFIG_ACTIVE_GROUP = btn.dataset.configGroup;
+  renderConfigTabs();
+  renderConfigPanel();
+});
+
+async function loadRoxyWorkspaces() {
+  const status = $('#roxyWorkspaceStatus');
+  const sel = $('#roxyWorkspaceSelect');
+  const saveBtn = $('#btnSaveRoxyWorkspace');
+  const loadBtn = $('#btnLoadRoxyWorkspaces');
+  if (!status || !sel) return;
+  loadBtn.disabled = true;
+  saveBtn.disabled = true;
+  status.textContent = '正在调用 Roxy API 获取团队/工作区...';
+  try {
+    const r = await api('/api/roxy/workspaces');
+    const items = r.items || [];
+    if (!items.length) {
+      const errs = (r.errors || []).slice(0, 5).map(x => `${x.method || ''} ${x.path || ''}: ${x.error || ''}`).join('；');
+      throw new Error(errs ? `未返回团队/工作区列表。探测结果：${errs}` : '未返回团队/工作区列表');
+    }
+    const current = (CONFIG.find(f => f.key === 'ROXY_WORKSPACE_ID') || {}).value || '';
+    const currentProject = (CONFIG.find(f => f.key === 'ROXY_PROJECT_ID') || {}).value || '';
+    sel.innerHTML = `<option value="">请选择团队/项目（当前团队：${esc(current || '未设置')}，项目：${esc(currentProject || '未设置')}）</option>` +
+      items.map(x => {
+        const value = `${x.id}::${x.projectId || ''}`;
+        const selected = String(x.id)===String(current) && String(x.projectId || '')===String(currentProject);
+        return `<option value="${esc(value)}" data-workspace-id="${esc(x.id)}" data-project-id="${esc(x.projectId || '')}"${selected?' selected':''}>${esc(x.label || (x.name + ' (' + x.id + ')'))}</option>`;
+      }).join('');
+    saveBtn.disabled = !sel.value;
+    status.innerHTML = `已获取 ${items.length} 个团队/项目，接口：<span class="mono">${esc(r.method || '')} ${esc(r.path || '')}</span>`;
+  } catch(e) {
+    status.innerHTML = `<span style="color:var(--red);">获取失败：${esc(e.message)}</span>`;
+  } finally {
+    loadBtn.disabled = false;
+  }
+}
+
+async function saveRoxyWorkspaceSelection() {
+  const sel = $('#roxyWorkspaceSelect');
+  const status = $('#roxyWorkspaceStatus');
+  const opt = sel ? sel.selectedOptions[0] : null;
+  const workspaceId = opt ? (opt.dataset.workspaceId || '') : '';
+  const projectId = opt ? (opt.dataset.projectId || '') : '';
+  if (!workspaceId) return;
+  try {
+    const r = await api('/api/config', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({updates: {ROXY_WORKSPACE_ID: workspaceId, ROXY_PROJECT_ID: projectId}}),
+    });
+    const fw = CONFIG.find(x => x.key === 'ROXY_WORKSPACE_ID');
+    const fp = CONFIG.find(x => x.key === 'ROXY_PROJECT_ID');
+    if (fw) fw.value = workspaceId;
+    if (fp) fp.value = projectId;
+    status.innerHTML = `✅ 已保存团队 ID：<span class="mono">${esc(workspaceId)}</span>，项目 ID：<span class="mono">${esc(projectId || '未设置')}</span>`;
+    showToast(r.reloaded ? 'Roxy 团队/项目已保存并生效' : 'Roxy 团队/项目已保存');
+    renderConfigPanel();
+  } catch(e) {
+    status.innerHTML = `<span style="color:var(--red);">保存失败：${esc(e.message)}</span>`;
+  }
+}
+$('#btnSaveConfig').addEventListener('click', async () => {
+  const updates = {};
+  $$('#tab-config [data-key]').forEach(el => {
+    const f = CONFIG.find(x => x.key === el.dataset.key);
+    if (!f) return;
+    if (f.type === 'list_str_multiline') updates[f.key] = el.value.split('\n').map(s=>s.trim()).filter(Boolean);
+    else if (f.type === 'bool') updates[f.key] = el.value === 'true';
+    else if (f.type === 'int') updates[f.key] = parseInt(el.value || '0', 10);
+    else if (f.type === 'float') updates[f.key] = parseFloat(el.value || '0');
+    else updates[f.key] = el.value;
+  });
+  $('#btnSaveConfig').disabled = true;
+  try {
+    const r = await api('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({updates}) });
+    if (r.reloaded) {
+      $('#configBanner').className = 'banner info';
+      $('#configBanner').innerHTML = `✅ 已保存 ${r.updated.length} 项，并完成热加载，<b>立即生效</b>，无需重启。`;
+    } else {
+      $('#configBanner').className = 'banner warn';
+      $('#configBanner').innerHTML = `已保存 ${r.updated.length} 项，但<b>热加载失败</b>（${esc(r.note||'')}），请重启 Web 服务后生效。`;
+    }
+    showToast(r.reloaded ? '配置已生效' : '配置已保存（需重启）');
+  } catch(e) { showToast('保存失败: ' + e.message); }
+  finally { $('#btnSaveConfig').disabled = false; }
+});
+
+// ---------- 全局复制委托 ----------
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('[data-copy-id]');
+  if (!t) return;
+  copyText(copyStore.get(t.dataset.copyId));
+});
+
+// ---------- 初始化 ----------
+loadSummary();
+activateTab(localStorage.getItem('gpt_console_active_tab') || 'register', false);
+jobsTimer = setInterval(() => { if (!$('#tab-register').classList.contains('hidden')) refreshJobs(); }, 3000);
+setInterval(loadSummary, 5000);
+</script>
+</body>
+</html>

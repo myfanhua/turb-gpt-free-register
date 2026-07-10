@@ -1,0 +1,68 @@
+# ============================================================
+# 运行时账号凭证 / 真实数据 —— 永远不要提交
+# ============================================================
+
+# Outlook / API 邮箱池（含密码、clientId、refreshToken 或私有取码地址）
+用于注册的邮箱.json
+用于注册的邮箱.txt
+用于注册的API邮箱.json
+用于注册的API邮箱.txt
+
+# 注册成功账号（含 accessToken、TOTP secret 等）
+注册成功的邮箱.json
+注册成功的邮箱.txt
+注册成功的token.txt
+accounts/
+
+# Codex 授权凭证（含 access/refresh/id token）
+codex_accounts/
+codex_导出状态.json
+
+# 任务记录与运行日志
+注册任务.json
+注册日志/
+accounts_viewer.html
+
+# Cloudflare 域名邮箱池（运行时数据）
+用于注册的域名邮箱.json
+
+# 旧版数据/历史迁移残留
+data/
+
+# ============================================================
+# 缓存 / 临时文件 / 诊断输出
+# ============================================================
+__pycache__/
+.venv/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 历史调试输出（_xxx.out / _xxx_dump.html）
+tools/_*.out
+tools/_*.html
+tools/_*.py
+!tools/test_codex_oauth.py
+
+# Sentinel runner 临时 challenge 文件
+sentinel-challenge-*.json
+
+# ============================================================
+# 编辑器 / 操作系统
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# 本地实验脚本（任何 .local. 前缀的私有文件）
+# ============================================================
+*.local.*
