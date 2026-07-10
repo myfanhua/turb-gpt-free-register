@@ -101,13 +101,14 @@ def _prepare_registration_args() -> tuple[str, str, str]:
         if _e.USE_EMAIL_SERVICE:
             email = acquire_email()
         else:
-            raise RuntimeError("Web 任务入口无法交互输入邮箱，请在 config.REGISTER_EMAIL 配置邮箱")
+            raise RuntimeError(
+                "手动模式未配置邮箱。请在 WebUI 配置页设置 REGISTER_EMAIL，"
+                "或开启 USE_EMAIL_SERVICE 并从邮箱池领取。"
+            )
 
     if not name:
-        if _e.USE_EMAIL_SERVICE:
-            name = _random_display_name()
-        else:
-            raise RuntimeError("Web 任务入口无法交互输入名称，请在 config.REGISTER_NAME 配置显示名")
+        # 手动模式也自动生成显示名，减少配置负担
+        name = _random_display_name()
 
     return email, name, generate_random_birthday()
 

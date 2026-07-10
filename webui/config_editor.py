@@ -161,7 +161,15 @@ EDITABLE_FIELDS = [
     # ---- 邮箱 / OTP ----
     {
         "key": "USE_EMAIL_SERVICE", "file": "email.py", "type": "bool", "group": "邮箱 / OTP",
-        "label": "自动取邮箱+收码", "help": "True=从 Outlook 池自动领邮箱并自动收 OTP；False=人工输入",
+        "label": "自动取邮箱+收码", "help": "True=从邮箱池自动领邮箱并自动收 OTP；False=手动模式：用 REGISTER_EMAIL，OTP 在任务页手填",
+    },
+    {
+        "key": "REGISTER_EMAIL", "file": "register.py", "type": "str", "group": "邮箱 / OTP",
+        "label": "手动注册邮箱", "help": "USE_EMAIL_SERVICE=False 时必填。例如你的 outlook.com 地址；OTP 去网页邮箱看，再回任务页提交",
+    },
+    {
+        "key": "REGISTER_NAME", "file": "register.py", "type": "str", "group": "邮箱 / OTP",
+        "label": "显示名称", "help": "留空则自动生成英文名",
     },
     {
         "key": "OTP_MAX_WAIT", "file": "email.py", "type": "int", "group": "邮箱 / OTP",

@@ -774,7 +774,28 @@ def create_app() -> Flask:
 
         # 提交前先确认池里有足够可用邮箱，给前端一个温和提示（不阻断）
         from config import email as _email_cfg
+        from config import register as _register_cfg
         from core.email_provider import parse_email_sources
+        if not bool(getattr(_email_cfg, "USE_EMAIL_SERVICE", True)):
+            reg_email = str(getattr(_register_cfg, "REGISTER_EMAIL", "") or "").strip()
+            if not reg_email:
+                return jsonify({
+                    "ok": False,
+                    "error": "手动模式未配置 REGISTER_EMAIL。请到配置页填写「手动注册邮箱」，或开启自动取邮箱+收码。",
+                }), 400
+            if count > 1:
+                return jsonify({
+                    "ok": False,
+                    "error": "手动模式建议每次只跑 1 个任务（同一 REGISTER_EMAIL）。请把数量设为 1。",
+                }), 400
+            jobs = svc.submit_registration(count=count, workers=workers)
+            return jsonify({
+                "ok": True,
+                "submitted": len(jobs),
+                "jobs": jobs,
+                "warning": f"手动 OTP 模式：将使用 {reg_email}；验证码请在任务页提交",
+                "workers": workers,
+            })
         sources = parse_email_sources(_email_cfg.EMAIL_SOURCE)
         if "cloudflare_domain" in sources:
             pool = db.domain_email_pool_summary()
@@ -802,6 +823,31 @@ def create_app() -> Flask:
                 warning = f"可用邮箱仅 {pool.get('available', 0)} 个，少于任务数 {count}，不足的会失败"
         jobs = svc.submit_registration(count=count, workers=workers)
         return jsonify({"ok": True, "submitted": len(jobs), "jobs": jobs, "warning": warning, "workers": workers})
+
+    @app.get("/api/manual-otp/waiting")
+    def api_manual_otp_waiting():
+        """列出当前正在等待手动验证码的邮箱。"""
+        from core.manual_otp import list_waiting
+        return jsonify({"ok": True, "waiting": list_waiting()})
+
+    @app.post("/api/manual-otp")
+    def api_manual_otp_submit():
+        """提交手动邮箱验证码。Body: {email, code} 或 {job_id, code}。"""
+        from core.manual_otp import submit_manual_otp
+        data = request.get_json(silent=True) or {}
+        code = (data.get("code") or data.get("otp") or "").strip()
+        email = (data.get("email") or "").strip()
+        job_id = data.get("job_id")
+        if not email and job_id is not None:
+            job = db.get_job(int(job_id))
+            email = (job or {}).get("email") or ""
+        if not email:
+            return jsonify({"ok": False, "error": "email/job_id 缺失"}), 400
+        try:
+            result = submit_manual_otp(email, code)
+            return jsonify(result)
+        except Exception as exc:
+            return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 400
 
     @app.post("/api/jobs/cancel-pending")
     def api_jobs_cancel_pending():

@@ -620,6 +620,10 @@ function renderJobs() {
       <td class="actions-cell">
         <div class="actions job-actions">
           <button data-log-job="${esc(j.id)}">日志</button>
+          ${j.status === 'running' && j.email ? `
+            <input class="manual-otp-input" data-otp-email="${esc(j.email)}" data-otp-job="${esc(j.id)}" placeholder="邮箱验证码" maxlength="8" style="width:96px;min-height:28px;padding:2px 6px;" title="手动模式下，打开邮箱后把 6 位验证码贴这里">
+            <button class="good" data-submit-otp-job="${esc(j.id)}" data-email="${esc(j.email)}">提交验证码</button>
+          ` : ''}
           ${['pending','running','stopping'].includes(j.status) ? `<button class="danger" data-stop-job="${esc(j.id)}">${j.status === 'stopping' ? '停止/修复' : '停止'}</button>` : ''}
           <button class="danger" data-delete-job="${esc(j.id)}" ${j.status === 'running' ? 'disabled title="运行中的任务不能删除；如需删除请先停止"' : ''}>删除</button>
         </div>
@@ -691,6 +695,11 @@ $('#jobsBody').addEventListener('click', (e) => {
     openLog(parseInt(logBtn.dataset.logJob, 10));
     return;
   }
+  const otpBtn = e.target.closest('[data-submit-otp-job]');
+  if (otpBtn) {
+    submitManualOtpForJob(otpBtn);
+    return;
+  }
   const stopBtn = e.target.closest('[data-stop-job]');
   if (stopBtn) {
     stopJob(parseInt(stopBtn.dataset.stopJob, 10), stopBtn);
@@ -701,6 +710,29 @@ $('#jobsBody').addEventListener('click', (e) => {
     deleteJob(parseInt(delBtn.dataset.deleteJob, 10), delBtn);
   }
 });
+
+async function submitManualOtpForJob(btn) {
+  const jobId = parseInt(btn.dataset.submitOtpJob, 10);
+  const email = btn.dataset.email || '';
+  const input = document.querySelector(`.manual-otp-input[data-otp-job="${jobId}"]`);
+  const code = (input?.value || '').trim();
+  if (!code) { showToast('请先填写邮箱验证码'); return; }
+  btn.disabled = true;
+  try {
+    const r = await api('/api/manual-otp', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email, code, job_id: jobId }),
+    });
+    showToast(r.ok ? `已提交验证码给 ${email || ('#'+jobId)}` : (r.error || '提交失败'));
+    if (input) input.value = '';
+    if (activeLogJob === jobId) pollLog();
+  } catch (e) {
+    showToast('提交验证码失败: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
 $('#jobsBody').addEventListener('change', (e) => {
   const cb = e.target.closest('.job-row-check');
   if (!cb) return;
