@@ -1478,7 +1478,9 @@ function renderConfigField(f) {
   } else {
     // 空字符串/占位符 '-' 都显示为空输入框，避免误保存成真实值
     const shown = isPlaceholderEmpty(f.value) ? '' : f.value;
-    html += `<input type="text" data-key="${attrEsc(f.key)}" value="${attrEsc(shown)}" placeholder="可留空">`;
+    const inputType = f.secret ? 'password' : 'text';
+    const ph = f.secret ? '保存在 .env，可留空' : '可留空';
+    html += `<input type="${inputType}" data-key="${attrEsc(f.key)}" value="${attrEsc(shown)}" placeholder="${ph}" autocomplete="off" spellcheck="false">`;
   }
   return html + `</label>`;
 }

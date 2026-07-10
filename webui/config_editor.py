@@ -44,7 +44,8 @@ EDITABLE_FIELDS = [
     # ---- Browser Use Cloud ----
     {
         "key": "BROWSER_USE_API_KEY", "file": "browser_use.py", "type": "str", "group": "Browser Use",
-        "label": "Browser Use API Key", "help": "Cloud Dashboard 创建的 API Key；连接 CDP 时作为 apiKey 查询参数",
+        "label": "Browser Use API Key", "help": "保存在 .env（BROWSER_USE_API_KEY），不写回 config/*.py",
+        "storage": "env", "secret": True,
     },
     {
         "key": "BROWSER_USE_PROXY_COUNTRY_CODE", "file": "browser_use.py", "type": "str", "group": "Browser Use",
@@ -80,7 +81,8 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "ROXY_API_TOKEN", "file": "roxybrowser.py", "type": "str", "group": "RoxyBrowser",
-        "label": "Roxy API Key", "help": "Roxy 应用左侧 API → API配置 → API Key；请求头 token 会使用它",
+        "label": "Roxy API Key", "help": "保存在 .env（ROXY_API_TOKEN），不写回 config/*.py",
+        "storage": "env", "secret": True,
     },
     {
         "key": "ROXY_PROFILE_ID", "file": "roxybrowser.py", "type": "str", "group": "RoxyBrowser",
@@ -193,7 +195,8 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "QQ_IMAP_PASSWORD", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
-        "label": "QQ 邮箱 IMAP 授权码", "help": "16 位授权码（QQ邮箱网页→设置→账户→POP3/IMAP/SMTP服务生成）",
+        "label": "QQ 邮箱 IMAP 授权码", "help": "保存在 .env（QQ_IMAP_PASSWORD），不写回 config/*.py",
+        "storage": "env", "secret": True,
     },
     # ---- 浏览器地区画像 ----
     {
@@ -227,7 +230,8 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "CPA_MANAGEMENT_KEY", "file": "codex.py", "type": "str", "group": "CPA / Codex",
-        "label": "CPA 管理密钥", "help": "作为 Authorization: Bearer 和 X-Management-Key 提交给 CPA",
+        "label": "管理密钥", "help": "保存在 .env（CPA_MANAGEMENT_KEY），不写回 config/*.py",
+        "storage": "env", "secret": True,
     },
     {
         "key": "CPA_REQUEST_TIMEOUT", "file": "codex.py", "type": "int", "group": "CPA / Codex",
@@ -260,7 +264,8 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "SMS_API_KEY", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "API 密钥", "help": "GrizzlySMS 后台→设置 获取的 API key",
+        "label": "API 密钥", "help": "保存在 .env（SMS_API_KEY），不写回 config/*.py",
+        "storage": "env", "secret": True,
     },
     {
         "key": "L_API_BASE", "file": "codex.py", "type": "str", "group": "接码平台",
@@ -268,7 +273,8 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "L_ADMIN_AUTH_CODE", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "L 授权码", "help": "L_API.md 中的 ADMIN_AUTH_CODE，会作为 Bearer Token 使用",
+        "label": "L 授权码", "help": "保存在 .env（L_ADMIN_AUTH_CODE），不写回 config/*.py",
+        "storage": "env", "secret": True,
     },
     {
         "key": "L_PHONE_PREFIX", "file": "codex.py", "type": "str", "group": "接码平台",
@@ -332,11 +338,18 @@ def _parse_value_from_source(source: str, key: str, vtype: str):
 
 def get_config() -> list[dict]:
     """返回所有可编辑项的当前值 + 元信息，供前端渲染表单。"""
+    from config.env_loader import env_str, load_env
+    load_env(override=True)
+
     out = []
     for field in EDITABLE_FIELDS:
-        path = _config_path(field["file"])
-        source = path.read_text(encoding="utf-8") if path.exists() else ""
-        value = _parse_value_from_source(source, field["key"], field["type"])
+        storage = field.get("storage") or "py"
+        if storage == "env":
+            value = env_str(field["key"], "")
+        else:
+            path = _config_path(field["file"])
+            source = path.read_text(encoding="utf-8") if path.exists() else ""
+            value = _parse_value_from_source(source, field["key"], field["type"])
         if field["type"] in ("str", "list_str_multiline"):
             value = _normalize_config_value(value, field["type"])
         item = dict(field)
@@ -458,16 +471,27 @@ def _atomic_write(path: Path, text: str) -> None:
 def update_config(updates: dict) -> dict:
     """
     批量更新配置。updates: {key: value}。
-    只接受白名单内的 key，按文件分组改写，每个文件原子写一次。
-    返回 {"updated": [...], "ignored": [...]}。
+
+    - 普通项写回 config/*.py
+    - storage=env 的密钥项写到项目根 .env，不改 py 默认值
+    返回 {"updated": [...], "ignored": [...], "env_updated": [...]}。
     """
+    from config.env_loader import write_env_values, load_env
+
     updated, ignored = [], []
-    # 按文件分组，减少读写次数
+    env_updates: dict[str, str] = {}
     by_file: dict[str, list[tuple[dict, object]]] = {}
+
     for key, value in updates.items():
         field = _FIELD_BY_KEY.get(key)
         if field is None:
             ignored.append(key)
+            continue
+        if (field.get("storage") or "py") == "env":
+            if field["type"] == "str":
+                value = _normalize_config_value(value, "str")
+            env_updates[field["key"]] = "" if value is None else str(value)
+            updated.append(key)
             continue
         by_file.setdefault(field["file"], []).append((field, value))
 
@@ -484,9 +508,15 @@ def update_config(updates: dict) -> dict:
                     value = _normalize_config_value(value, field["type"])
                 literal = _format_literal(value, field["type"])
                 source = _replace_scalar(source, field["key"], literal)
-            updated.append(field["key"])
+            if field["key"] not in updated:
+                updated.append(field["key"])
         # 校验改完仍是合法 Python，再落盘
         ast.parse(source)
         _atomic_write(path, source)
 
-    return {"updated": updated, "ignored": ignored}
+    env_updated = write_env_values(env_updates) if env_updates else []
+    if env_updated:
+        load_env(override=True)
+
+    return {"updated": updated, "ignored": ignored, "env_updated": env_updated}
+

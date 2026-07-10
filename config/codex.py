@@ -6,9 +6,11 @@
 参数来源：CLIProxyAPI 源码 internal/auth/codex/openai_auth.go + pkce.go，
 对照 https://github.com/router-for-me/CLIProxyAPI 逐行确认。
 """
+from config.env_loader import env_str
+
 
 # 是否启用 Codex OAuth 授权（False = 跳过，不影响注册结果）
-ENABLE_CODEX: bool = True
+ENABLE_CODEX: bool = False
 
 # Codex OAuth 客户端 ID（固定值，来自 CLIProxyAPI openai_auth.go:27 ClientID）
 CODEX_CLIENT_ID: str = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -43,7 +45,7 @@ CODEX_REQUEST_TIMEOUT: int = 30
 # ============================================================
 
 # 注册成功后是否自动跑 Codex 授权（True=自动，False=跳过）
-ENABLE_CODEX_AUTO: bool = True
+ENABLE_CODEX_AUTO: bool = False
 
 
 
@@ -64,7 +66,7 @@ CODEX_AUTH_URL_SOURCE: str = "cpa"
 CPA_MANAGEMENT_URL: str = "http://localhost:8317/management.html"
 
 # CPA 管理密钥，同时作为 Authorization: Bearer 和 X-Management-Key
-CPA_MANAGEMENT_KEY: str = ""
+CPA_MANAGEMENT_KEY: str = env_str("CPA_MANAGEMENT_KEY", "")
 
 # CPA 管理接口请求超时（秒）
 CPA_REQUEST_TIMEOUT: int = 30
@@ -91,7 +93,7 @@ SMS_API_BASE: str = "https://api.grizzlysms.com/stubs/handler_api.php"
 
 # 接码 API 密钥（在 GrizzlySMS 后台 → 设置 获取）
 # 留空时 Codex 授权的手机验证步会失败；如不需要 Codex 自动授权，把 ENABLE_CODEX_AUTO=False。
-SMS_API_KEY: str = ""
+SMS_API_KEY: str = env_str("SMS_API_KEY", "")
 
 # 服务代码：OpenAI = "dr"
 SMS_SERVICE: str = "openai"
@@ -123,7 +125,7 @@ SMS_REQUEST_TIMEOUT: int = 30
 L_API_BASE: str = "http://localhost:8788"
 
 # L 后台授权码，对应 L_API.md 里的 Authorization: Bearer <ADMIN_AUTH_CODE>
-L_ADMIN_AUTH_CODE: str = ""
+L_ADMIN_AUTH_CODE: str = env_str("L_ADMIN_AUTH_CODE", "")
 
 # L 返回的号码如果不含国家码，可在这里补前缀；例如美国本地 10 位号填 "1"。
 # 留空则直接使用 L 返回的 item.phone。

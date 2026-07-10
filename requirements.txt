@@ -5,3 +5,4 @@ requests>=2.31.0
 pycryptodome>=3.23.0
 selenium>=4.20.0
 playwright>=1.49.0
+python-dotenv>=1.0.0

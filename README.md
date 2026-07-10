@@ -89,6 +89,28 @@ pip install -r requirements.txt
 node --version
 ```
 
+### 密钥配置（.env）
+
+重要 API Key 请放在项目根目录 `.env`，不要写进 `config/*.py`。
+
+```bash
+cp .env.example .env
+# 编辑 .env，例如：
+# BROWSER_USE_API_KEY=...
+# ROXY_API_TOKEN=...
+```
+
+当前支持从 `.env` 读取的密钥：
+
+- `BROWSER_USE_API_KEY`
+- `ROXY_API_TOKEN`
+- `QQ_IMAP_PASSWORD`
+- `CPA_MANAGEMENT_KEY`
+- `SMS_API_KEY`
+- `L_ADMIN_AUTH_CODE`
+
+WebUI 配置页保存这些字段时会写入 `.env`（不是 config 源码）。
+
 ---
 
 ## 快速开始

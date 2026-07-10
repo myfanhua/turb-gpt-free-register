@@ -1,3 +1,6 @@
+from config.env_loader import load_env
+load_env(override=False)
+
 # -*- coding: utf-8 -*-
 """
 config 包的统一入口。
@@ -130,6 +133,9 @@ def reload_all() -> list[str]:
     热重载所有 config 子模块，返回成功 reload 的模块名列表。
     任何子模块 reload 失败（语法错等）会抛 ImportError，调用方自行处理。
     """
+    from config.env_loader import load_env
+    load_env(override=True)
+
     import sys
     reloaded = []
     for name in _RELOADABLE_SUBMODULES:

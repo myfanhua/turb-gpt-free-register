@@ -8,12 +8,13 @@ Browser Use Cloud 配置。
 
 用法：
   1. 在 config/roxybrowser.py 设置 REGISTRATION_DRIVER = "browser_use"
-  2. 填入 BROWSER_USE_API_KEY
+  2. 在 .env 填入 BROWSER_USE_API_KEY（也可用 WebUI 密钥字段写入 .env）
   3. 推荐先关 Codex：ENABLE_CODEX_AUTO = False
 """
+from config.env_loader import env_str
 
-# Browser Use API Key（Cloud Dashboard 创建）
-BROWSER_USE_API_KEY: str = ""
+# Browser Use API Key（Cloud Dashboard 创建；优先读 .env / 环境变量）
+BROWSER_USE_API_KEY: str = env_str("BROWSER_USE_API_KEY", "")
 
 # 连接方式：
 #   "cdp_url" = 直接用官方 CDP websocket（推荐，最简单）
