@@ -90,7 +90,29 @@ def resolve_email_source(email: str) -> str:
 
 
 def wait_for_otp(email: str, after_ts: float) -> str:
-    """等待并返回该邮箱最新的 ChatGPT OTP（6 位数字字符串）。"""
+    """等待并返回该邮箱最新的 ChatGPT OTP（6 位数字字符串）。
+
+    USE_EMAIL_SERVICE=False 时走手动验证码通道（WebUI 提交 / CLI 输入），
+    不再强制要求 Outlook clientId/refreshToken。
+    """
+    try:
+        from config import email as _email_cfg
+        use_service = bool(getattr(_email_cfg, "USE_EMAIL_SERVICE", True))
+    except Exception:
+        use_service = True
+
+    if not use_service:
+        from core.manual_otp import wait_for_manual_otp
+        from config import email as _email_cfg
+        timeout = int(getattr(_email_cfg, "OTP_MAX_WAIT", 180) or 180)
+        job_id = None
+        try:
+            from core import registration_service as svc
+            job_id = getattr(svc._THREAD_CTX, "job_id", None)
+        except Exception:
+            job_id = None
+        return wait_for_manual_otp(email, timeout=timeout, job_id=job_id)
+
     source = resolve_email_source(email)
     if source == "cloudflare_domain":
         from core.qqmail_client import fetch_latest_otp

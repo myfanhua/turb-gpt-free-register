@@ -39,9 +39,10 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "REGISTRATION_DRIVER", "file": "roxybrowser.py", "type": "str", "group": "注册方式",
-        "label": "注册驱动", "help": "protocol=原纯协议注册；roxy=调用 RoxyBrowser；cloak=调用 CloakBrowser",
+        "label": "注册驱动", "help": "protocol=纯协议；roxy=RoxyBrowser；cloak=CloakBrowser；browser_use=Browser Use Cloud+Playwright",
     },
 
+    # ---- CloakBrowser ----
     {
         "key": "CLOAK_HEADLESS", "file": "cloakbrowser.py", "type": "bool", "group": "CloakBrowser",
         "label": "Cloak无头", "help": "True=无头运行；False=显示浏览器窗口",
@@ -86,13 +87,49 @@ EDITABLE_FIELDS = [
         "key": "CLOAK_KEEP_BROWSER_OPEN", "file": "cloakbrowser.py", "type": "bool", "group": "CloakBrowser",
         "label": "保留Cloak浏览器", "help": "调试时开启，任务结束后不自动关闭",
     },
+
+    # ---- Browser Use Cloud ----
+    {
+        "key": "BROWSER_USE_API_KEY", "file": "browser_use.py", "type": "str", "group": "Browser Use",
+        "label": "Browser Use API Key", "help": "保存在 .env（BROWSER_USE_API_KEY），不写回 config/*.py",
+        "storage": "env", "secret": True,
+    },
+    {
+        "key": "BROWSER_USE_PROXY_COUNTRY_CODE", "file": "browser_use.py", "type": "str", "group": "Browser Use",
+        "label": "代理国家代码", "help": "两位国家码，如 jp/us/sg；配合 Browser Use 内置 residential proxy",
+    },
+    {
+        "key": "BROWSER_USE_USE_PROXY", "file": "browser_use.py", "type": "bool", "group": "Browser Use",
+        "label": "使用内置代理", "help": "True=连接参数带 proxyCountryCode；False=不强制传国家代理参数",
+    },
+    {
+        "key": "BROWSER_USE_PROFILE_ID", "file": "browser_use.py", "type": "str", "group": "Browser Use",
+        "label": "Profile ID", "help": "可选。填写则复用 Browser Use profile 的 cookies/localStorage；批量建议留空",
+    },
+    {
+        "key": "BROWSER_USE_CDP_BASE", "file": "browser_use.py", "type": "str", "group": "Browser Use",
+        "label": "CDP 地址", "help": "默认 wss://connect.browser-use.com",
+    },
+    {
+        "key": "BROWSER_USE_TIMEOUT", "file": "browser_use.py", "type": "int", "group": "Browser Use",
+        "label": "操作超时(秒)", "help": "Playwright 默认操作超时",
+    },
+    {
+        "key": "BROWSER_USE_KEEP_BROWSER_OPEN", "file": "browser_use.py", "type": "bool", "group": "Browser Use",
+        "label": "保留远端会话", "help": "调试时可不主动 browser.close()；默认 False",
+    },
+    {
+        "key": "BROWSER_USE_START_URL", "file": "browser_use.py", "type": "str", "group": "Browser Use",
+        "label": "起始 URL", "help": "默认 https://chatgpt.com/auth/login",
+    },
     {
         "key": "ROXY_API_BASE", "file": "roxybrowser.py", "type": "str", "group": "RoxyBrowser",
         "label": "Roxy API 地址", "help": "默认 http://127.0.0.1:50000；需在 Roxy 应用 API 配置中开启",
     },
     {
         "key": "ROXY_API_TOKEN", "file": "roxybrowser.py", "type": "str", "group": "RoxyBrowser",
-        "label": "Roxy API Key", "help": "Roxy 应用左侧 API → API配置 → API Key；请求头 token 会使用它",
+        "label": "Roxy API Key", "help": "保存在 .env（ROXY_API_TOKEN），不写回 config/*.py",
+        "storage": "env", "secret": True,
     },
     {
         "key": "ROXY_PROFILE_ID", "file": "roxybrowser.py", "type": "str", "group": "RoxyBrowser",
@@ -173,7 +210,15 @@ EDITABLE_FIELDS = [
     # ---- 邮箱 / OTP ----
     {
         "key": "USE_EMAIL_SERVICE", "file": "email.py", "type": "bool", "group": "邮箱 / OTP",
-        "label": "自动取邮箱+收码", "help": "True=从 Outlook 池自动领邮箱并自动收 OTP；False=人工输入",
+        "label": "自动取邮箱+收码", "help": "True=从邮箱池自动领邮箱并自动收 OTP；False=手动模式：用 REGISTER_EMAIL，OTP 在任务页手填",
+    },
+    {
+        "key": "REGISTER_EMAIL", "file": "register.py", "type": "str", "group": "邮箱 / OTP",
+        "label": "手动注册邮箱", "help": "USE_EMAIL_SERVICE=False 时必填。例如你的 outlook.com 地址；OTP 去网页邮箱看，再回任务页提交",
+    },
+    {
+        "key": "REGISTER_NAME", "file": "register.py", "type": "str", "group": "邮箱 / OTP",
+        "label": "显示名称", "help": "留空则自动生成英文名",
     },
     {
         "key": "OTP_MAX_WAIT", "file": "email.py", "type": "int", "group": "邮箱 / OTP",
@@ -197,7 +242,8 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "QQ_IMAP_PASSWORD", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
-        "label": "QQ 邮箱 IMAP 授权码", "help": "16 位授权码（QQ邮箱网页→设置→账户→POP3/IMAP/SMTP服务生成）",
+        "label": "QQ 邮箱 IMAP 授权码", "help": "保存在 .env（QQ_IMAP_PASSWORD），不写回 config/*.py",
+        "storage": "env", "secret": True,
     },
     # ---- 浏览器地区画像 ----
     {
@@ -231,7 +277,8 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "CPA_MANAGEMENT_KEY", "file": "codex.py", "type": "str", "group": "CPA / Codex",
-        "label": "CPA 管理密钥", "help": "作为 Authorization: Bearer 和 X-Management-Key 提交给 CPA",
+        "label": "管理密钥", "help": "保存在 .env（CPA_MANAGEMENT_KEY），不写回 config/*.py",
+        "storage": "env", "secret": True,
     },
     {
         "key": "CPA_REQUEST_TIMEOUT", "file": "codex.py", "type": "int", "group": "CPA / Codex",
@@ -264,7 +311,8 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "SMS_API_KEY", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "API 密钥", "help": "GrizzlySMS 后台→设置 获取的 API key",
+        "label": "API 密钥", "help": "保存在 .env（SMS_API_KEY），不写回 config/*.py",
+        "storage": "env", "secret": True,
     },
     {
         "key": "L_API_BASE", "file": "codex.py", "type": "str", "group": "接码平台",
@@ -272,7 +320,8 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "L_ADMIN_AUTH_CODE", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "L 授权码", "help": "L_API.md 中的 ADMIN_AUTH_CODE，会作为 Bearer Token 使用",
+        "label": "L 授权码", "help": "保存在 .env（L_ADMIN_AUTH_CODE），不写回 config/*.py",
+        "storage": "env", "secret": True,
     },
     {
         "key": "L_PHONE_PREFIX", "file": "codex.py", "type": "str", "group": "接码平台",
@@ -336,11 +385,20 @@ def _parse_value_from_source(source: str, key: str, vtype: str):
 
 def get_config() -> list[dict]:
     """返回所有可编辑项的当前值 + 元信息，供前端渲染表单。"""
+    from config.env_loader import env_str, load_env
+    load_env(override=True)
+
     out = []
     for field in EDITABLE_FIELDS:
-        path = _config_path(field["file"])
-        source = path.read_text(encoding="utf-8") if path.exists() else ""
-        value = _parse_value_from_source(source, field["key"], field["type"])
+        storage = field.get("storage") or "py"
+        if storage == "env":
+            value = env_str(field["key"], "")
+        else:
+            path = _config_path(field["file"])
+            source = path.read_text(encoding="utf-8") if path.exists() else ""
+            value = _parse_value_from_source(source, field["key"], field["type"])
+        if field["type"] in ("str", "list_str_multiline"):
+            value = _normalize_config_value(value, field["type"])
         item = dict(field)
         item["value"] = value
         out.append(item)
@@ -350,6 +408,38 @@ def get_config() -> list[dict]:
 # ============================================================
 # 写：行级精确替换右值，保留注释和格式
 # ============================================================
+
+
+_PLACEHOLDER_EMPTY = {
+    "", "-", "—", "无", "空", "none", "null", "n/a", "na", "未设置", "未配置",
+}
+
+
+def _normalize_config_value(value, vtype: str):
+    """把前端/历史占位空值规范化，避免 '-' 被当成真实配置。"""
+    if vtype == "str":
+        s = "" if value is None else str(value).strip()
+        if s.lower() in {x.lower() for x in _PLACEHOLDER_EMPTY}:
+            return ""
+        return s
+    if vtype == "list_str_multiline":
+        if value is None:
+            return []
+        if isinstance(value, str):
+            lines = value.splitlines()
+        elif isinstance(value, (list, tuple)):
+            lines = list(value)
+        else:
+            lines = [str(value)]
+        out = []
+        for item in lines:
+            s = str(item or "").strip()
+            if not s or s.lower() in {x.lower() for x in _PLACEHOLDER_EMPTY}:
+                continue
+            out.append(s)
+        return out
+    return value
+
 
 def _format_literal(value, vtype: str) -> str:
     """把前端传来的值格式化成 Python 字面量字符串。"""
@@ -428,16 +518,27 @@ def _atomic_write(path: Path, text: str) -> None:
 def update_config(updates: dict) -> dict:
     """
     批量更新配置。updates: {key: value}。
-    只接受白名单内的 key，按文件分组改写，每个文件原子写一次。
-    返回 {"updated": [...], "ignored": [...]}。
+
+    - 普通项写回 config/*.py
+    - storage=env 的密钥项写到项目根 .env，不改 py 默认值
+    返回 {"updated": [...], "ignored": [...], "env_updated": [...]}。
     """
+    from config.env_loader import write_env_values, load_env
+
     updated, ignored = [], []
-    # 按文件分组，减少读写次数
+    env_updates: dict[str, str] = {}
     by_file: dict[str, list[tuple[dict, object]]] = {}
+
     for key, value in updates.items():
         field = _FIELD_BY_KEY.get(key)
         if field is None:
             ignored.append(key)
+            continue
+        if (field.get("storage") or "py") == "env":
+            if field["type"] == "str":
+                value = _normalize_config_value(value, "str")
+            env_updates[field["key"]] = "" if value is None else str(value)
+            updated.append(key)
             continue
         by_file.setdefault(field["file"], []).append((field, value))
 
@@ -446,14 +547,22 @@ def update_config(updates: dict) -> dict:
         source = path.read_text(encoding="utf-8")
         for field, value in items:
             if field["type"] == "list_str_multiline":
+                value = _normalize_config_value(value, field["type"])
                 lines = value if isinstance(value, list) else str(value).splitlines()
                 source = _replace_proxy_pool(source, lines)
             else:
+                if field["type"] == "str":
+                    value = _normalize_config_value(value, field["type"])
                 literal = _format_literal(value, field["type"])
                 source = _replace_scalar(source, field["key"], literal)
-            updated.append(field["key"])
+            if field["key"] not in updated:
+                updated.append(field["key"])
         # 校验改完仍是合法 Python，再落盘
         ast.parse(source)
         _atomic_write(path, source)
 
-    return {"updated": updated, "ignored": ignored}
+    env_updated = write_env_values(env_updates) if env_updates else []
+    if env_updated:
+        load_env(override=True)
+
+    return {"updated": updated, "ignored": ignored, "env_updated": env_updated}

@@ -7,3 +7,5 @@ selenium>=4.20.0
 
 cryptography>=41
 cloakbrowser[geoip]>=0.4.10
+playwright>=1.49.0
+python-dotenv>=1.0.0
