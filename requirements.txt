@@ -4,3 +4,6 @@ flask>=3.0.0
 requests>=2.31.0
 pycryptodome>=3.23.0
 selenium>=4.20.0
+
+cryptography>=41
+cloakbrowser[geoip]>=0.4.10

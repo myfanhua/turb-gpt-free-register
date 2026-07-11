@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+from contextvars import ContextVar
 from urllib.parse import urlparse
 
 from config import roxybrowser as _roxy_cfg
@@ -28,7 +29,56 @@ from core.roxy_registration import (
     _email_otp_page_state,
 )
 
-logger = logging.getLogger(__name__)
+_base_logger = logging.getLogger(__name__)
+_CODEX_BROWSER_KIND: ContextVar[str] = ContextVar("codex_browser_kind", default="Roxy")
+
+
+def _codex_prefix() -> str:
+    return f"[Codex][{_CODEX_BROWSER_KIND.get()}]"
+
+
+def _codex_driver_name() -> str:
+    return _CODEX_BROWSER_KIND.get()
+
+
+def _detect_browser_kind(opened=None) -> str:
+    try:
+        raw = getattr(opened, "raw", None) or {}
+        if isinstance(raw, dict) and str(raw.get("driver") or "").lower().startswith("cloak"):
+            return "Cloak"
+    except Exception:
+        pass
+    return "Roxy"
+
+
+class _CodexLogger:
+    """把流程内部统一占位前缀替换成当前真实浏览器类型。"""
+    def __init__(self, base):
+        self._base = base
+
+    def _msg(self, msg):
+        return str(msg).replace("[Codex][Browser]", _codex_prefix())
+
+    def debug(self, msg, *args, **kwargs):
+        return self._base.debug(self._msg(msg), *args, **kwargs)
+
+    def info(self, msg, *args, **kwargs):
+        return self._base.info(self._msg(msg), *args, **kwargs)
+
+    def warning(self, msg, *args, **kwargs):
+        return self._base.warning(self._msg(msg), *args, **kwargs)
+
+    def error(self, msg, *args, **kwargs):
+        return self._base.error(self._msg(msg), *args, **kwargs)
+
+    def exception(self, msg, *args, **kwargs):
+        return self._base.exception(self._msg(msg), *args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._base, name)
+
+
+logger = _CodexLogger(_base_logger)
 
 
 def _is_callback_url(url: str) -> bool:
@@ -44,6 +94,57 @@ def _is_callback_url(url: str) -> bool:
     )
 
 
+def _extract_callback_url_from_page(driver) -> str:
+    """从当前页面提取 OAuth callback URL。
+
+    浏览器跳转到 http://localhost:1455/auth/callback?... 时，本地没有服务监听会显示
+    chrome-error://chromewebdata/。地址栏可能变成 chrome-error，但 Chromium 的
+    performance navigation entry 仍保留原始 callback URL，可直接提取后提交 CPA。
+    """
+    try:
+        current = str(driver.current_url or "")
+        if _is_callback_url(current):
+            return current
+    except Exception:
+        pass
+    try:
+        urls = driver.execute_script(r"""
+        const out = [];
+        const push = v => { if (v && typeof v === 'string') out.push(v); };
+        try { push(location.href); } catch (e) {}
+        try { push(document.URL); } catch (e) {}
+        try { push(document.documentURI); } catch (e) {}
+        try { for (const e of performance.getEntriesByType('navigation')) push(e.name); } catch (e) {}
+        try { for (const e of performance.getEntries()) push(e.name); } catch (e) {}
+        return [...new Set(out)];
+        """) or []
+        for url in urls:
+            if _is_callback_url(str(url)):
+                logger.info("[Codex][Browser] 已从浏览器性能记录提取 callback URL：%s", str(url)[:160])
+                return str(url)
+    except Exception as exc:
+        logger.debug("[Codex][Browser] 从页面提取 callback URL 失败：%s", exc)
+    return ""
+
+
+def _extract_callback_url_from_any_window(driver) -> str:
+    found = _extract_callback_url_from_page(driver)
+    if found:
+        return found
+    try:
+        for handle in list(getattr(driver, "window_handles", []) or []):
+            try:
+                driver.switch_to.window(handle)
+                found = _extract_callback_url_from_page(driver)
+                if found:
+                    return found
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return ""
+
+
 def _wait_for_callback(driver, timeout: int | None = None) -> str:
     end = time.time() + (timeout or int(_roxy_cfg.ROXY_CODEX_CALLBACK_TIMEOUT))
     last_url = ""
@@ -51,16 +152,11 @@ def _wait_for_callback(driver, timeout: int | None = None) -> str:
         try:
             current = str(driver.current_url or "")
             if current != last_url:
-                logger.debug("[Codex][Roxy] 当前 URL: %s", current)
+                logger.debug("[Codex][Browser] 当前 URL: %s", current)
                 last_url = current
-            if _is_callback_url(current):
-                return current
-            # 有些 Chrome 会打开错误页，但地址栏仍是 localhost callback；上面已覆盖。
-            for handle in driver.window_handles:
-                driver.switch_to.window(handle)
-                current = str(driver.current_url or "")
-                if _is_callback_url(current):
-                    return current
+            callback = _extract_callback_url_from_any_window(driver)
+            if callback:
+                return callback
         except Exception:
             pass
         time.sleep(0.5)
@@ -77,23 +173,23 @@ def _click_if_present(driver, selectors: list[str], timeout: int = 3) -> bool:
 
 def _fill_email_and_otp(driver, email: str, otp_provider, auth_url: str) -> None:
     otp_after_ts = time.time()
-    logger.info("[Codex][Roxy] 打开授权地址")
-    logger.info("[Codex][Roxy] 完整授权地址: %s", auth_url)
+    logger.info("[Codex][Browser] 打开授权地址")
+    logger.info("[Codex][Browser] 完整授权地址: %s", auth_url)
     driver.get(auth_url)
     human_delay("navigate")
-    logger.info("[Codex][Roxy] 授权页加载完成，检查是否需要邮箱登录")
+    logger.info("[Codex][Browser] 授权页加载完成，检查是否需要邮箱登录")
     _maybe_accept(driver)
 
     # 可能已经处于账号选择/授权页；如果有邮箱输入框则完整登录。
     # 非日本出口时按钮文案/顺序会变，不能按可见文字点“继续”，否则可能误点 Google。
     try:
         _type_email_address(driver, email, timeout=12)
-        logger.info("[Codex][Roxy] 已填写邮箱：%s", email)
+        logger.info("[Codex][Browser] 已填写邮箱：%s", email)
         human_delay("form")
         _submit_email_step(driver)
-        logger.info("[Codex][Roxy] 已提交邮箱，等待邮箱 OTP 页面")
+        logger.info("[Codex][Browser] 已提交邮箱，等待邮箱 OTP 页面")
     except Exception as exc:
-        logger.info("[Codex][Roxy] 未检测到邮箱输入框，可能已登录或进入下一步：%s", str(exc)[:120])
+        logger.info("[Codex][Browser] 未检测到邮箱输入框，可能已登录或进入下一步：%s", str(exc)[:120])
         return
 
     # 提交邮箱后不再执行任何全局“继续/授权/分支”兜底点击；后续只等待验证码页。
@@ -102,7 +198,7 @@ def _fill_email_and_otp(driver, email: str, otp_provider, auth_url: str) -> None
     used_codes: set[str] = set()
     max_otp_attempts = 3
     for otp_attempt in range(1, max_otp_attempts + 1):
-        logger.info("[Codex][Roxy] 等待邮箱 OTP：%s（第 %s/%s 次）", email, otp_attempt, max_otp_attempts)
+        logger.info("[Codex][Browser] 等待邮箱 OTP：%s（第 %s/%s 次）", email, otp_attempt, max_otp_attempts)
         code = _wait_for_fresh_email_otp(
             otp_provider,
             email,
@@ -111,10 +207,10 @@ def _fill_email_and_otp(driver, email: str, otp_provider, auth_url: str) -> None
             timeout=90,
         )
         used_codes.add(str(code))
-        logger.info("[Codex][Roxy] 邮箱 OTP 收到：%s", code)
+        logger.info("[Codex][Browser] 邮箱 OTP 收到：%s", code)
         _clear_otp_inputs(driver)
         _type_otp(driver, code)
-        logger.info("[Codex][Roxy] 已填写邮箱 OTP")
+        logger.info("[Codex][Browser] 已填写邮箱 OTP")
         human_delay("otp_input")
         clicked = _click_if_present(driver, [
             "button[type='submit']",
@@ -124,12 +220,12 @@ def _fill_email_and_otp(driver, email: str, otp_provider, auth_url: str) -> None
             "//button[contains(., '验证')]",
         ], timeout=8)
         if clicked:
-            logger.info("[Codex][Roxy] 已提交邮箱 OTP，等待后续授权/手机号页面")
+            logger.info("[Codex][Browser] 已提交邮箱 OTP，等待后续授权/手机号页面")
         else:
-            logger.info("[Codex][Roxy] 未找到显式提交按钮，继续等待页面状态")
+            logger.info("[Codex][Browser] 未找到显式提交按钮，继续等待页面状态")
 
         outcome = _wait_after_email_otp_submit(driver, timeout=45)
-        logger.info("[Codex][Roxy] 邮箱 OTP 提交后状态：%s", outcome)
+        logger.info("[Codex][Browser] 邮箱 OTP 提交后状态：%s", outcome)
         if outcome == "accepted":
             return
 
@@ -137,7 +233,7 @@ def _fill_email_and_otp(driver, email: str, otp_provider, auth_url: str) -> None
             raise RuntimeError("Codex 邮箱验证码连续错误/过期，已达到最大重试次数")
 
         logger.warning(
-            "[Codex][Roxy] 邮箱验证码错误/过期或页面未跳转，准备重新发送并重新获取最新验证码（%s/%s）",
+            "[Codex][Browser] 邮箱验证码错误/过期或页面未跳转，准备重新发送并重新获取最新验证码（%s/%s）",
             otp_attempt + 1,
             max_otp_attempts,
         )
@@ -145,7 +241,7 @@ def _fill_email_and_otp(driver, email: str, otp_provider, auth_url: str) -> None
         try:
             _click_resend_email_otp(driver, timeout=25)
         except Exception as exc:
-            logger.warning("[Codex][Roxy] 点击重新发送邮箱验证码失败，仍将继续轮询最新验证码：%s", str(exc)[:200])
+            logger.warning("[Codex][Browser] 点击重新发送邮箱验证码失败，仍将继续轮询最新验证码：%s", str(exc)[:200])
         human_delay("api")
 
 
@@ -168,7 +264,7 @@ def _wait_for_fresh_email_otp(otp_provider, email: str, after_ts: float, used_co
         if remaining <= 0:
             raise RuntimeError(f"等待新的邮箱验证码超时，取码接口仍返回已失败验证码：{last_code or '-'}")
         logger.warning(
-            "[Codex][Roxy] 取码接口仍返回已提交过的旧 OTP=%s，继续等待最新验证码（剩余 %ss）",
+            "[Codex][Browser] 取码接口仍返回已提交过的旧 OTP=%s，继续等待最新验证码（剩余 %ss）",
             last_code or "-",
             remaining,
         )
@@ -197,7 +293,7 @@ def _wait_after_email_otp_submit(driver, timeout: int = 45) -> str:
         try:
             url = str(driver.current_url or "")
             if url != last_url:
-                logger.info("[Codex][Roxy] 邮箱 OTP 后等待跳转：url=%s", url)
+                logger.info("[Codex][Browser] 邮箱 OTP 后等待跳转：url=%s", url)
                 last_url = url
             if _is_callback_url(url):
                 return "accepted"
@@ -217,7 +313,7 @@ def _wait_after_email_otp_submit(driver, timeout: int = 45) -> str:
             ))
             if invalid or errors or error_hit:
                 logger.warning(
-                    "[Codex][Roxy] 邮箱 OTP 提交后检测到错误/仍需验证码：errors=%s invalid=%s url=%s",
+                    "[Codex][Browser] 邮箱 OTP 提交后检测到错误/仍需验证码：errors=%s invalid=%s url=%s",
                     errors[:3],
                     invalid,
                     url,
@@ -225,12 +321,12 @@ def _wait_after_email_otp_submit(driver, timeout: int = 45) -> str:
                 return "invalid"
 
             if time.time() - last_log > 6:
-                logger.info("[Codex][Roxy] 邮箱 OTP 后仍在 email-verification，继续等待页面自动跳转")
+                logger.info("[Codex][Browser] 邮箱 OTP 后仍在 email-verification，继续等待页面自动跳转")
                 last_log = time.time()
         except Exception:
             pass
         time.sleep(0.5)
-    logger.warning("[Codex][Roxy] 邮箱 OTP 后等待跳转超时，当前 url=%s，按验证码无效/过期处理", getattr(driver, "current_url", ""))
+    logger.warning("[Codex][Browser] 邮箱 OTP 后等待跳转超时，当前 url=%s，按验证码无效/过期处理", getattr(driver, "current_url", ""))
     return "invalid"
 
 
@@ -273,7 +369,7 @@ def _select_sms_channel_or_raise(driver) -> None:
     return true;
     """)
     if selected:
-        logger.info("[Codex][Roxy] 已选择 SMS 短信通道")
+        logger.info("[Codex][Browser] 已选择 SMS 短信通道")
 
 
 def _is_phone_code_state(state: dict) -> bool:
@@ -359,7 +455,7 @@ def _ensure_add_phone_input(driver, *, reason: str = ""):
 
     current = str(getattr(driver, "current_url", "") or "")
     if "email-verification" in current.lower():
-        logger.info("[Codex][Roxy] 当前仍在 email-verification，先等待授权流程自动跳转，避免 invalid_auth_step")
+        logger.info("[Codex][Browser] 当前仍在 email-verification，先等待授权流程自动跳转，避免 invalid_auth_step")
         _wait_after_email_otp_submit(driver, timeout=45)
         if _has_strict_add_phone_form(driver):
             return _find_any(driver, _PHONE_INPUT_SELECTORS, timeout=2)
@@ -367,7 +463,7 @@ def _ensure_add_phone_input(driver, *, reason: str = ""):
 
     target = _auth_origin(driver).rstrip("/") + "/add-phone"
     logger.info(
-        "[Codex][Roxy] 当前不在手机号输入页，准备重新打开 add-phone 后换号：reason=%s url=%s target=%s",
+        "[Codex][Browser] 当前不在手机号输入页，准备重新打开 add-phone 后换号：reason=%s url=%s target=%s",
         reason or "retry", current, target,
     )
     try:
@@ -376,7 +472,7 @@ def _ensure_add_phone_input(driver, *, reason: str = ""):
         return _find_any(driver, _PHONE_INPUT_SELECTORS, timeout=10)
     except Exception as first_exc:
         # 某些流程不允许直接打开 /add-phone，尝试浏览器返回到上一页。
-        logger.info("[Codex][Roxy] 直接打开 add-phone 未拿到输入框，尝试 history back：%s", str(first_exc)[:160])
+        logger.info("[Codex][Browser] 直接打开 add-phone 未拿到输入框，尝试 history back：%s", str(first_exc)[:160])
         try:
             driver.back()
             human_delay("navigate")
@@ -520,7 +616,7 @@ def _blur_active_input_and_wait(driver, *, label: str = "输入完成") -> None:
     except Exception:
         pass
     seconds = random.uniform(1.8, 3.2)
-    logger.info("[Codex][Roxy] %s，已移开焦点，等待页面处理 %.1f 秒", label, seconds)
+    logger.info("[Codex][Browser] %s，已移开焦点，等待页面处理 %.1f 秒", label, seconds)
     time.sleep(seconds)
 
 
@@ -551,14 +647,14 @@ def _verify_add_phone_value_before_submit(driver, expected_e164: str) -> dict:
 def _wait_page_settle_after_submit() -> None:
     """点击提交后先等待页面处理，再检查发送状态。"""
     seconds = random.uniform(2.0, 4.0)
-    logger.info("[Codex][Roxy] 已点击提交，等待页面发送/跳转处理 %.1f 秒后检查状态", seconds)
+    logger.info("[Codex][Browser] 已点击提交，等待页面发送/跳转处理 %.1f 秒后检查状态", seconds)
     time.sleep(seconds)
 
 
 def _refresh_add_phone_for_retry(driver, *, reason: str = "") -> None:
     """发送失败/换号前刷新手机号页，避免旧错误状态和旧号码残留。"""
     try:
-        logger.info("[Codex][Roxy] 发送失败/准备换号，刷新手机号页面：%s", reason or "retry")
+        logger.info("[Codex][Browser] 发送失败/准备换号，刷新手机号页面：%s", reason or "retry")
         driver.refresh()
         human_delay("navigate")
         try:
@@ -568,12 +664,12 @@ def _refresh_add_phone_for_retry(driver, *, reason: str = "") -> None:
             pass
         # 如果刷新后仍不在输入页，强制回 add-phone。
         target = _auth_origin(driver).rstrip("/") + "/add-phone"
-        logger.info("[Codex][Roxy] 刷新后未找到手机号输入框，重新打开：%s", target)
+        logger.info("[Codex][Browser] 刷新后未找到手机号输入框，重新打开：%s", target)
         driver.get(target)
         human_delay("navigate")
         _find_any(driver, _PHONE_INPUT_SELECTORS, timeout=8)
     except Exception as exc:
-        logger.info("[Codex][Roxy] 刷新手机号页失败，下一轮会再次尝试回到 add-phone：%s", str(exc)[:180])
+        logger.info("[Codex][Browser] 刷新手机号页失败，下一轮会再次尝试回到 add-phone：%s", str(exc)[:180])
 
 
 def _click_add_phone_continue_button(driver, *, timeout: int = 10) -> dict:
@@ -606,9 +702,13 @@ def _click_add_phone_continue_button(driver, *, timeout: int = 10) -> dict:
             if btn:
                 driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
                 time.sleep(random.uniform(0.3, 0.8))
-                text = str(btn.text or btn.get_attribute('value') or btn.get_attribute('data-dd-action-name') or '').strip()
+                try:
+                    text = str(getattr(btn, 'text', '') or btn.get_attribute('value') or btn.get_attribute('data-dd-action-name') or '').strip()
+                except Exception:
+                    text = ''
                 try:
                     btn.click()
+                    _wait_page_settle_after_submit()
                     return {"ok": True, "method": "click", "text": text}
                 except Exception as click_exc:
                     last = click_exc
@@ -626,6 +726,7 @@ def _click_add_phone_continue_button(driver, *, timeout: int = 10) -> dict:
                     return false;
                     """, btn)
                     if submitted:
+                        _wait_page_settle_after_submit()
                         return {"ok": True, "method": "requestSubmit", "text": text, "click_error": str(click_exc)[:160]}
         except Exception as exc:
             last = exc
@@ -633,9 +734,31 @@ def _click_add_phone_continue_button(driver, *, timeout: int = 10) -> dict:
     raise RuntimeError(f"submit_missing: add-phone Continue/続行 submit button not found last={last} state={_phone_page_state(driver)}")
 
 
+def _force_submit_add_phone_form(driver) -> dict:
+    """add-phone 页面点击按钮没生效时，直接 requestSubmit 当前 form。"""
+    try:
+        return driver.execute_script(r"""
+        const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+        const form = document.querySelector('form[action*="/add-phone" i]')
+          || [...document.querySelectorAll('form')].find(f => /add-phone/i.test(f.getAttribute('action') || ''));
+        if (!form) return {ok:false, reason:'missing_form', url: location.href};
+        const btn = [...form.querySelectorAll('button[type="submit"],input[type="submit"]')]
+          .find(el => visible(el) && !el.disabled && String(el.getAttribute('aria-disabled') || '').toLowerCase() !== 'true')
+          || form.querySelector('button[type="submit"],input[type="submit"]');
+        if (btn) btn.scrollIntoView({block:'center'});
+        if (typeof form.requestSubmit === 'function') form.requestSubmit(btn || undefined);
+        else if (btn && typeof btn.click === 'function') btn.click();
+        else form.submit();
+        return {ok:true, method: btn ? 'requestSubmit(button)' : 'requestSubmit(form)', url: location.href};
+        """) or {}
+    except Exception as exc:
+        return {ok:false, reason:f'{type(exc).__name__}: {exc}', url:getattr(driver, 'current_url', '')}
+
+
 def _wait_after_phone_send(driver, timeout: int = 12) -> str:
     end = time.time() + timeout
     last = {}
+    force_submitted = False
     while time.time() < end:
         time.sleep(1)
         last = _phone_page_state(driver)
@@ -652,6 +775,12 @@ def _wait_after_phone_send(driver, timeout: int = 12) -> str:
             invalid = any(str(i.get('ariaInvalid') or '').lower() == 'true' for i in (last.get('inputs') or []))
             if invalid:
                 raise RuntimeError(f"invalid_phone: add-phone input aria-invalid state={last}")
+            # Cloak/React-Aria 场景下 btn.click 可能只聚焦没触发表单提交；补一次 requestSubmit。
+            if not force_submitted and time.time() > end - timeout + 3:
+                info = _force_submit_add_phone_form(driver)
+                logger.info("[Codex][Browser] add-phone 点击后仍停留本页，补执行 form.requestSubmit：%s", info)
+                force_submitted = True
+                time.sleep(2)
     if _is_phone_code_state(last) or _is_phone_code_page(driver):
         return 'code_page'
     if _is_add_phone_page(driver):
@@ -728,7 +857,7 @@ def _classify_phone_page_failure(state: dict) -> str:
         return 'send_limited'
     return ''
 
-def _sleep_before_phone_retry(attempt: int, max_retries: int, *, prefix: str = "[Codex][Roxy]") -> None:
+def _sleep_before_phone_retry(attempt: int, max_retries: int, *, prefix: str = "[Codex][Browser]") -> None:
     """换号前随机等待，至少 3 秒，避免连续提交号码过快。"""
     if attempt >= max_retries:
         return
@@ -754,7 +883,7 @@ def _do_phone_verification_if_present(driver) -> None:
             if not (_has_strict_add_phone_form(driver) or _is_phone_code_page(driver)):
                 raise RuntimeError("not_phone_flow")
         except Exception:
-            logger.info("[Codex][Roxy] 未检测到手机号验证页，跳过手机步骤")
+            logger.info("[Codex][Browser] 未检测到手机号验证页，跳过手机步骤")
             return
 
         last_err = None
@@ -762,49 +891,49 @@ def _do_phone_verification_if_present(driver) -> None:
             activation_id = None
             try:
                 activation_id, phone = sms_provider.acquire_number(http)
-                logger.info("[Codex][Roxy] 手机验证尝试 %s/%s，provider=%s，号码=+%s", attempt, max_retries, provider, phone)
-                logger.info("[Codex][Roxy] 准备手机号输入页，重新设置新手机号")
+                logger.info("[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s", attempt, max_retries, provider, phone)
+                logger.info("[Codex][Browser] 准备手机号输入页，重新设置新手机号")
                 _ensure_add_phone_input(driver, reason=f"attempt-{attempt}")
                 phone_fill = _set_phone_value(driver, f"+{phone}", timeout=10)
                 logger.info(
-                    "[Codex][Roxy] 已重新设置手机号：e164=%s visible=%s hidden=%s dialCode=%s country=%s",
+                    "[Codex][Browser] 已重新设置手机号：e164=%s visible=%s hidden=%s dialCode=%s country=%s",
                     phone_fill.get("e164"), phone_fill.get("actualVisible"), phone_fill.get("hiddenValue") or "-",
                     phone_fill.get("dialCode") or "-", (str(phone_fill.get("selectedText") or "-") + (" [changed]" if phone_fill.get("selectedChanged") else "")),
                 )
                 _blur_active_input_and_wait(driver, label="手机号输入完成")
                 phone_verify = _verify_add_phone_value_before_submit(driver, str(phone_fill.get("e164") or f"+{phone}"))
-                logger.info("[Codex][Roxy] 手机号提交前校验通过：visible=%s hidden=%s", phone_verify.get("visibleValue"), phone_verify.get("hiddenValue") or "-")
-                logger.info("[Codex][Roxy] 检查并选择 SMS 短信通道")
+                logger.info("[Codex][Browser] 手机号提交前校验通过：visible=%s hidden=%s", phone_verify.get("visibleValue"), phone_verify.get("hiddenValue") or "-")
+                logger.info("[Codex][Browser] 检查并选择 SMS 短信通道")
                 _select_sms_channel_or_raise(driver)
                 _blur_active_input_and_wait(driver, label="短信通道确认完成")
                 submit_info = _click_add_phone_continue_button(driver, timeout=10)
-                logger.info("[Codex][Roxy] 已点击手机号 Continue/続行 按钮：%s，等待进入短信验证码页", submit_info)
+                logger.info("[Codex][Browser] 已点击手机号 Continue/続行 按钮：%s，等待进入短信验证码页", submit_info)
                 _wait_page_settle_after_submit()
 
                 # 等待页面进入 phone-verification；若号码无效/无法发送/WhatsApp 通道，立即换号。
                 _wait_after_phone_send(driver, timeout=15)
-                logger.info("[Codex][Roxy] 已进入手机验证码页")
+                logger.info("[Codex][Browser] 已进入手机验证码页")
 
                 sms_provider.set_status(activation_id, 1, http=http)
                 logger.info(
-                    "[Codex][Roxy] 短信已发送，开始轮询验证码 activation_id=%s wait=%ss interval=%ss",
+                    "[Codex][Browser] 短信已发送，开始轮询验证码 activation_id=%s wait=%ss interval=%ss",
                     activation_id, sms_provider._cfg.SMS_CODE_WAIT, sms_provider._cfg.SMS_POLL_INTERVAL
                 )
                 sms_code = sms_provider.wait_for_sms_code(activation_id, http)
-                logger.info("[Codex][Roxy] 手机 OTP 收到：%s", sms_code)
+                logger.info("[Codex][Browser] 手机 OTP 收到：%s", sms_code)
                 _type_otp(driver, sms_code)
-                logger.info("[Codex][Roxy] 已填写手机 OTP")
+                logger.info("[Codex][Browser] 已填写手机 OTP")
                 human_delay("otp_input")
                 if not _click_if_present(driver, ["button[type='submit']", "input[type='submit']"], timeout=10):
                     raise RuntimeError(f"verify_submit_missing: phone verification submit not found state={_phone_page_state(driver)}")
-                logger.info("[Codex][Roxy] 已提交手机 OTP，等待验证结果")
+                logger.info("[Codex][Browser] 已提交手机 OTP，等待验证结果")
                 otp_outcome = _wait_after_phone_otp_submit(driver, timeout=25)
-                logger.info("[Codex][Roxy] 手机 OTP 提交后状态：%s", otp_outcome)
+                logger.info("[Codex][Browser] 手机 OTP 提交后状态：%s", otp_outcome)
                 sms_provider.complete(activation_id, http)
                 return
             except Exception as exc:
                 last_err = exc
-                logger.warning("[Codex][Roxy] 手机验证尝试失败，换号：%s", str(exc)[:240])
+                logger.warning("[Codex][Browser] 手机验证尝试失败，换号：%s", str(exc)[:240])
                 if activation_id:
                     try:
                         sms_provider.cancel(activation_id, http)
@@ -819,14 +948,14 @@ def _do_phone_verification_if_present(driver) -> None:
                 # 如果仍在 phone-verification，则下一轮必须回 add-phone 重新填新号码再提交。
                 try:
                     if _is_phone_code_page(driver):
-                        logger.info("[Codex][Roxy] 当前仍在手机验证码页，下一轮将返回 add-phone 重新设置新号码")
+                        logger.info("[Codex][Browser] 当前仍在手机验证码页，下一轮将返回 add-phone 重新设置新号码")
                     else:
                         _find_any(driver, _PHONE_INPUT_SELECTORS, timeout=2)
                 except Exception:
                     if _is_add_phone_page(driver) or _is_phone_code_page(driver):
-                        logger.info("[Codex][Roxy] 仍处于手机号流程，继续换号重试")
+                        logger.info("[Codex][Browser] 仍处于手机号流程，继续换号重试")
                     else:
-                        logger.info("[Codex][Roxy] 手机输入页已消失，继续后续流程")
+                        logger.info("[Codex][Browser] 手机输入页已消失，继续后续流程")
                         return
                 if attempt < max_retries:
                     _refresh_add_phone_for_retry(driver, reason=str(exc)[:120])
@@ -843,9 +972,10 @@ def _finish_consent_workspace(driver) -> str:
     """点击 Codex consent/workspace 页面里的继续/允许按钮，直到 callback。"""
     end = time.time() + int(_roxy_cfg.ROXY_CODEX_CALLBACK_TIMEOUT)
     while time.time() < end:
+        callback = _extract_callback_url_from_any_window(driver)
+        if callback:
+            return callback
         current = str(driver.current_url or "")
-        if _is_callback_url(current):
-            return current
         clicked = False
         for selectors in [
             ["//button[contains(., 'Allow')]", "//button[contains(., 'Authorize')]", "//button[contains(., 'Continue')]"],
@@ -872,36 +1002,36 @@ def clear_roxy_browser_auth_state(driver) -> None:
         "https://openai.com",
         "https://platform.openai.com",
     ]
-    logger.info("[Codex][Roxy] 复用注册窗口：开始清理 Cookie / localStorage / sessionStorage / cache")
+    logger.info("[Codex][Browser] 复用注册窗口：开始清理 Cookie / localStorage / sessionStorage / cache")
     try:
         driver.execute_cdp_cmd("Network.enable", {})
     except Exception:
         pass
     try:
         driver.execute_cdp_cmd("Network.clearBrowserCookies", {})
-        logger.info("[Codex][Roxy] 已清理浏览器 Cookie")
+        logger.info("[Codex][Browser] 已清理浏览器 Cookie")
     except Exception as exc:
-        logger.info("[Codex][Roxy] 清理 Cookie 失败，继续尝试其它缓存：%s", str(exc)[:160])
+        logger.info("[Codex][Browser] 清理 Cookie 失败，继续尝试其它缓存：%s", str(exc)[:160])
     try:
         driver.execute_cdp_cmd("Network.clearBrowserCache", {})
-        logger.info("[Codex][Roxy] 已清理浏览器 Cache")
+        logger.info("[Codex][Browser] 已清理浏览器 Cache")
     except Exception as exc:
-        logger.info("[Codex][Roxy] 清理 Cache 失败，继续：%s", str(exc)[:160])
+        logger.info("[Codex][Browser] 清理 Cache 失败，继续：%s", str(exc)[:160])
     for origin in origins:
         try:
             driver.execute_cdp_cmd("Storage.clearDataForOrigin", {
                 "origin": origin,
                 "storageTypes": "all",
             })
-            logger.info("[Codex][Roxy] 已清理站点数据：%s", origin)
+            logger.info("[Codex][Browser] 已清理站点数据：%s", origin)
         except Exception as exc:
-            logger.debug("[Codex][Roxy] 清理站点数据失败 %s: %s", origin, exc)
+            logger.debug("[Codex][Browser] 清理站点数据失败 %s: %s", origin, exc)
     try:
         driver.get("about:blank")
     except Exception:
         pass
     time.sleep(1.0)
-    logger.info("[Codex][Roxy] 注册窗口登录态清理完成，准备开始 Codex 授权")
+    logger.info("[Codex][Browser] 注册窗口登录态清理完成，准备开始 Codex 授权")
 
 def _run_roxy_codex_oauth_once(
     email: str,
@@ -913,7 +1043,7 @@ def _run_roxy_codex_oauth_once(
     reuse_existing_profile: bool = False,
     clear_existing_state: bool = True,
 ) -> dict:
-    """RoxyBrowser Codex OAuth 入口。
+    """指纹浏览器 Codex OAuth 入口。
 
     existing_driver/existing_opened 用于“注册成功后立刻跑 Codex”：
     复用注册时的 Roxy 窗口，不新建环境，只清理浏览器状态后开始授权。
@@ -929,6 +1059,7 @@ def _run_roxy_codex_oauth_once(
 
     client = None if reuse_existing_profile else RoxyBrowserClient()
     opened = existing_opened if reuse_existing_profile else client.open_profile()
+    browser_kind_token = _CODEX_BROWSER_KIND.set(_detect_browser_kind(opened))
     driver = existing_driver if reuse_existing_profile else None
     owns_driver = not reuse_existing_profile
     try:
@@ -938,30 +1069,30 @@ def _run_roxy_codex_oauth_once(
             cpa_auth = proto._request_cpa_authorize_url()
             state = cpa_auth["state"]
             auth_url = cpa_auth["auth_url"]
-            logger.info("[Codex][Roxy] 当前使用 CPA 授权地址: %s", auth_url)
+            logger.info("[Codex][Browser] 当前使用 CPA 授权地址: %s", auth_url)
         elif auth_source == "local":
             code_verifier, code_challenge = proto._generate_pkce()
             state = proto._generate_state()
             auth_url = proto._build_authorize_url(state, code_challenge, prompt="login")
-            logger.info("[Codex][Roxy] 当前使用本地 PKCE 授权地址: %s", auth_url)
+            logger.info("[Codex][Browser] 当前使用本地 PKCE 授权地址: %s", auth_url)
         else:
-            raise RuntimeError(f"[Codex][Roxy] 不支持的 CODEX_AUTH_URL_SOURCE={auth_source!r}")
+            raise RuntimeError(f"[Codex][Browser] 不支持的 CODEX_AUTH_URL_SOURCE={auth_source!r}")
 
         if not driver:
             driver = _build_driver(opened)
         driver.set_page_load_timeout(int(_roxy_cfg.ROXY_SELENIUM_TIMEOUT))
-        logger.info("[Codex][Roxy] 开始授权：%s，profile=%s，reuse_existing_profile=%s", email, opened.profile_id, reuse_existing_profile)
+        logger.info("[Codex][Browser] 开始授权：%s，profile=%s，reuse_existing_profile=%s", email, opened.profile_id, reuse_existing_profile)
         if reuse_existing_profile and clear_existing_state:
             clear_roxy_browser_auth_state(driver)
 
         _fill_email_and_otp(driver, email, otp_provider, auth_url)
         human_delay("api")
-        logger.info("[Codex][Roxy] 检查是否需要手机号验证")
+        logger.info("[Codex][Browser] 检查是否需要手机号验证")
         _do_phone_verification_if_present(driver)
-        logger.info("[Codex][Roxy] 手机验证处理完成/无需处理，等待授权确认和 callback")
+        logger.info("[Codex][Browser] 手机验证处理完成/无需处理，等待授权确认和 callback")
         callback_url = _finish_consent_workspace(driver)
         code = proto._extract_code(callback_url, state)
-        logger.info("[Codex][Roxy] 已捕获 callback code：%s...", code[:24])
+        logger.info("[Codex][Browser] 已捕获 callback code：%s...", code[:24])
 
         if auth_source == "cpa":
             submit_payload = proto._submit_cpa_callback(callback_url)
@@ -979,11 +1110,11 @@ def _run_roxy_codex_oauth_once(
                 email=email,
                 file_path=str(path) if path else None,
                 callback_url=callback_url,
-                message=f"Roxy: {msg}",
+                message=f"{_codex_driver_name()}: {msg}",
             )
 
         if not code_verifier:
-            raise RuntimeError("[Codex][Roxy] local 模式缺少 code_verifier")
+            raise RuntimeError("[Codex][Browser] local 模式缺少 code_verifier")
         session = proto.BrowserSession(proxy=proxy)
         token_resp = proto.exchange_codex_token(session, code, code_verifier)
         id_claims = proto._parse_id_token(token_resp.get("id_token", ""))
@@ -996,11 +1127,11 @@ def _run_roxy_codex_oauth_once(
             email=effective_email,
             file_path=str(path),
             callback_url=callback_url,
-            message=f"Roxy plan={id_claims.get('plan_type') or 'unknown'}",
+            message=f"{_codex_driver_name()} plan={id_claims.get('plan_type') or 'unknown'}",
         )
     except Exception as exc:
-        logger.warning("[Codex][Roxy] 失败：%s，%s: %s", email, type(exc).__name__, str(exc)[:240])
-        logger.debug("[Codex][Roxy] 失败详情", exc_info=True)
+        logger.warning("[Codex][Browser] 失败：%s，%s: %s", email, type(exc).__name__, str(exc)[:240])
+        logger.debug("[Codex][Browser] 失败详情", exc_info=True)
         return proto._codex_result(status="failed", email=email, message=f"{type(exc).__name__}: {str(exc)[:220]}")
     finally:
         # 注册后复用窗口时，driver/profile 生命周期由注册流程统一清理，
@@ -1012,6 +1143,10 @@ def _run_roxy_codex_oauth_once(
                 pass
         if owns_driver and client and not bool(_roxy_cfg.ROXY_KEEP_BROWSER_OPEN):
             client.cleanup_profile(opened)
+        try:
+            _CODEX_BROWSER_KIND.reset(browser_kind_token)
+        except Exception:
+            pass
 
 
 def run_roxy_codex_oauth(
@@ -1024,7 +1159,7 @@ def run_roxy_codex_oauth(
     reuse_existing_profile: bool = False,
     clear_existing_state: bool = True,
 ) -> dict:
-    """RoxyBrowser Codex OAuth 入口；CPA callback 409 timeout 时重新开启一轮授权。"""
+    """指纹浏览器 Codex OAuth 入口；CPA callback 409 timeout 时重新开启一轮授权。"""
     from core import codex_oauth as proto
 
     max_rounds = 2
@@ -1032,7 +1167,7 @@ def run_roxy_codex_oauth(
     for round_no in range(1, max_rounds + 1):
         if round_no > 1:
             logger.warning(
-                "[Codex][Roxy] CPA callback 返回 Timeout waiting for OAuth callback，重新开启第 %s/%s 轮 Codex 授权：%s",
+                "[Codex][Browser] CPA callback 返回 Timeout waiting for OAuth callback，重新开启第 %s/%s 轮 Codex 授权：%s",
                 round_no, max_rounds, email,
             )
         result = _run_roxy_codex_oauth_once(

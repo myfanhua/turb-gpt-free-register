@@ -15,7 +15,7 @@ import random
 # 本地代理入口；实际出口地区以代理/分流规则为准。
 # 推荐使用 socks5h://（DNS 在代理端解析），避免本地 DNS 与出口 IP 地区错配。
 PROXY_POOL = [
-    # "socks5h://user:pass:port",
+    "socks5://127.0.0.1:7897",
 ]
 
 

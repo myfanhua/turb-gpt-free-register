@@ -955,15 +955,38 @@ def run_codex_oauth(
     # Codex OAuth 本身也支持 RoxyBrowser 指纹浏览器驱动。
     # protocol：原纯协议；roxy：用 Roxy 跑页面并捕获 localhost callback。
     try:
+        from config import codex as _codex_cfg
         from config import roxybrowser as _roxy_cfg
-        oauth_driver = str(getattr(_roxy_cfg, "CODEX_OAUTH_DRIVER", "protocol") or "protocol").strip().lower()
+        oauth_driver = str(getattr(_codex_cfg, "CODEX_OAUTH_DRIVER", "protocol") or "protocol").strip().lower()
         if oauth_driver == "same_as_registration":
             oauth_driver = str(getattr(_roxy_cfg, "REGISTRATION_DRIVER", "protocol") or "protocol").strip().lower()
         if oauth_driver in ("roxy", "roxybrowser", "fingerprint", "browser"):
             from core.roxy_codex_oauth import run_roxy_codex_oauth
             return run_roxy_codex_oauth(email, otp_provider=otp_provider, proxy=proxy, force=True)
+        if oauth_driver in ("cloak", "cloakbrowser"):
+            from config import cloakbrowser as _cloak_cfg
+            from core.cloakbrowser_driver import build_cloak_driver
+            from core.roxy_codex_oauth import run_roxy_codex_oauth
+            driver, opened = build_cloak_driver(proxy=proxy)
+            try:
+                return run_roxy_codex_oauth(
+                    email,
+                    otp_provider=otp_provider,
+                    proxy=proxy,
+                    force=True,
+                    existing_driver=driver,
+                    existing_opened=opened,
+                    reuse_existing_profile=True,
+                    clear_existing_state=True,
+                )
+            finally:
+                if not bool(getattr(_cloak_cfg, "CLOAK_KEEP_BROWSER_OPEN", False)):
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
         if oauth_driver not in ("protocol", "api", "http"):
-            raise RuntimeError(f"[Codex] 不支持的 CODEX_OAUTH_DRIVER={oauth_driver!r}，可选 protocol / roxy")
+            raise RuntimeError(f"[Codex] 不支持的 CODEX_OAUTH_DRIVER={oauth_driver!r}，可选 protocol / roxy / cloak")
     except ImportError:
         # 没装 selenium / 未提供 roxy 配置时继续走协议模式，保持旧行为。
         pass

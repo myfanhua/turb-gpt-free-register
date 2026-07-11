@@ -45,6 +45,13 @@ CODEX_REQUEST_TIMEOUT: int = 30
 # 注册成功后是否自动跑 Codex 授权（True=自动，False=跳过）
 ENABLE_CODEX_AUTO: bool = True
 
+# Codex OAuth 授权驱动：
+#   "protocol" = 原有 curl_cffi 协议授权
+#   "roxy"     = 调用 RoxyBrowser 指纹浏览器完成授权页面/手机验证/回调捕获
+#   "cloak"    = 调用 CloakBrowser 完成授权页面/手机验证/回调捕获
+#   "same_as_registration" = 跟随 REGISTRATION_DRIVER
+CODEX_OAUTH_DRIVER: str = "cloak"
+
 
 
 
@@ -61,10 +68,10 @@ CODEX_AUTH_URL_SOURCE: str = "cpa"
 # 实际请求会取 origin，调用：
 #   GET  /v0/management/codex-auth-url
 #   POST /v0/management/oauth-callback
-CPA_MANAGEMENT_URL: str = "http://localhost:8317/management.html"
+CPA_MANAGEMENT_URL: str = "http://43.167.188.22:8317/management.html"#/oauth"
 
 # CPA 管理密钥，同时作为 Authorization: Bearer 和 X-Management-Key
-CPA_MANAGEMENT_KEY: str = ""
+CPA_MANAGEMENT_KEY: str = "cpa@123321@cpa"
 
 # CPA 管理接口请求超时（秒）
 CPA_REQUEST_TIMEOUT: int = 30
@@ -84,14 +91,14 @@ CPA_SAVE_CALLBACK_RECEIPT: bool = True
 #   "l"       = 本地 L 取号服务，接口说明见 L_API.md
 # ============================================================
 
-SMS_PROVIDER: str = "grizzly"
+SMS_PROVIDER: str = "l"
 
 # 接码 API 基址（GET handler）
 SMS_API_BASE: str = "https://api.grizzlysms.com/stubs/handler_api.php"
 
 # 接码 API 密钥（在 GrizzlySMS 后台 → 设置 获取）
 # 留空时 Codex 授权的手机验证步会失败；如不需要 Codex 自动授权，把 ENABLE_CODEX_AUTO=False。
-SMS_API_KEY: str = ""
+SMS_API_KEY: str = "-"
 
 # 服务代码：OpenAI = "dr"
 SMS_SERVICE: str = "openai"
@@ -123,8 +130,8 @@ SMS_REQUEST_TIMEOUT: int = 30
 L_API_BASE: str = "http://localhost:8788"
 
 # L 后台授权码，对应 L_API.md 里的 Authorization: Bearer <ADMIN_AUTH_CODE>
-L_ADMIN_AUTH_CODE: str = ""
+L_ADMIN_AUTH_CODE: str = "local-admin"
 
 # L 返回的号码如果不含国家码，可在这里补前缀；例如美国本地 10 位号填 "1"。
 # 留空则直接使用 L 返回的 item.phone。
-L_PHONE_PREFIX: str = ""
+L_PHONE_PREFIX: str = "-"

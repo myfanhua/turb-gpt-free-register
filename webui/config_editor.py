@@ -39,7 +39,52 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "REGISTRATION_DRIVER", "file": "roxybrowser.py", "type": "str", "group": "注册方式",
-        "label": "注册驱动", "help": "protocol=原纯协议注册；roxy=调用 RoxyBrowser 指纹浏览器自动化注册",
+        "label": "注册驱动", "help": "protocol=原纯协议注册；roxy=调用 RoxyBrowser；cloak=调用 CloakBrowser",
+    },
+
+    {
+        "key": "CLOAK_HEADLESS", "file": "cloakbrowser.py", "type": "bool", "group": "CloakBrowser",
+        "label": "Cloak无头", "help": "True=无头运行；False=显示浏览器窗口",
+    },
+    {
+        "key": "CLOAK_HUMANIZE", "file": "cloakbrowser.py", "type": "bool", "group": "CloakBrowser",
+        "label": "Cloak人工行为", "help": "启用 CloakBrowser humanize 鼠标/键盘/滚动行为",
+    },
+    {
+        "key": "CLOAK_GEOIP", "file": "cloakbrowser.py", "type": "bool", "group": "CloakBrowser",
+        "label": "Cloak按出口定位", "help": "按当前出口 IP 自动匹配时区/语言/WebRTC IP；支持显式代理、系统代理/VPN",
+    },
+    {
+        "key": "CLOAK_LOCALE", "file": "cloakbrowser.py", "type": "str", "group": "CloakBrowser",
+        "label": "Cloak语言", "help": "留空自动；日本可填 ja-JP，美国 en-US",
+    },
+    {
+        "key": "CLOAK_TIMEZONE", "file": "cloakbrowser.py", "type": "str", "group": "CloakBrowser",
+        "label": "Cloak时区", "help": "留空自动；日本可填 Asia/Tokyo，美国 America/Los_Angeles",
+    },
+    {
+        "key": "CLOAK_USE_PROXY", "file": "cloakbrowser.py", "type": "bool", "group": "CloakBrowser",
+        "label": "Cloak使用代理", "help": "把本项目传入或代理池抽取的代理传给 CloakBrowser",
+    },
+    {
+        "key": "CLOAK_LICENSE_KEY", "file": "cloakbrowser.py", "type": "str", "group": "CloakBrowser",
+        "label": "Cloak License", "help": "Pro license；留空使用免费 binary",
+    },
+    {
+        "key": "CLOAK_FINGERPRINT_SEED", "file": "cloakbrowser.py", "type": "str", "group": "CloakBrowser",
+        "label": "Cloak指纹Seed", "help": "留空每次随机；固定值可保持同一指纹",
+    },
+    {
+        "key": "CLOAK_USER_DATA_DIR", "file": "cloakbrowser.py", "type": "str", "group": "CloakBrowser",
+        "label": "Cloak用户目录", "help": "留空使用临时上下文；填写路径则持久化 cookies/cache",
+    },
+    {
+        "key": "CLOAK_SELENIUM_TIMEOUT", "file": "cloakbrowser.py", "type": "int", "group": "CloakBrowser",
+        "label": "Cloak超时", "help": "页面和元素等待超时时间，秒",
+    },
+    {
+        "key": "CLOAK_KEEP_BROWSER_OPEN", "file": "cloakbrowser.py", "type": "bool", "group": "CloakBrowser",
+        "label": "保留Cloak浏览器", "help": "调试时开启，任务结束后不自动关闭",
     },
     {
         "key": "ROXY_API_BASE", "file": "roxybrowser.py", "type": "str", "group": "RoxyBrowser",
@@ -102,8 +147,8 @@ EDITABLE_FIELDS = [
         "label": "删除接口路径", "help": "默认 /browser/delete；如 Roxy 版本不同可调整",
     },
     {
-        "key": "CODEX_OAUTH_DRIVER", "file": "roxybrowser.py", "type": "str", "group": "RoxyBrowser",
-        "label": "Codex授权驱动", "help": "protocol=原协议授权；roxy=用 Roxy 指纹浏览器跑 Codex OAuth；same_as_registration=跟随注册驱动",
+        "key": "CODEX_OAUTH_DRIVER", "file": "codex.py", "type": "str", "group": "CPA / Codex",
+        "label": "Codex授权驱动", "help": "protocol=原协议授权；roxy=用 RoxyBrowser；cloak=用 CloakBrowser；same_as_registration=跟随注册驱动",
     },
     {
         "key": "ROXY_CODEX_CALLBACK_TIMEOUT", "file": "roxybrowser.py", "type": "int", "group": "RoxyBrowser",

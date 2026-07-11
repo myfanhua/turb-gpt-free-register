@@ -11,21 +11,21 @@ RoxyBrowser 指纹浏览器自动化注册配置。
 # 注册驱动：
 #   "protocol" = 原有 curl_cffi 纯协议注册
 #   "roxy"     = 调用 RoxyBrowser 指纹浏览器 + Selenium 自动化注册
-REGISTRATION_DRIVER: str = "roxy"
+REGISTRATION_DRIVER: str = "cloak"
 
 # RoxyBrowser 本地 API
 ROXY_API_BASE: str = "http://127.0.0.1:50100"
-ROXY_API_TOKEN: str = ""
+ROXY_API_TOKEN: str = "637dcf52d7794e029c7556c2dbcbc07b"
 
 # Roxy 环境/Profile ID；留空时使用 ROXY_PROFILE_CREATE_* 先创建临时环境（如果接口支持）
-ROXY_PROFILE_ID: str = ""
+ROXY_PROFILE_ID: str = "-"
 
 # Roxy 工作区 ID。Roxy 创建 Profile 时接口要求 workspaceId，必须填写。
 # 可在 Roxy 工作区/团队页面或 API 返回中查看。
-ROXY_WORKSPACE_ID: str = ""
+ROXY_WORKSPACE_ID: str = "90143"
 
 # Roxy 项目 ID。/browser/workspace 返回 project_details.projectId；创建 Profile 时一并提交。
-ROXY_PROJECT_ID: str = ""
+ROXY_PROJECT_ID: str = "97471"
 
 # 获取团队/工作区列表接口路径。不同版本若不同，可在 WebUI 修改；客户端也会自动尝试多个常见路径。
 ROXY_WORKSPACE_LIST_PATH: str = "/browser/workspace"
@@ -89,12 +89,6 @@ ROXY_PROFILE_CREATE_PAYLOAD: dict = {
     "os": "macOS",
 }
 
-
-# Codex OAuth 授权驱动：
-#   "protocol" = 原有 curl_cffi 协议授权
-#   "roxy"     = 调用 RoxyBrowser 指纹浏览器完成授权页面/手机验证/回调捕获
-#   "same_as_registration" = 跟随 REGISTRATION_DRIVER
-CODEX_OAUTH_DRIVER: str = "roxy"
 
 # Roxy Codex 授权等待 callback 的最长秒数
 ROXY_CODEX_CALLBACK_TIMEOUT: int = 180

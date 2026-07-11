@@ -192,8 +192,18 @@ def run_registration(
             otp_code=otp_code,
             batch_dir=batch_dir,
         )
+    if driver_mode in ("cloak", "cloakbrowser"):
+        from core.cloakbrowser_registration import run_cloak_registration
+        return run_cloak_registration(
+            email=email,
+            name=name,
+            birthday=birthday or generate_random_birthday(),
+            proxy=proxy,
+            otp_code=otp_code,
+            batch_dir=batch_dir,
+        )
     if driver_mode not in ("protocol", "api", "http"):
-        raise RuntimeError(f"不支持的 REGISTRATION_DRIVER={driver_mode!r}，可选 protocol / roxy")
+        raise RuntimeError(f"不支持的 REGISTRATION_DRIVER={driver_mode!r}，可选 protocol / roxy / cloak")
 
     # 创建浏览器会话（proxy=None 时自动从 config.PROXY_POOL 随机抽一个）
     session = BrowserSession(proxy=proxy)

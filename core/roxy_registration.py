@@ -314,6 +314,77 @@ def _submit_email_step(driver) -> None:
     raise RuntimeError(f"无法提交邮箱步骤（拒绝按页面文字或首个 submit 兜底，避免误点第三方登录），state={_email_entry_state(driver)}")
 
 
+def _email_input_value_state(driver) -> dict:
+    """读取当前可见邮箱框状态，用于提交后确认是否真的进入下一步。"""
+    try:
+        return driver.execute_script(r"""
+        const visible = el => !!el && !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)
+          && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none'
+          && !el.disabled && !el.readOnly;
+        const inputs = [...document.querySelectorAll('input[type="email"],input[name="email"],input[name="username"],input[autocomplete*="email"]')]
+          .filter(visible)
+          .map(el => ({type: el.getAttribute('type') || '', name: el.name || '', id: el.id || '', autocomplete: el.getAttribute('autocomplete') || '', value: el.value || ''}));
+        return {url: location.href, inputs};
+        """) or {}
+    except Exception as exc:
+        return {"url": getattr(driver, "current_url", ""), "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _is_email_login_page_still_present(driver) -> bool:
+    state = _email_input_value_state(driver)
+    return bool(state.get("inputs"))
+
+
+def _wait_email_submit_next_state(driver, email: str, timeout: int = 12) -> str:
+    """邮箱提交后等待进入 password / otp / logged_in；仍停留邮箱页则返回 email_page。"""
+    end = time.time() + timeout
+    last = None
+    while time.time() < end:
+        if _has_access_token(driver):
+            return "logged_in"
+        if _is_email_verification_page(driver):
+            return "otp"
+        if _is_signup_password_page(driver):
+            return "password"
+        state = _email_input_value_state(driver)
+        last = state
+        inputs = state.get("inputs") or []
+        if inputs:
+            values = [str(i.get("value") or "") for i in inputs]
+            # 页面已清空邮箱框，说明提交没真正进入下一步/被前端重置。
+            if any(v == "" for v in values):
+                return "email_cleared"
+            # 仍是当前邮箱页，继续短等。
+        time.sleep(0.8)
+    logger.info("[Roxy注册] 邮箱提交后等待下一步超时，最后邮箱页状态=%s", last)
+    return "email_page" if _is_email_login_page_still_present(driver) else "unknown"
+
+
+def _submit_email_and_wait_next(driver, email: str, attempts: int = 3) -> str:
+    """填写并提交邮箱，必须确认进入 password/otp/logged_in 才返回。"""
+    last_state = None
+    for attempt in range(1, attempts + 1):
+        _type_email_address(driver, email, timeout=20)
+        state = _email_input_value_state(driver)
+        last_state = state
+        values = [str(i.get("value") or "") for i in (state.get("inputs") or [])]
+        if not any(v.strip().lower() == email.strip().lower() for v in values):
+            logger.warning("[Roxy注册] 邮箱写入校验失败，准备重试：attempt=%s/%s state=%s", attempt, attempts, state)
+            time.sleep(0.8)
+            continue
+        logger.info("[Roxy注册] 已填写邮箱并校验通过：%s", email)
+        human_delay("form")
+        _submit_email_step(driver)
+        logger.info("[Roxy注册] 已提交邮箱，等待进入密码页或验证码页（%s/%s）", attempt, attempts)
+        state_name = _wait_email_submit_next_state(driver, email, timeout=12)
+        if state_name in ("password", "otp", "logged_in"):
+            logger.info("[Roxy注册] 邮箱提交后已进入下一步：%s", state_name)
+            return state_name
+        logger.warning("[Roxy注册] 邮箱提交后仍未进入下一步：%s，准备重填重试 state=%s", state_name, _email_input_value_state(driver))
+        time.sleep(1.0)
+    raise RuntimeError(f"邮箱提交后未进入密码页/验证码页，最后状态={last_state}")
+
+
 def _type_otp(driver, code: str) -> None:
     from selenium.webdriver.common.by import By
 
@@ -581,17 +652,30 @@ def _select_or_type(driver, selectors: list[str], value: str, timeout: int = 3) 
     try:
         tag = (el.tag_name or '').lower()
         if tag == 'select':
-            from selenium.webdriver.support.ui import Select
-            sel = Select(el)
-            try:
-                sel.select_by_value(str(int(value)))
-            except Exception:
+            if el.__class__.__name__ == 'CloakElement':
+                driver.execute_script(r"""
+                const el = arguments[0], value = String(arguments[1]);
+                const n = parseInt(value, 10);
+                const opts = [...el.options];
+                const match = opts.find(o => o.value === value)
+                  || opts.find(o => (o.textContent || '').trim() === value)
+                  || opts[Math.max(0, n - 1)];
+                if (match) el.value = match.value; else el.value = value;
+                el.dispatchEvent(new Event('input', {bubbles:true}));
+                el.dispatchEvent(new Event('change', {bubbles:true}));
+                """, el, str(value))
+            else:
+                from selenium.webdriver.support.ui import Select
+                sel = Select(el)
                 try:
-                    sel.select_by_visible_text(str(int(value)))
+                    sel.select_by_value(str(int(value)))
                 except Exception:
-                    # 月份 select 可能是 0-based，也可能是 1-based；先 value/text，不行再 index。
-                    sel.select_by_index(max(0, int(value)-1))
-            driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", el)
+                    try:
+                        sel.select_by_visible_text(str(int(value)))
+                    except Exception:
+                        # 月份 select 可能是 0-based，也可能是 1-based；先 value/text，不行再 index。
+                        sel.select_by_index(max(0, int(value)-1))
+                driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", el)
         else:
             _set_element_value(driver, el, str(value))
         return True
@@ -1032,11 +1116,62 @@ def _click_if_enabled_submit(driver) -> bool:
         return False
 
 
-def _fetch_chatgpt_session(driver, timeout: int = 90) -> dict:
-    """等待页面完成跳转并从 ChatGPT 页面内读取登录 session/accessToken。"""
+def _read_chatgpt_session_once(driver) -> dict | None:
+    """当前页面必须在 chatgpt.com；读取 /api/auth/session，拿不到 token 返回 None。"""
+    script = r"""
+    const done = arguments[0];
+    fetch('/api/auth/session', {credentials: 'include'})
+      .then(r => r.json())
+      .then(j => done({ok: true, data: j}))
+      .catch(e => done({ok: false, error: String(e)}));
+    """
+    result = driver.execute_async_script(script)
+    if result and result.get("ok"):
+        data = result.get("data") or {}
+        if data.get("accessToken"):
+            logger.info("[Roxy注册] /api/auth/session 已返回 accessToken")
+            return data
+        logger.info("[Roxy注册] 等待 ChatGPT session 写入 accessToken，当前响应 keys=%s", list(data.keys()))
+    return None
+
+
+def _switch_to_chatgpt_window_if_any(driver) -> bool:
+    """有些浏览器/适配层会在新窗口完成 callback；尝试切到已有 chatgpt.com 句柄。"""
+    try:
+        handles = list(getattr(driver, "window_handles", []) or [])
+        current_handle = None
+        try:
+            current_handle = getattr(driver, "current_window_handle", None)
+        except Exception:
+            current_handle = None
+        for handle in handles:
+            try:
+                driver.switch_to.window(handle)
+                if "chatgpt.com" in str(getattr(driver, "current_url", "") or ""):
+                    return True
+            except Exception:
+                continue
+        if current_handle is not None:
+            try:
+                driver.switch_to.window(current_handle)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return False
+
+
+def _fetch_chatgpt_session(driver, timeout: int = 90, auto_jump_wait: int = 15) -> dict:
+    """等待页面完成跳转并从 ChatGPT 页面内读取登录 session/accessToken。
+
+    旧逻辑会在 auth.openai.com 上一直等到总超时，Cloak/部分 Chromium 场景下
+    实际账号已创建成功但当前句柄 URL 没及时更新，导致白等 120 秒。现在只给
+    自动跳转 `auto_jump_wait` 秒；超过后立即主动打开 chatgpt.com 读 session。
+    """
     end = time.time() + timeout
+    auto_jump_end = time.time() + max(3, int(auto_jump_wait or 15))
     last_data = None
-    navigated_to_chatgpt = False
+    forced_chatgpt_open = False
 
     while time.time() < end:
         try:
@@ -1044,53 +1179,31 @@ def _fetch_chatgpt_session(driver, timeout: int = 90) -> dict:
         except Exception:
             current = ''
 
-        # 提交资料页后 auth.openai.com 需要时间完成 OAuth 回调并跳回 chatgpt.com。
-        # 如果还在 auth.openai.com，先等待页面自己跳转，不要立刻强制打开 chatgpt.com。
         if 'chatgpt.com' not in current:
-            time.sleep(2)
-            continue
-
-        navigated_to_chatgpt = True
-        try:
-            script = r"""
-            const done = arguments[0];
-            fetch('/api/auth/session', {credentials: 'include'})
-              .then(r => r.json())
-              .then(j => done({ok: true, data: j}))
-              .catch(e => done({ok: false, error: String(e)}));
-            """
-            result = driver.execute_async_script(script)
-            if result and result.get("ok"):
-                data = result.get("data") or {}
-                last_data = data
-                if data.get("accessToken"):
-                    logger.info("[Roxy注册] /api/auth/session 已返回 accessToken")
-                    return data
-                logger.info("[Roxy注册] 等待 ChatGPT session 写入 accessToken，当前响应 keys=%s", list(data.keys()))
+            if _switch_to_chatgpt_window_if_any(driver):
+                current = str(getattr(driver, "current_url", "") or "")
+            elif time.time() >= auto_jump_end and not forced_chatgpt_open:
+                try:
+                    logger.info("[Roxy注册] 未在 %ss 内观察到当前窗口跳转 chatgpt.com，主动打开 ChatGPT 内读取 session", int(auto_jump_wait or 15))
+                    driver.get("https://chatgpt.com/")
+                    forced_chatgpt_open = True
+                    time.sleep(3)
+                    current = str(getattr(driver, "current_url", "") or "")
+                except Exception as exc:
+                    last_data = f"{type(exc).__name__}: {exc}"
             else:
-                last_data = result
-        except Exception as exc:
-            last_data = f"{type(exc).__name__}: {exc}"
-        time.sleep(2)
+                time.sleep(1)
+                continue
 
-    # 如果始终没跳到 chatgpt.com，最后再主动打开一次试读 session。
-    if not navigated_to_chatgpt:
-        try:
-            logger.info("[Roxy注册] 未观察到自动跳转 chatgpt.com，主动打开 ChatGPT 再读取 session")
-            driver.get("https://chatgpt.com/")
-            time.sleep(5)
-            result = driver.execute_async_script(r"""
-            const done = arguments[0];
-            fetch('/api/auth/session', {credentials: 'include'})
-              .then(r => r.json()).then(j => done({ok:true, data:j}))
-              .catch(e => done({ok:false, error:String(e)}));
-            """)
-            data = (result or {}).get("data") or {}
-            if data.get("accessToken"):
-                return data
-            last_data = data or result
-        except Exception as exc:
-            last_data = f"{type(exc).__name__}: {exc}"
+        if 'chatgpt.com' in current:
+            try:
+                data = _read_chatgpt_session_once(driver)
+                if data:
+                    return data
+                last_data = "session 暂无 accessToken"
+            except Exception as exc:
+                last_data = f"{type(exc).__name__}: {exc}"
+        time.sleep(2)
 
     raise RuntimeError(f"等待 /api/auth/session accessToken 超时，最后响应: {str(last_data)[:800]}")
 
@@ -1125,16 +1238,12 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
 
         # 填邮箱。OpenAI UI 会随出口 IP/语言变化；这里只按 DOM 技术属性找邮箱入口，
         # 并排除 Google/Apple/Microsoft 等第三方入口，不依赖按钮可见文字。
-        _type_email_address(driver, email)
-        logger.info("[Roxy注册] 已填写邮箱：%s", email)
-        human_delay("form")
-        _submit_email_step(driver)
-        logger.info("[Roxy注册] 已提交邮箱，等待进入密码页或验证码页")
+        next_state = _submit_email_and_wait_next(driver, email, attempts=3)
         _check_manual_stop()
 
         # 新版注册流可能先进入 /create-account/password；参考 FlowPilot 的 fill-password 步骤，
         # 先设置密码并提交，然后再等待邮箱验证码页。
-        openai_password = _fill_password_page_if_present(driver, email, timeout=25)
+        openai_password = None if next_state == "otp" else _fill_password_page_if_present(driver, email, timeout=25)
         _check_manual_stop()
 
         current_otp = otp_code

@@ -543,9 +543,10 @@ def create_app() -> Flask:
                 import config as _config_pkg
                 _config_pkg.reload_all()
                 from config import roxybrowser as _roxy_cfg
+                from config import codex as _codex_cfg
                 logger.info(
                     "[Codex 补跑] 已热加载配置：CODEX_OAUTH_DRIVER=%s ROXY_OPEN_HEADLESS=%s ROXY_KEEP_BROWSER_OPEN=%s",
-                    getattr(_roxy_cfg, "CODEX_OAUTH_DRIVER", ""),
+                    getattr(_codex_cfg, "CODEX_OAUTH_DRIVER", ""),
                     getattr(_roxy_cfg, "ROXY_OPEN_HEADLESS", ""),
                     getattr(_roxy_cfg, "ROXY_KEEP_BROWSER_OPEN", ""),
                 )
