@@ -7,10 +7,12 @@ Outlook 邮箱账号池配置。
     2. 每行格式：email====password====clientId====refreshToken
     3. 运行注册时会自动导入新增邮箱
 """
+from config.env_loader import env_str
+
 
 # True: REGISTER_EMAIL 留空时从 Outlook 账号池自动获取邮箱，OTP 自动收取
 # False: 走人工输入邮箱 + 人工填 OTP 的流程
-USE_EMAIL_SERVICE = True
+USE_EMAIL_SERVICE = False
 
 # 可选值（也可以用英文逗号配置多个，按顺序兜底，例如 "outlook,generic_api"）：
 #   "outlook"           — 外购 Outlook 账号池 + mail.chatai.codes 远端取信
@@ -59,4 +61,4 @@ QQ_EMAIL = ""
 
 # QQ 邮箱 IMAP 授权码（在 QQ 邮箱网页版 → 设置 → 账户 → POP3/IMAP/SMTP 服务 中生成）
 # 注意：这是 16 位授权码，不是 QQ 密码
-QQ_IMAP_PASSWORD = ""
+QQ_IMAP_PASSWORD = env_str("QQ_IMAP_PASSWORD", "")

@@ -1,3 +1,6 @@
+from config.env_loader import load_env
+load_env(override=False)
+
 # -*- coding: utf-8 -*-
 """
 config 包的统一入口。
@@ -119,6 +122,7 @@ _RELOADABLE_SUBMODULES = (
     "config.twofa",
     "config.roxybrowser",
     "config.cloakbrowser",
+    "config.browser_use",
     "config.flow_trigger",
     "config.codex",
     "config.humanize",
@@ -130,6 +134,9 @@ def reload_all() -> list[str]:
     热重载所有 config 子模块，返回成功 reload 的模块名列表。
     任何子模块 reload 失败（语法错等）会抛 ImportError，调用方自行处理。
     """
+    from config.env_loader import load_env
+    load_env(override=True)
+
     import sys
     reloaded = []
     for name in _RELOADABLE_SUBMODULES:
@@ -148,9 +155,9 @@ def reload_all() -> list[str]:
 def _refresh_top_level_constants() -> None:
     """把刚 reload 的子模块的常量重新拷一份到 config 包顶层。"""
     import config as _self
-    from config import browser, openai_protocol, proxy as _proxy, register, email, twofa, roxybrowser, cloakbrowser, codex, humanize, flow_trigger
+    from config import browser, openai_protocol, proxy as _proxy, register, email, twofa, roxybrowser, cloakbrowser, browser_use, codex, humanize, flow_trigger
     # 简单粗暴：枚举一遍重要常量，覆盖到 _self
-    for src in (browser, openai_protocol, _proxy, register, email, twofa, roxybrowser, cloakbrowser, codex, humanize, flow_trigger):
+    for src in (browser, openai_protocol, _proxy, register, email, twofa, roxybrowser, cloakbrowser, browser_use, codex, humanize, flow_trigger):
         for k in dir(src):
             if k.isupper() or k in ("pick_proxy", "pick_browser_profile", "build_browser_environment", "validate_browser_profile"):
                 setattr(_self, k, getattr(src, k))

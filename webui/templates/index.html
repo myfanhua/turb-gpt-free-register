@@ -504,6 +504,16 @@ function pagerSetSize(id, val) {
 // ---------- 工具 ----------
 function fmt(v) { return v == null || v === '' ? '-' : String(v); }
 function esc(v) { return fmt(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+// 配置表单必须用这个：空值保持空，不能把 '' 显示成 '-'，否则一点保存就会写回 config
+function attrEsc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function isPlaceholderEmpty(v) {
+  const s = String(v == null ? '' : v).trim();
+  return !s || ['-', '—', '无', '空', 'none', 'null', 'n/a', 'na'].includes(s.toLowerCase());
+}
 function short(v, n=40) { const s = v || ''; return s.length > n ? s.slice(0,n)+'…' : s; }
 function copyId(v) { if (!v) return ''; const id = 'c'+(++copySeq); copyStore.set(id, v); return id; }
 function cbtn(label, value, cls='') { const id = copyId(value); return `<button class="${cls}" data-copy-id="${id}" ${id?'':'disabled'}>${label}</button>`; }
@@ -620,6 +630,10 @@ function renderJobs() {
       <td class="actions-cell">
         <div class="actions job-actions">
           <button data-log-job="${esc(j.id)}">日志</button>
+          ${j.status === 'running' && j.email ? `
+            <input class="manual-otp-input" data-otp-email="${esc(j.email)}" data-otp-job="${esc(j.id)}" placeholder="邮箱验证码" maxlength="8" style="width:96px;min-height:28px;padding:2px 6px;" title="手动模式下，打开邮箱后把 6 位验证码贴这里">
+            <button class="good" data-submit-otp-job="${esc(j.id)}" data-email="${esc(j.email)}">提交验证码</button>
+          ` : ''}
           ${['pending','running','stopping'].includes(j.status) ? `<button class="danger" data-stop-job="${esc(j.id)}">${j.status === 'stopping' ? '停止/修复' : '停止'}</button>` : ''}
           <button class="danger" data-delete-job="${esc(j.id)}" ${j.status === 'running' ? 'disabled title="运行中的任务不能删除；如需删除请先停止"' : ''}>删除</button>
         </div>
@@ -691,6 +705,11 @@ $('#jobsBody').addEventListener('click', (e) => {
     openLog(parseInt(logBtn.dataset.logJob, 10));
     return;
   }
+  const otpBtn = e.target.closest('[data-submit-otp-job]');
+  if (otpBtn) {
+    submitManualOtpForJob(otpBtn);
+    return;
+  }
   const stopBtn = e.target.closest('[data-stop-job]');
   if (stopBtn) {
     stopJob(parseInt(stopBtn.dataset.stopJob, 10), stopBtn);
@@ -701,6 +720,29 @@ $('#jobsBody').addEventListener('click', (e) => {
     deleteJob(parseInt(delBtn.dataset.deleteJob, 10), delBtn);
   }
 });
+
+async function submitManualOtpForJob(btn) {
+  const jobId = parseInt(btn.dataset.submitOtpJob, 10);
+  const email = btn.dataset.email || '';
+  const input = document.querySelector(`.manual-otp-input[data-otp-job="${jobId}"]`);
+  const code = (input?.value || '').trim();
+  if (!code) { showToast('请先填写邮箱验证码'); return; }
+  btn.disabled = true;
+  try {
+    const r = await api('/api/manual-otp', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ email, code, job_id: jobId }),
+    });
+    showToast(r.ok ? `已提交验证码给 ${email || ('#'+jobId)}` : (r.error || '提交失败'));
+    if (input) input.value = '';
+    if (activeLogJob === jobId) pollLog();
+  } catch (e) {
+    showToast('提交验证码失败: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
 $('#jobsBody').addEventListener('change', (e) => {
   const cb = e.target.closest('.job-row-check');
   if (!cb) return;
@@ -1426,15 +1468,19 @@ function configGroups() {
 function renderConfigField(f) {
   let html = `<label class="fld">${esc(f.label)}<span class="hint">${esc(f.help)} · <span class="mono">${esc(f.key)}</span></span>`;
   if (f.type === 'bool') {
-    html += `<select data-key="${esc(f.key)}"><option value="true"${f.value?' selected':''}>开启 (True)</option><option value="false"${!f.value?' selected':''}>关闭 (False)</option></select>`;
+    html += `<select data-key="${attrEsc(f.key)}"><option value="true"${f.value?' selected':''}>开启 (True)</option><option value="false"${!f.value?' selected':''}>关闭 (False)</option></select>`;
   } else if (f.type === 'int') {
-    html += `<input type="number" data-key="${esc(f.key)}" value="${esc(f.value)}">`;
+    html += `<input type="number" data-key="${attrEsc(f.key)}" value="${attrEsc(f.value == null ? '' : f.value)}">`;
   } else if (f.type === 'float') {
-    html += `<input type="number" step="0.1" data-key="${esc(f.key)}" value="${esc(f.value)}">`;
+    html += `<input type="number" step="0.1" data-key="${attrEsc(f.key)}" value="${attrEsc(f.value == null ? '' : f.value)}">`;
   } else if (f.type === 'list_str_multiline') {
-    html += `<textarea data-key="${esc(f.key)}">${esc((f.value||[]).join('\n'))}</textarea>`;
+    html += `<textarea data-key="${attrEsc(f.key)}" placeholder="每行一条，可留空">${attrEsc((f.value||[]).join('\n'))}</textarea>`;
   } else {
-    html += `<input type="text" data-key="${esc(f.key)}" value="${esc(f.value)}">`;
+    // 空字符串/占位符 '-' 都显示为空输入框，避免误保存成真实值
+    const shown = isPlaceholderEmpty(f.value) ? '' : f.value;
+    const inputType = f.secret ? 'password' : 'text';
+    const ph = f.secret ? '保存在 .env，可留空' : '可留空';
+    html += `<input type="${inputType}" data-key="${attrEsc(f.key)}" value="${attrEsc(shown)}" placeholder="${ph}" autocomplete="off" spellcheck="false">`;
   }
   return html + `</label>`;
 }
@@ -1588,7 +1634,7 @@ $('#btnSaveConfig').addEventListener('click', async () => {
     else if (f.type === 'bool') updates[f.key] = el.value === 'true';
     else if (f.type === 'int') updates[f.key] = parseInt(el.value || '0', 10);
     else if (f.type === 'float') updates[f.key] = parseFloat(el.value || '0');
-    else updates[f.key] = el.value;
+    else updates[f.key] = isPlaceholderEmpty(el.value) ? '' : el.value.trim();
   });
   $('#btnSaveConfig').disabled = true;
   try {

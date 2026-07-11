@@ -180,7 +180,11 @@ def run_registration(
         proxy: 代理地址（不传则从 PROXY_POOL 随机抽）
         otp_code: 邮箱验证码（如果为None，会等待手动输入）
     """
-    # 可选注册驱动：protocol=原有纯协议；roxy=RoxyBrowser 指纹浏览器自动化。
+    # 可选注册驱动：
+    #   protocol     = 原有纯协议（curl_cffi）
+    #   roxy         = RoxyBrowser 指纹浏览器 + Selenium
+    #   cloak        = CloakBrowser + Playwright/Selenium 适配层
+    #   browser_use  = Browser Use Cloud stealth Chromium + Playwright
     driver_mode = str(getattr(_roxy_cfg, "REGISTRATION_DRIVER", "protocol") or "protocol").strip().lower()
     if driver_mode in ("roxy", "roxybrowser", "fingerprint", "browser"):
         from core.roxy_registration import run_roxy_registration
@@ -202,8 +206,20 @@ def run_registration(
             otp_code=otp_code,
             batch_dir=batch_dir,
         )
+    if driver_mode in ("browser_use", "browseruse", "browser-use", "bu"):
+        from core.browser_use_registration import run_browser_use_registration
+        return run_browser_use_registration(
+            email=email,
+            name=name,
+            birthday=birthday or generate_random_birthday(),
+            proxy=proxy,
+            otp_code=otp_code,
+            batch_dir=batch_dir,
+        )
     if driver_mode not in ("protocol", "api", "http"):
-        raise RuntimeError(f"不支持的 REGISTRATION_DRIVER={driver_mode!r}，可选 protocol / roxy / cloak")
+        raise RuntimeError(
+            f"不支持的 REGISTRATION_DRIVER={driver_mode!r}，可选 protocol / roxy / cloak / browser_use"
+        )
 
     # 创建浏览器会话（proxy=None 时自动从 config.PROXY_POOL 随机抽一个）
     session = BrowserSession(proxy=proxy)

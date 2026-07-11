@@ -7,15 +7,19 @@ RoxyBrowser 指纹浏览器自动化注册配置。
 - 所有接口请求头必须带 token
 - 可配合 Selenium / Puppeteer / Playwright 自动化
 """
+from config.env_loader import env_str
+
 
 # 注册驱动：
-#   "protocol" = 原有 curl_cffi 纯协议注册
-#   "roxy"     = 调用 RoxyBrowser 指纹浏览器 + Selenium 自动化注册
-REGISTRATION_DRIVER: str = "cloak"
+#   "protocol"     = 原有 curl_cffi 纯协议注册
+#   "roxy"         = 调用 RoxyBrowser 指纹浏览器 + Selenium 自动化注册
+#   "cloak"        = 调用 CloakBrowser + Playwright/Selenium 适配层注册
+#   "browser_use"  = Browser Use Cloud stealth Chromium + Playwright
+REGISTRATION_DRIVER: str = "browser_use"
 
 # RoxyBrowser 本地 API
 ROXY_API_BASE: str = "http://127.0.0.1:50100"
-ROXY_API_TOKEN: str = "637dcf52d7794e029c7556c2dbcbc07b"
+ROXY_API_TOKEN: str = env_str("ROXY_API_TOKEN", "")
 
 # Roxy 环境/Profile ID；留空时使用 ROXY_PROFILE_CREATE_* 先创建临时环境（如果接口支持）
 ROXY_PROFILE_ID: str = "-"
