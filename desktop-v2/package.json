@@ -1,0 +1,30 @@
+{
+  "name": "registration-desk",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "tsc && node scripts/copy-assets.mjs",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron .",
+    "pack:win": "npm run build && node scripts/package-win.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:ui": "npm run build && node scripts/ui-smoke.mjs"
+  },
+  "dependencies": {
+    "imapflow": "^1.0.195",
+    "jsqr": "^1.4.0",
+    "mailparser": "^3.7.4",
+    "playwright-core": "^1.53.2",
+    "pngjs": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^24.0.10",
+    "@types/pngjs": "^6.0.5",
+    "electron": "43.0.0",
+    "typescript": "^5.8.3"
+  }
+}

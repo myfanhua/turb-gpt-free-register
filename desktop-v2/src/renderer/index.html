@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <title>注册工作台</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="eyebrow">ACCOUNT OPERATIONS</span>
+      <h1><span>REGISTRATION</span> DESK</h1>
+      <p id="summary">0 个账号</p>
+    </div>
+    <div class="actions">
+      <button id="start" class="primary">开始注册</button>
+      <button id="login">登录获取 Session</button>
+      <button id="stop" disabled>停止</button>
+      <button id="checkSession">检测 Session</button>
+      <button id="trial">检测免费试用</button>
+      <button id="health">检测封号</button>
+      <button id="mail">最近邮件</button>
+    </div>
+  </header>
+
+  <main>
+    <aside>
+      <section>
+        <div class="section-title"><span class="section-icon">+</span><div><h2>导入账号</h2><small>Account source</small></div></div>
+        <textarea id="importText" rows="7" placeholder="email----password----client_id----refresh_token"></textarea>
+        <button id="import" class="wide">导入或更新</button>
+        <button id="importSession" class="wide secondary-action">导入 Session</button>
+      </section>
+      <section id="accountGroupPanel" class="account-group-panel" data-group="other">
+        <div class="section-title"><span class="section-icon">⇄</span><div><h2>账号分组</h2><small>Trial account switch</small></div></div>
+        <div class="account-group-control">
+          <div class="account-group-option option-other"><span>其他账号</span><strong id="otherAccountCount">0</strong></div>
+          <label class="switch account-group-switch">
+            <input id="accountGroupSwitch" class="switch__input" type="checkbox" role="switch" aria-label="切换可免费试用账号">
+            <span class="switch__base-outer"></span>
+            <span class="switch__base-inner"></span>
+            <svg class="switch__base-neon" viewBox="0 0 40 24" width="40" height="24" aria-hidden="true">
+              <defs>
+                <filter id="switch-glow"><feGaussianBlur result="coloredBlur" stdDeviation="1"></feGaussianBlur><feMerge><feMergeNode in="coloredBlur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge></filter>
+                <linearGradient id="switch-gradient1" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="hsl(var(--on-hue1),90%,70%)"></stop><stop offset="100%" stop-color="hsl(var(--on-hue2),90%,70%)"></stop></linearGradient>
+                <linearGradient id="switch-gradient2" x1="0.7" y1="0" x2="0.3" y2="1"><stop offset="25%" stop-color="hsla(var(--on-hue1),90%,70%,0)"></stop><stop offset="50%" stop-color="hsla(var(--on-hue1),90%,70%,0.3)"></stop><stop offset="100%" stop-color="hsla(var(--on-hue2),90%,70%,0.3)"></stop></linearGradient>
+              </defs>
+              <path fill="none" filter="url(#switch-glow)" stroke="url(#switch-gradient1)" stroke-width="1" stroke-dasharray="0 104.26 0" stroke-dashoffset="0.01" stroke-linecap="round" d="m.5,12C.5,5.649,5.649.5,12,.5h16c6.351,0,11.5,5.149,11.5,11.5s-5.149,11.5-11.5,11.5H12C5.649,23.5.5,18.351.5,12Z"></path>
+            </svg>
+            <span class="switch__knob-shadow"></span>
+            <span class="switch__knob-container"><span class="switch__knob"><svg class="switch__knob-neon" viewBox="0 0 48 48" width="48" height="48" aria-hidden="true"><circle fill="none" stroke="url(#switch-gradient2)" stroke-dasharray="0 90.32 0 54.19" stroke-linecap="round" stroke-width="1" r="23" cx="24" cy="24" transform="rotate(-112.5,24,24)"></circle></svg></span></span>
+            <span class="switch__led"></span>
+            <span class="switch__text">切换账号分组</span>
+          </label>
+          <div class="account-group-option option-eligible"><span>可免费试用</span><strong id="eligibleAccountCount">0</strong></div>
+        </div>
+        <p id="accountGroupHint" class="account-group-hint">正在显示其他账号</p>
+      </section>
+      <section class="trial-meter-panel">
+        <div class="section-title"><span class="section-icon">%</span><div><h2>免费试用状态</h2><small>Eligibility monitor</small></div></div>
+        <div class="trial-dial" aria-label="免费试用资格比例">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="dial-track" cx="60" cy="60" r="51" pathLength="100"></circle>
+            <circle id="trialGaugeRing" class="dial-progress" cx="60" cy="60" r="51" pathLength="100"></circle>
+          </svg>
+          <div class="dial-center"><strong id="trialPercent">0%</strong><span>有资格</span></div>
+          <span class="dial-mark mark-0">0</span><span class="dial-mark mark-25">25</span><span class="dial-mark mark-50">50</span><span class="dial-mark mark-75">75</span>
+        </div>
+        <div class="trial-meter-stats">
+          <div><strong id="trialChecked">0 / 0</strong><span>已检测账号</span></div>
+          <div><strong id="trialEligible">0</strong><span>有资格</span></div>
+        </div>
+        <div class="coverage"><span>检测覆盖率</span><strong id="trialCoverage">0%</strong></div>
+      </section>
+      <section>
+        <div class="section-title"><span class="section-icon">⌁</span><div><h2>注册设置</h2><small>Runtime settings</small></div></div>
+        <label>并发数<input id="concurrency" type="number" min="1" max="20" value="1"></label>
+        <label>本地代理<input id="localProxy" placeholder="http://127.0.0.1:7890"></label>
+        <label>动态代理池<textarea id="proxyPool" rows="5" placeholder="每行一个 HTTP 或 SOCKS5 代理"></textarea></label>
+        <label>注册地址<input id="registrationUrl"></label>
+        <label>试用检测接口<input id="trialApiUrl"></label>
+        <label class="toggle"><input id="headless" type="checkbox"><span>无头模式</span></label>
+        <label class="toggle"><input id="setupGptSecurity" type="checkbox"><span>注册后设置 GPT 密码/MFA</span></label>
+        <button id="saveSettings" class="wide">保存设置</button>
+      </section>
+    </aside>
+
+    <div class="workspace">
+      <div class="table-tools">
+        <label><input id="selectAll" type="checkbox"> 全选</label>
+        <div><button id="copyTwofaCode">复制 2FA 验证码</button><button id="copyEmailCode">复制邮箱验证码</button><button id="exportGptCreds">导出 GPT 密码/2FA</button><button id="exportMailCreds">导出邮箱令牌</button><button id="details">查看结果</button><button id="remove">删除选中</button></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th></th><th>邮箱</th><th>状态</th><th>密码</th><th>MFA</th><th>Session</th><th>试用</th><th>账号健康</th><th>更新时间</th></tr></thead>
+          <tbody id="accounts"></tbody>
+        </table>
+        <div id="empty" class="empty">导入账号后即可开始</div>
+      </div>
+      <section class="logs">
+        <div class="logs-title"><div class="section-title"><span class="section-icon">›</span><div><h2>运行日志</h2><small>Live activity</small></div></div><button id="clearLogs">清空</button></div>
+        <pre id="log"></pre>
+      </section>
+    </div>
+  </main>
+  <div id="toast" role="status"></div>
+  <dialog id="mailDialog">
+    <div class="dialog-head"><div><h2>最近 20 封邮件</h2><p id="mailAccount"></p></div><button id="closeMail" aria-label="关闭">×</button></div>
+    <div class="mail-layout">
+      <div id="mailList" class="mail-list"></div>
+      <article class="mail-content"><h3 id="mailSubject">选择一封邮件</h3><div id="mailMeta"></div><pre id="mailBody"></pre></article>
+    </div>
+  </dialog>
+  <dialog id="resultDialog" class="result-dialog">
+    <div class="dialog-head"><div><h2>账号结果</h2><p id="resultAccount"></p></div><button id="closeResult" aria-label="关闭">×</button></div>
+    <div class="result-content">
+      <div class="result-grid">
+        <label>GPT 登录密码<span><input id="resultPassword" readonly><button data-copy="resultPassword">复制</button></span></label>
+        <label>Authenticator 2FA 密钥<span><input id="resultTwofa" readonly><button data-copy="resultTwofa">复制</button></span></label>
+        <label>Session 状态<input id="resultSessionStatus" readonly></label>
+        <label>Session 更新时间<input id="resultSessionTime" readonly></label>
+      </div>
+      <label>Access Token<span><textarea id="resultAccessToken" rows="3" readonly></textarea><button data-copy="resultAccessToken">复制</button></span></label>
+      <label>Session JSON<span><textarea id="resultSessionJson" rows="8" readonly></textarea><button data-copy="resultSessionJson">复制</button></span></label>
+      <label>Storage State<span><textarea id="resultStorageState" rows="6" readonly></textarea><button data-copy="resultStorageState">复制</button></span></label>
+    </div>
+  </dialog>
+  <dialog id="sessionImportDialog" class="session-import-dialog">
+    <div class="dialog-head"><div><h2>导入 Session</h2><p>Session JSON / 包装对象 / Access Token</p></div><button id="closeSessionImport" aria-label="关闭">×</button></div>
+    <form id="sessionImportForm" class="session-import-content">
+      <label>邮箱（可选）<input id="sessionEmailHint" type="email" placeholder="Session 无邮箱信息时填写"></label>
+      <label>Session 内容<textarea id="sessionImportText" rows="13" placeholder='粘贴 /api/auth/session 返回的 JSON；也支持 JSON 数组或单独 Access Token'></textarea></label>
+      <div class="dialog-actions"><button id="cancelSessionImport" type="button">取消</button><button type="submit" class="primary">保存 Session</button></div>
+    </form>
+  </dialog>
+  <script type="module" src="./renderer.js"></script>
+</body>
+</html>
