@@ -172,10 +172,11 @@ def create_app() -> Flask:
         分隔符兼容 ---- 与 ====。
         """
         data = request.get_json(silent=True) or {}
-        source = _pool_source_arg()
-        if source == "all":
+        source = (data.get("source") or data.get("type") or "").strip()
+        if source not in ("outlook", "generic_api"):
             return jsonify({"ok": False, "error": "导入时请选择具体类型：Outlook 或 通用 API"}), 400
         text = data.get("text") or ""
+        as_registered = bool(data.get("as_registered", False))
         records = []
         for line in text.splitlines():
             line = line.strip()
@@ -189,6 +190,8 @@ def create_app() -> Flask:
                 records.append({
                     "email": parts[0],
                     "code_url": parts[1],
+                    "access_token": parts[2] if len(parts) > 2 else "",
+                    "totp_secret": parts[3] if len(parts) > 3 else "",
                 })
                 continue
             if len(parts) < 4:
@@ -198,15 +201,25 @@ def create_app() -> Flask:
                 "password": parts[1],
                 "client_id": parts[2],
                 "refresh_token": parts[3],
+                "access_token": parts[4] if len(parts) > 4 else "",
+                "totp_secret": parts[5] if len(parts) > 5 else "",
             })
         if not records:
             need = "2 段：邮箱----取码地址" if source == "generic_api" else "4 段：email----password----clientId----refreshToken"
             return jsonify({"ok": False, "error": f"未解析到有效邮箱行（需 {need}，---- 或 ==== 分隔）"}), 400
-        if source == "generic_api":
+        if as_registered:
+            inserted, skipped = db.import_registered_email_accounts(records, source=source)
+        elif source == "generic_api":
             inserted, skipped = db.import_generic_api_emails(records)
         else:
             inserted, skipped = db.import_outlook_accounts(records)
-        return jsonify({"ok": True, "inserted": inserted, "skipped": skipped, "parsed": len(records)})
+        return jsonify({
+            "ok": True,
+            "inserted": inserted,
+            "skipped": skipped,
+            "parsed": len(records),
+            "as_registered": as_registered,
+        })
 
     @app.post("/api/outlook/status")
     def api_outlook_status():

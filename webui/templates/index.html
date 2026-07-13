@@ -388,7 +388,7 @@
   <!-- ============ 邮箱池 ============ -->
   <div id="tab-outlook" class="hidden">
     <section class="card">
-      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址（---- 或 ==== 分隔均可），已存在的邮箱会自动跳过。</p></div>
+      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址（---- 或 ==== 分隔均可）。默认按“已注册成功账号”导入，方便直接在账号页补跑 Codex 授权。</p></div>
       <div class="body">
         <div id="importResult"></div>
         <label class="fld">导入类型
@@ -398,9 +398,13 @@
           </select>
           <span class="hint">注册来源可在配置里填多个，例如：outlook,generic_api</span>
         </label>
+        <label style="display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--text);font-size:13px;">
+          <input id="importAsRegistered" type="checkbox" style="width:auto;min-height:auto;">
+          导入后默认视为“注册成功账号”（邮箱池标记已用，并出现在账号页，可直接批量补跑 Codex）
+        </label>
         <textarea id="importText" placeholder="Outlook: email----password----clientId----refreshToken
 通用API: email----取码地址"></textarea>
-        <div style="margin-top:10px;"><button class="btn primary" id="btnImport">导入到邮箱池</button></div>
+        <div style="margin-top:10px;"><button class="btn primary" id="btnImport">导入</button></div>
       </div>
     </section>
     <section class="card">
@@ -1267,11 +1271,13 @@ $('#btnImport').addEventListener('click', async () => {
   $('#btnImport').disabled = true;
   try {
     const source = $('#importSource').value;
-    const r = await api('/api/outlook/import', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, source}) });
-    $('#importResult').innerHTML = `<div class="banner info">解析 ${r.parsed} 行，新增 ${r.inserted}，跳过 ${r.skipped}</div>`;
+    const as_registered = $('#importAsRegistered')?.checked ?? true;
+    const r = await api('/api/outlook/import', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, source, as_registered}) });
+    const mode = r.as_registered ? '已注册账号' : '邮箱池素材';
+    $('#importResult').innerHTML = `<div class="banner info">按 ${mode} 导入：解析 ${r.parsed} 行，新增 ${r.inserted}，跳过 ${r.skipped}${r.as_registered ? '；可到“账号”页选择后批量补跑 Codex' : ''}</div>`;
     $('#importText').value = '';
     $('#poolSource').value = source;
-    loadOutlook(); loadSummary();
+    loadOutlook(); loadAccounts(); loadSummary();
   } catch(e) { $('#importResult').innerHTML = `<div class="banner warn">${esc(e.message)}</div>`; }
   finally { $('#btnImport').disabled = false; }
 });

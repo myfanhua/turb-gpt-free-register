@@ -773,6 +773,137 @@ def import_outlook_accounts(records: list[dict]) -> tuple[int, int]:
         return inserted, skipped
 
 
+def import_registered_email_accounts(records: list[dict], source: str | None) -> tuple[int, int]:
+    """
+    把邮箱素材直接导入为“已注册成功账号”，用于跳过注册、直接在账号页补跑 Codex 授权。
+
+    source:
+      - outlook: records 元素 {email,password,client_id,refresh_token[,access_token,totp_secret]}
+      - generic_api: records 元素 {email,code_url[,access_token,totp_secret]}
+
+    返回 (新增账号数, 跳过数)。已存在账号会跳过；邮箱池中已存在的素材会复用并标记 used。
+    """
+    source = (source or "").strip().lower()
+    if source not in ("outlook", "generic_api"):
+        raise ValueError("source 必须显式传入 outlook / generic_api")
+
+    with _LOCK:
+        accounts = _load_accounts()
+        outlook_rows = _load_outlook()
+        generic_rows = _load_generic_api_emails()
+        inserted = skipped = 0
+
+        for raw in records:
+            email = (raw.get("email") or "").strip()
+            if not email:
+                skipped += 1
+                continue
+            if _find_by_email(accounts, email):
+                skipped += 1
+                continue
+
+            now = _now()
+            original_line = email
+            pool_row = None
+
+            if source == "generic_api":
+                code_url = (raw.get("code_url") or raw.get("url") or "").strip()
+                if not code_url:
+                    skipped += 1
+                    continue
+                pool_row = _find_by_email(generic_rows, email)
+                if pool_row is None:
+                    pool_row = {
+                        "id": _next_id(generic_rows),
+                        "email": email,
+                        "code_url": code_url,
+                        "status": "used",
+                        "used_at": now,
+                        "note": "导入为已注册账号，用于 Codex 授权",
+                        "imported_at": now,
+                    }
+                    generic_rows.append(pool_row)
+                else:
+                    pool_row["code_url"] = code_url or pool_row.get("code_url")
+                pool_row["status"] = "used"
+                pool_row["used_at"] = pool_row.get("used_at") or now
+                pool_row["completed_at"] = pool_row.get("completed_at") or now
+                pool_row["note"] = pool_row.get("note") or "导入为已注册账号，用于 Codex 授权"
+                pool_row["copy_line"] = _generic_api_email_line(pool_row)
+                original_line = _generic_api_email_line(pool_row)
+            else:
+                password = (raw.get("password") or "").strip()
+                client_id = (raw.get("client_id") or raw.get("clientId") or "").strip()
+                refresh_token = (raw.get("refresh_token") or raw.get("refreshToken") or "").strip()
+                if not (password and client_id and refresh_token):
+                    skipped += 1
+                    continue
+                pool_row = _find_by_email(outlook_rows, email)
+                if pool_row is None:
+                    pool_row = {
+                        "id": _next_id(outlook_rows),
+                        "email": email,
+                        "password": password,
+                        "client_id": client_id,
+                        "refresh_token": refresh_token,
+                        "status": "used",
+                        "used_at": now,
+                        "note": "导入为已注册账号，用于 Codex 授权",
+                        "imported_at": now,
+                    }
+                    outlook_rows.append(pool_row)
+                else:
+                    pool_row["password"] = password or pool_row.get("password")
+                    pool_row["client_id"] = client_id or pool_row.get("client_id")
+                    pool_row["refresh_token"] = refresh_token or pool_row.get("refresh_token")
+                pool_row["status"] = "used"
+                pool_row["used_at"] = pool_row.get("used_at") or now
+                pool_row["completed_at"] = pool_row.get("completed_at") or now
+                pool_row["note"] = pool_row.get("note") or "导入为已注册账号，用于 Codex 授权"
+                pool_row["copy_line"] = _outlook_line(pool_row)
+                original_line = _outlook_line(pool_row)
+
+            row_id = _next_id(accounts)
+            access_token = (raw.get("access_token") or raw.get("token") or "").strip()
+            totp_secret = (raw.get("totp_secret") or raw.get("totp") or "").strip() or None
+            account = {
+                "id": row_id,
+                "email": email,
+                "created_at": now,
+                "access_token": access_token,
+                "totp_secret": totp_secret,
+                "user_id": raw.get("user_id"),
+                "user_name": raw.get("user_name") or "Imported Account",
+                "plan_type": raw.get("plan_type"),
+                "expires_at": raw.get("expires_at"),
+                "device_id": raw.get("device_id"),
+                "proxy_used": raw.get("proxy_used"),
+                "email_source": source,
+                "extra_json": json.dumps({"imported_registered": True}, ensure_ascii=False),
+                "codex_status": raw.get("codex_status") or "",
+                "codex_error": raw.get("codex_error"),
+                "updated_at": now,
+                "original_email_line": original_line,
+            }
+            if source == "outlook":
+                account["password"] = pool_row.get("password")
+                account["client_id"] = pool_row.get("client_id")
+                account["refresh_token"] = pool_row.get("refresh_token")
+            account["copy_line"] = _account_line(account)
+            accounts.append(account)
+
+            pool_row["registered_account_id"] = row_id
+            pool_row["access_token"] = access_token
+            if totp_secret:
+                pool_row["totp_secret"] = totp_secret
+            inserted += 1
+
+        _save_outlook(outlook_rows)
+        _save_generic_api_emails(generic_rows)
+        _save_accounts(accounts)
+        return inserted, skipped
+
+
 def claim_next_outlook() -> dict | None:
     """原子领取一个可用 Outlook 账号并标记为 used。"""
     with _LOCK:
