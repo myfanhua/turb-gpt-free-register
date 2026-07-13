@@ -65,7 +65,7 @@ def ensure_loaded() -> None:
 def env_str(key: str, default: str = "") -> str:
     ensure_loaded()
     value = os.getenv(key)
-    if value is None:
+    if value is None or str(value).strip() == "":
         return default
     return str(value).strip()
 
@@ -186,7 +186,10 @@ def _coerce_env_value(raw: str, default, vtype: str | None = None):
 def env_value(key: str, default=None, vtype: str | None = None):
     ensure_loaded()
     raw = os.getenv(key)
-    if raw is None:
+    # `.env.example` 和 WebUI 里常见 `KEY=` / `KEY=""` 这种空配置。
+    # 空值表示“未配置，使用 config/*.py 里的默认值”，否则 bool 默认 True
+    # 会被空字符串误覆盖成 False，str/list 默认值也会被误清空。
+    if raw is None or str(raw).strip() == "":
         return default
     try:
         return _coerce_env_value(raw, default, vtype)

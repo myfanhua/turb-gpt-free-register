@@ -357,32 +357,87 @@ def _config_path(filename: str) -> Path:
     return path
 
 
+def _literal_default_from_expr(node):
+    """尽量从赋值表达式中取“源码默认值”，不执行模块代码。
+
+    兼容：
+      KEY = "literal"
+      KEY: str = env_str("KEY", "default")
+      KEY = env_bool("KEY", True)
+      KEY = env_value("KEY", 123, "int")
+    """
+    try:
+        return ast.literal_eval(node)
+    except Exception:
+        pass
+
+    if isinstance(node, ast.Call):
+        func_name = ""
+        if isinstance(node.func, ast.Name):
+            func_name = node.func.id
+        elif isinstance(node.func, ast.Attribute):
+            func_name = node.func.attr
+
+        # env_str/env_bool/env_int/env_float/env_list 的第二个位置参数是默认值。
+        if func_name in {"env_str", "env_bool", "env_int", "env_float", "env_list"}:
+            if len(node.args) >= 2:
+                try:
+                    return ast.literal_eval(node.args[1])
+                except Exception:
+                    return None
+            return None
+
+        # env_value(key, default, vtype)
+        if func_name == "env_value" and len(node.args) >= 2:
+            try:
+                return ast.literal_eval(node.args[1])
+            except Exception:
+                return None
+
+    return None
+
+
+def _find_assignment_value_node(source: str, key: str):
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        for t in targets:
+            if isinstance(t, ast.Name) and t.id == key:
+                return node.value
+    return None
+
+
 def _parse_value_from_source(source: str, key: str, vtype: str):
     """从源码里解析 KEY 的当前值。失败返回 None。"""
     if vtype == "list_str_multiline":
         # 用 AST 解析整个模块，取这个赋值的 list 字面量
-        try:
-            tree = ast.parse(source)
-        except SyntaxError:
+        value_node = _find_assignment_value_node(source, key)
+        if value_node is None:
             return None
-        for node in tree.body:
-            if isinstance(node, ast.Assign):
-                targets = node.targets
-            elif isinstance(node, ast.AnnAssign):
-                targets = [node.target]
-            else:
-                continue
-            for t in targets:
-                if isinstance(t, ast.Name) and t.id == key:
-                    try:
-                        val = ast.literal_eval(node.value)
-                        if isinstance(val, (list, tuple)):
-                            return [str(x) for x in val]
-                    except (ValueError, SyntaxError):
-                        return None
+        try:
+            val = ast.literal_eval(value_node)
+            if isinstance(val, (list, tuple)):
+                return [str(x) for x in val]
+        except (ValueError, SyntaxError):
+            return None
         return None
 
-    # 标量：匹配 `KEY[: 类型] = 右值` 那一行，再用 literal_eval 解析右值
+    # 标量：优先 AST 取默认值，避免 env_str("KEY", "") 被当成普通字符串。
+    value_node = _find_assignment_value_node(source, key)
+    if value_node is not None:
+        value = _literal_default_from_expr(value_node)
+        if value is not None:
+            return value
+
+    # AST 失败时再回退到旧的正则解析。
     m = re.search(
         rf"^{re.escape(key)}\s*(?::[^=\n]+)?=\s*(.+?)\s*(?:#.*)?$",
         source, re.MULTILINE,
@@ -404,6 +459,8 @@ def _parse_env_typed_value(raw: str, fallback, vtype: str):
 
 def _coerce_raw_value(raw: str, fallback, vtype: str):
     try:
+        if raw is None or str(raw).strip() == "":
+            return fallback
         if vtype == "bool":
             return str(raw).strip().lower() in ("true", "1", "yes", "on", "y")
         if vtype == "int":

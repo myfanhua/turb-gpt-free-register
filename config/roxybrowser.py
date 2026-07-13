@@ -22,7 +22,7 @@ ROXY_API_BASE: str = "http://127.0.0.1:50100"
 ROXY_API_TOKEN: str = env_str("ROXY_API_TOKEN", "")
 
 # Roxy 环境/Profile ID；留空时使用 ROXY_PROFILE_CREATE_* 先创建临时环境（如果接口支持）
-ROXY_PROFILE_ID: str = "-"
+ROXY_PROFILE_ID: str = ""
 
 # Roxy 工作区 ID。Roxy 创建 Profile 时接口要求 workspaceId，必须填写。
 # 可在 Roxy 工作区/团队页面或 API 返回中查看。
