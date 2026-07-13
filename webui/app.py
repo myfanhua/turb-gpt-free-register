@@ -72,6 +72,9 @@ def create_app() -> Flask:
         from core.email_provider import parse_email_sources
         pool = {"total": 0, "available": 0, "used": 0, "failed": 0}
         for src in parse_email_sources(_email_cfg.EMAIL_SOURCE):
+            # GPTMail 地址按需生成，不属于本地邮箱池。
+            if src == "gptmail":
+                continue
             one = (
                 db.generic_api_email_pool_summary() if src == "generic_api"
                 else db.domain_email_pool_summary() if src == "cloudflare_domain"
@@ -798,7 +801,16 @@ def create_app() -> Flask:
                 "workers": workers,
             })
         sources = parse_email_sources(_email_cfg.EMAIL_SOURCE)
-        if "cloudflare_domain" in sources:
+        if "gptmail" in sources:
+            api_key = str(getattr(_email_cfg, "GPTMAIL_API_KEY", "") or "").strip()
+            if not api_key:
+                return jsonify({
+                    "ok": False,
+                    "error": "已选择 gptmail 邮箱来源，请填写 GPTMail API Key（配置 → 邮箱 / OTP）。",
+                }), 400
+            # GPTMail 在任务开始时随机生成邮箱，不需要本地邮箱池容量提示。
+            warning = ""
+        elif "cloudflare_domain" in sources:
             pool = db.domain_email_pool_summary()
             warning = ""
             if sources == ["cloudflare_domain"] and pool.get("available", 0) < count:

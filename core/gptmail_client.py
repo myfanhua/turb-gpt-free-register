@@ -178,7 +178,9 @@ def fetch_latest_otp(
                 candidate_time = _timestamp(detail)
                 candidate_time = message_time if candidate_time is None else candidate_time
                 candidate_time = float("-inf") if candidate_time is None else candidate_time
-                if best_otp is None or candidate_time >= best_timestamp:
+                is_newer_message = candidate_time > best_timestamp
+                is_updated_code = candidate_time == best_timestamp and otp != best_otp
+                if best_otp is None or is_newer_message or is_updated_code:
                     best_otp = otp
                     best_timestamp = candidate_time
                     settle_until = time.monotonic() + settle
