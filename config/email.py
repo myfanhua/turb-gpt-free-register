@@ -18,6 +18,7 @@ USE_EMAIL_SERVICE = False
 #   "outlook"           — 外购 Outlook 账号池 + mail.chatai.codes 远端取信
 #   "cloudflare_domain" — Cloudflare 域名邮箱（转发到 QQ 邮箱），通过 IMAP 取信
 #   "generic_api"       — 通用 API 取码邮箱池（邮箱----取码地址）
+#   "gptmail"           — GPTMail 临时邮箱 API（运行时随机生成邮箱并自动收码）
 EMAIL_SOURCE = "outlook,generic_api"
 
 
@@ -69,5 +70,13 @@ QQ_EMAIL = ""
 # 注意：这是 16 位授权码，不是 QQ 密码
 QQ_IMAP_PASSWORD = env_str("QQ_IMAP_PASSWORD", "")
 
+
+# ============================================================
+# GPTMail 临时邮箱 API（固定地址：https://mail.chatgpt.org.uk）
+# ============================================================
+
+# 选择 EMAIL_SOURCE="gptmail" 时必填；请在 WebUI「配置 → 邮箱 / OTP」填写。
+GPTMAIL_API_KEY = env_str("GPTMAIL_API_KEY", "")
+
 # ---- .env overrides for WebUI editable fields ----
-apply_env_overrides(globals(), {'USE_EMAIL_SERVICE': 'bool', 'OTP_MAX_WAIT': 'int', 'OTP_POLL_INTERVAL': 'int', 'EMAIL_SOURCE': 'str', 'EMAIL_DOMAIN': 'str', 'QQ_EMAIL': 'str', 'QQ_IMAP_PASSWORD': 'str', 'OUTLOOK_FETCH_MODE': 'str'})
+apply_env_overrides(globals(), {'USE_EMAIL_SERVICE': 'bool', 'OTP_MAX_WAIT': 'int', 'OTP_POLL_INTERVAL': 'int', 'EMAIL_SOURCE': 'str', 'EMAIL_DOMAIN': 'str', 'QQ_EMAIL': 'str', 'QQ_IMAP_PASSWORD': 'str', 'GPTMAIL_API_KEY': 'str', 'OUTLOOK_FETCH_MODE': 'str'})

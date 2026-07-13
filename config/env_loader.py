@@ -21,6 +21,7 @@ SECRET_ENV_KEYS: dict[str, str] = {
     "BROWSER_USE_API_KEY": "Browser Use Cloud API Key",
     "ROXY_API_TOKEN": "RoxyBrowser 本地 API Token",
     "QQ_IMAP_PASSWORD": "QQ 邮箱 IMAP 授权码（不是 QQ 密码）",
+    "GPTMAIL_API_KEY": "GPTMail API Key",
     "CPA_MANAGEMENT_KEY": "CPA 管理接口密钥",
     "SMS_API_KEY": "接码平台 API Key（如 GrizzlySMS）",
     "L_ADMIN_AUTH_CODE": "本地 L 接码服务 ADMIN_AUTH_CODE",
