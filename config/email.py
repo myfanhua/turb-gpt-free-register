@@ -19,7 +19,7 @@ USE_EMAIL_SERVICE = False
 #   "cloudflare_domain" — Cloudflare 域名邮箱（转发到 QQ 邮箱），通过 IMAP 取信
 #   "generic_api"       — 通用 API 取码邮箱池（邮箱----取码地址）
 #   "gptmail"           — GPTMail 临时邮箱 API（运行时随机生成邮箱并自动收码）
-EMAIL_SOURCE = "outlook,generic_api"
+EMAIL_SOURCE = "outlook,generic_api,mailnest"
 
 
 # ============================================================
@@ -80,3 +80,16 @@ GPTMAIL_API_KEY = env_str("GPTMAIL_API_KEY", "")
 
 # ---- .env overrides for WebUI editable fields ----
 apply_env_overrides(globals(), {'USE_EMAIL_SERVICE': 'bool', 'OTP_MAX_WAIT': 'int', 'OTP_POLL_INTERVAL': 'int', 'EMAIL_SOURCE': 'str', 'EMAIL_DOMAIN': 'str', 'QQ_EMAIL': 'str', 'QQ_IMAP_PASSWORD': 'str', 'GPTMAIL_API_KEY': 'str', 'OUTLOOK_FETCH_MODE': 'str'})
+
+
+# ============================================================
+# MailNest-迈巢 Outlook 临时邮箱：https://mailnest.top/
+# ============================================================
+
+# 选择 EMAIL_SOURCE="mailnest" 时必填
+MAIL_NEST_API_KEY = env_str("MAIL_NEST_API_KEY", "")
+# 选择 EMAIL_SOURCE="mailnest" 时必填
+MAIL_NEST_PROJECT_CODE = 'chatgpt001'
+
+# ---- .env overrides for WebUI editable fields ----
+apply_env_overrides(globals(), {'USE_EMAIL_SERVICE': 'bool', 'OTP_MAX_WAIT': 'int', 'OTP_POLL_INTERVAL': 'int', 'EMAIL_SOURCE': 'str', 'EMAIL_DOMAIN': 'str', 'QQ_EMAIL': 'str', 'QQ_IMAP_PASSWORD': 'str', 'GPTMAIL_API_KEY': 'str', 'OUTLOOK_FETCH_MODE': 'str', 'MAIL_NEST_API_KEY': 'str', 'MAIL_NEST_PROJECT_CODE': 'str'})

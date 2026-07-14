@@ -258,6 +258,15 @@ EDITABLE_FIELDS = [
         "label": "QQ 邮箱 IMAP 授权码", "help": "保存在 .env（QQ_IMAP_PASSWORD），不写回 config/*.py",
         "storage": "env", "secret": True,
     },
+    {
+        "key": "MAIL_NEST_API_KEY", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
+        "label": "MailNest API key", "help": "保存在 .env（MAIL_NEST_API_KEY），不写回 config/*.py 获取页面 mailnest.top/account",
+        "storage": "env", "secret": True,
+    },
+    {
+        "key": "MAIL_NEST_PROJECT_CODE", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
+        "label": "MailNest 项目代码", "help": "项目代码 默认 chatgpt001 获取页面 mailnest.top/buy-email",
+    },
     # ---- 浏览器地区画像 ----
     {
         "key": "BROWSER_LOCALE_PROFILE", "file": "browser.py", "type": "str", "group": "浏览器画像",
