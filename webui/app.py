@@ -12,24 +12,15 @@ Flask 本地控制台。
 """
 import logging
 import threading
-from pathlib import Path
 
 from flask import Flask, Response, jsonify, render_template, request
 
+from core import codex_retry_service, db, plan_check_service
 from webui.auth import init_auth, register_auth_routes
-
-from core import db
 from core import registration_service as svc
 from webui import config_editor
 
 logger = logging.getLogger(__name__)
-
-# 正在补跑 Codex 的邮箱集合（进程内防重复触发）
-_codex_retrying: set[str] = set()
-_codex_retrying_lock = threading.Lock()
-
-_LOG_DIR = Path(__file__).resolve().parent.parent / "注册日志"
-
 
 def _pool_source_arg(default: str = "outlook") -> str:
     src = (request.args.get("source") or "").strip()
@@ -50,15 +41,13 @@ def _with_pool_source(rows: list[dict], source: str) -> list[dict]:
     return out
 
 
-def _codex_retry_log_path(email: str) -> Path:
-    safe = email.replace("/", "_").replace("\\", "_").replace(":", "_")
-    return _LOG_DIR / f"codex-retry-{safe}.log"
-
-
 def create_app(auth_code: str | None = None) -> Flask:
     app = Flask(__name__, template_folder="templates")
     init_auth(app, auth_code=auth_code)
     register_auth_routes(app)
+    recovered_plan_checks = db.recover_interrupted_plan_checks()
+    if recovered_plan_checks:
+        logger.warning("已恢复 %s 个因 WebUI 重启中断的套餐查询状态", recovered_plan_checks)
 
     # ----------------------------------------------------------
     # 页面
@@ -107,6 +96,14 @@ def create_app(auth_code: str | None = None) -> Flask:
         limit = request.args.get("limit", default=500, type=int)
         return jsonify(db.list_accounts(limit=limit))
 
+    @app.get("/api/accounts/plan-check-status")
+    def api_account_plan_check_status():
+        """套餐查询轻量状态，不返回 Token、邮箱密码等敏感字段。"""
+        limit = request.args.get("limit", default=5000, type=int)
+        snapshot = db.list_account_plan_check_statuses(limit=max(1, min(5000, limit)))
+        snapshot["queue"] = plan_check_service.queue_settings()
+        return jsonify(snapshot)
+
     @app.post("/api/accounts/<int:acc_id>/delete")
     def api_account_delete(acc_id: int):
         """删除一个已注册账号记录。只删除本地保存的账号/token记录，不改邮箱池状态。"""
@@ -149,9 +146,7 @@ def create_app(auth_code: str | None = None) -> Flask:
 
     @app.post("/api/accounts/check-plan")
     def api_account_check_plan():
-        """查询单个账号当前套餐和 Plus 试用资格。Body {account_id|email, proxy?, timezone_offset_min?}"""
-        from core.chatgpt_plan import check_account_plan
-
+        """把单账号套餐查询加入后台队列。Body {account_id|email, proxy?, timezone_offset_min?}"""
         data = request.get_json(silent=True) or {}
         acc_id = data.get("account_id") or data.get("id")
         email = (data.get("email") or "").strip()
@@ -168,28 +163,30 @@ def create_app(auth_code: str | None = None) -> Flask:
         token = (acc.get("access_token") or "").strip()
         if not token:
             return jsonify({"ok": False, "error": "该账号没有 access_token"}), 400
-        result = check_account_plan(
-            token,
-            # 未传 proxy 时使用套餐查询独立网络策略；显式传值仍可覆盖。
+        account_id = int(acc.get("id"))
+        queued = plan_check_service.enqueue_account_plan_check(
+            account_id=account_id,
+            email=acc.get("email") or "",
+            access_token=token,
+            trigger="manual",
             proxy=data.get("proxy") if "proxy" in data else None,
             timezone_offset_min=str(data.get("timezone_offset_min") or "-"),
         )
-        db.update_account_plan_check(acc_id=int(acc.get("id")), result=result)
-        return jsonify({"ok": bool(result.get("ok")), "account_id": acc.get("id"), "email": acc.get("email"), "result": result})
+        if queued.get("busy"):
+            return jsonify({"ok": False, **queued}), 409
+        if not queued.get("accepted"):
+            return jsonify({"ok": False, **queued}), 503
+        return jsonify({"ok": True, "started": True, **queued}), 202
 
     @app.post("/api/accounts/check-plan-bulk")
     def api_accounts_check_plan_bulk():
-        """批量查询账号当前套餐和 Plus 试用资格。Body {account_ids:[...], workers?, proxy?, timezone_offset_min?}"""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        from core.chatgpt_plan import check_account_plan
-
+        """批量把套餐查询加入统一后台队列。Body {account_ids:[...], proxy?, timezone_offset_min?}"""
         data = request.get_json(silent=True) or {}
         ids = data.get("account_ids") or data.get("ids") or []
         if not isinstance(ids, list) or not ids:
             return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
         if len(ids) > 500:
             return jsonify({"ok": False, "error": "单次最多查询 500 个账号"}), 400
-        workers = max(1, min(16, int(data.get("workers") or 3)))
         # 与单账号查询保持一致：未传时使用独立网络策略。
         proxy = data.get("proxy") if "proxy" in data else None
         timezone_offset_min = str(data.get("timezone_offset_min") or "-")
@@ -215,43 +212,36 @@ def create_app(auth_code: str | None = None) -> Flask:
                 continue
             items.append(acc)
 
-        def _one(acc: dict) -> dict:
-            result = check_account_plan(
-                acc.get("access_token") or "",
+        started = []
+        busy = []
+        failed = []
+        for acc in items:
+            queued = plan_check_service.enqueue_account_plan_check(
+                account_id=int(acc.get("id")),
+                email=acc.get("email") or "",
+                access_token=acc.get("access_token") or "",
+                trigger="manual_bulk",
                 proxy=proxy,
                 timezone_offset_min=timezone_offset_min,
             )
-            db.update_account_plan_check(acc_id=int(acc.get("id")), result=result)
-            return {
-                "id": acc.get("id"),
-                "email": acc.get("email"),
-                "ok": bool(result.get("ok")),
-                "plan": result.get("current_plan_type"),
-                "plus_trial_eligible": bool(result.get("plus_trial_eligible")),
-                "network_route": result.get("network_route"),
-                "proxy_fallback_reason": result.get("proxy_fallback_reason"),
-                "error": result.get("error"),
-            }
-
-        checked = []
-        if items:
-            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="plan-check") as ex:
-                futures = [ex.submit(_one, acc) for acc in items]
-                for fut in as_completed(futures):
-                    try:
-                        checked.append(fut.result())
-                    except Exception as exc:
-                        checked.append({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
-        ok_count = sum(1 for x in checked if x.get("ok"))
+            item = {"id": acc.get("id"), "email": acc.get("email"), **queued}
+            if queued.get("accepted"):
+                started.append(item)
+            elif queued.get("busy"):
+                busy.append(item)
+            else:
+                failed.append(item)
         return jsonify({
             "ok": True,
-            "checked": checked,
-            "checked_count": len(checked),
-            "ok_count": ok_count,
-            "failed_count": len(checked) - ok_count,
+            "started": started,
+            "started_count": len(started),
+            "busy": busy,
+            "busy_count": len(busy),
+            "failed": failed,
+            "failed_count": len(failed),
             "skipped": skipped,
             "skipped_count": len(skipped),
-        })
+        }), 202
 
     # ----------------------------------------------------------
     # 邮箱池
@@ -639,75 +629,14 @@ def create_app(auth_code: str | None = None) -> Flask:
 
     def _reserve_codex_retry(email: str) -> bool:
         """进程内防重复占位；成功返回 True。"""
-        with _codex_retrying_lock:
-            if email in _codex_retrying:
-                return False
-            _codex_retrying.add(email)
-            return True
+        return codex_retry_service.reserve(email)
 
     def _release_codex_retry(email: str) -> None:
-        with _codex_retrying_lock:
-            _codex_retrying.discard(email)
+        codex_retry_service.release(email)
 
     def _run_codex_retry_worker(email: str, *, batch_label: str | None = None, clear_log: bool = True) -> None:
         """执行一个账号的 Codex 补跑。调用前必须已经 reserve。"""
-        import logging as _logging
-        from core.codex_oauth import run_codex_oauth
-
-        log_path = _codex_retry_log_path(email)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        if clear_log:
-            log_path.write_text("", encoding="utf-8")
-
-        thread_name = threading.current_thread().name
-        fh = _logging.FileHandler(str(log_path), encoding="utf-8")
-        fh.setLevel(_logging.DEBUG)
-        fh.setFormatter(_logging.Formatter(
-            "%(asctime)s [%(levelname)s] %(message)s",
-            datefmt="%H:%M:%S",
-        ))
-        fh.addFilter(lambda r: r.threadName == thread_name)
-        _logging.getLogger().addHandler(fh)
-        try:
-            # 补跑线程启动时再热加载一次配置，避免用户刚保存 Roxy 配置后，后台线程仍读到旧模块值。
-            try:
-                import config as _config_pkg
-                _config_pkg.reload_all()
-                from config import roxybrowser as _roxy_cfg
-                from config import codex as _codex_cfg
-                logger.info(
-                    "[Codex 补跑] 已热加载配置：CODEX_OAUTH_DRIVER=%s ROXY_OPEN_HEADLESS=%s ROXY_KEEP_BROWSER_OPEN=%s",
-                    getattr(_codex_cfg, "CODEX_OAUTH_DRIVER", ""),
-                    getattr(_roxy_cfg, "ROXY_OPEN_HEADLESS", ""),
-                    getattr(_roxy_cfg, "ROXY_KEEP_BROWSER_OPEN", ""),
-                )
-            except Exception as exc:
-                logger.warning("[Codex 补跑] 配置热加载失败，将继续使用当前内存配置：%s: %s", type(exc).__name__, exc)
-            if batch_label:
-                logger.info(f"[Codex 补跑] 批量任务：{batch_label}")
-            logger.info(f"[Codex 补跑] 开始：{email}")
-            logger.info("[Codex 补跑] 阶段说明：获取授权地址 → 登录邮箱 → 邮箱 OTP → 手机验证 → 捕获 callback → 提交/保存凭证")
-            result = run_codex_oauth(email, force=True)
-            logger.info(f"[Codex 补跑] 结果：status={result.get('status')} ok={result.get('ok')} file={result.get('file_path')} callback={result.get('callback_url')}")
-            result_status = result.get("status", "failed")
-            if result.get("ok"):
-                db.update_account_codex_status(email, "success", None)
-                logger.info(f"[Codex 补跑] {email} 成功")
-            elif result_status == "deactivated":
-                db.update_account_codex_status(email, "deactivated", result.get("message"))
-                logger.warning(f"[Codex 补跑] {email} 账号已废: {result.get('message')}")
-            else:
-                db.update_account_codex_status(email, result_status, result.get("message"))
-                logger.warning(f"[Codex 补跑] {email} 失败: {result.get('message')}")
-        except Exception as exc:
-            db.update_account_codex_status(email, "failed", f"{type(exc).__name__}: {exc}")
-            logger.exception(f"[Codex 补跑] {email} 异常")
-            logger.error("[Codex 补跑] 已结束：异常失败")
-        finally:
-            logger.info(f"[Codex 补跑] 结束：{email}")
-            _logging.getLogger().removeHandler(fh)
-            fh.close()
-            _release_codex_retry(email)
+        codex_retry_service.run_worker(email, batch_label=batch_label, clear_log=clear_log)
 
     @app.post("/api/codex/reset-retrying")
     def api_codex_reset_retrying():
@@ -737,7 +666,7 @@ def create_app(auth_code: str | None = None) -> Flask:
         _release_codex_retry(email)
 
         try:
-            log_path = _codex_retry_log_path(email)
+            log_path = codex_retry_service.log_path(email)
             log_path.parent.mkdir(parents=True, exist_ok=True)
             with log_path.open("a", encoding="utf-8") as f:
                 ts = _dt.now().strftime("%H:%M:%S")
@@ -825,7 +754,7 @@ def create_app(auth_code: str | None = None) -> Flask:
         for item in selected:
             email = item["email"]
             db.update_account_codex_status(email, "retrying", None)
-            log_path = _codex_retry_log_path(email)
+            log_path = codex_retry_service.log_path(email)
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.write_text(
                 f"{_dt.now().strftime('%H:%M:%S')} [INFO] [Codex 批量补跑] 已加入批量任务 batch={batch_id} workers={workers}，等待线程执行\n",
@@ -864,7 +793,7 @@ def create_app(auth_code: str | None = None) -> Flask:
         email = (request.args.get("email") or "").strip()
         if not email:
             return jsonify({"ok": False, "error": "email 为空"}), 400
-        p = _codex_retry_log_path(email)
+        p = codex_retry_service.log_path(email)
         if not p.exists():
             return jsonify({"ok": True, "log": "", "running": False})
         max_bytes = 50_000
@@ -876,7 +805,7 @@ def create_app(auth_code: str | None = None) -> Flask:
         return jsonify({
             "ok": True,
             "log": content,
-            "running": email in _codex_retrying,
+            "running": codex_retry_service.is_retrying(email),
         })
 
     # ----------------------------------------------------------
@@ -890,6 +819,7 @@ def create_app(auth_code: str | None = None) -> Flask:
         rows = db.list_jobs(limit=limit)
         for row in rows:
             row["manual_otp_required"] = manual_otp_required
+            row.update(svc.get_retry_info(row))
         return jsonify(rows)
 
     @app.post("/api/jobs")
@@ -1036,13 +966,71 @@ def create_app(auth_code: str | None = None) -> Flask:
             return jsonify({"ok": False, "error": result.get("error") or "停止失败"}), int(result.get("status") or 400)
         return jsonify(result)
 
+    @app.post("/api/jobs/<int:job_id>/retry")
+    def api_job_retry(job_id: int):
+        """重试失败/停止/取消任务；服务端自动判断完整注册或 Codex 补跑。"""
+        data = request.get_json(silent=True) or {}
+        try:
+            workers = max(1, min(16, int(data.get("workers", svc.get_executor_workers()))))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "workers 非法"}), 400
+        result = svc.retry_job(job_id, workers=workers)
+        if not result.get("ok"):
+            return jsonify(result), int(result.get("status") or 400)
+        return jsonify(result)
+
+    @app.post("/api/jobs/retry-bulk")
+    def api_jobs_retry_bulk():
+        """批量重试任务；不支持项逐条跳过并返回原因。"""
+        data = request.get_json(silent=True) or {}
+        job_ids = data.get("job_ids") or data.get("ids") or []
+        if not isinstance(job_ids, list) or not job_ids:
+            return jsonify({"ok": False, "error": "job_ids 必须是非空数组"}), 400
+        if len(job_ids) > 500:
+            return jsonify({"ok": False, "error": "单次最多重试 500 个任务"}), 400
+        try:
+            workers = max(1, min(16, int(data.get("workers", svc.get_executor_workers()))))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "workers 非法"}), 400
+
+        started: list[dict] = []
+        reused: list[dict] = []
+        skipped: list[dict] = []
+        seen: set[int] = set()
+        for raw_id in job_ids:
+            try:
+                one_id = int(raw_id)
+            except (TypeError, ValueError):
+                skipped.append({"id": raw_id, "reason": "ID 非法"})
+                continue
+            if one_id in seen:
+                continue
+            seen.add(one_id)
+            result = svc.retry_job(one_id, workers=workers)
+            if not result.get("ok"):
+                skipped.append({"id": one_id, "reason": result.get("error") or "不能重试"})
+            elif result.get("reused"):
+                reused.append(result)
+            else:
+                started.append(result)
+        return jsonify({
+            "ok": True,
+            "started": started,
+            "started_count": len(started),
+            "reused": reused,
+            "reused_count": len(reused),
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+            "workers": workers,
+        })
+
     @app.post("/api/jobs/<int:job_id>/delete")
     def api_job_delete(job_id: int):
         """删除一个任务记录。运行中的任务不允许删除；排队任务删除后执行前会自动跳过。"""
         job = db.get_job(job_id)
         if not job:
             return jsonify({"ok": False, "error": "任务不存在"}), 404
-        if job.get("status") == "running":
+        if job.get("status") in ("running", "stopping"):
             return jsonify({"ok": False, "error": "运行中的任务不能删除，请等待完成后再删"}), 409
         deleted = db.delete_job(job_id, delete_log=True, allow_running=False)
         if not deleted:
@@ -1076,7 +1064,7 @@ def create_app(auth_code: str | None = None) -> Flask:
             if not job:
                 skipped.append({"id": job_id, "reason": "任务不存在"})
                 continue
-            if job.get("status") == "running":
+            if job.get("status") in ("running", "stopping"):
                 skipped.append({"id": job_id, "reason": "运行中，不能删除"})
                 continue
             if db.delete_job(job_id, delete_log=True, allow_running=False):

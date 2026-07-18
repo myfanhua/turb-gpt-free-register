@@ -15,6 +15,7 @@ from core import sms_provider
 from core.roxybrowser_client import RoxyBrowserClient
 from core.roxy_registration import (
     _build_driver,
+    _center_browser_window,
     _click_any,
     _click_continue,
     _find_any,
@@ -1080,6 +1081,7 @@ def _run_roxy_codex_oauth_once(
 
         if not driver:
             driver = _build_driver(opened)
+            _center_browser_window(driver)
         driver.set_page_load_timeout(int(_roxy_cfg.ROXY_SELENIUM_TIMEOUT))
         logger.info("[Codex][Browser] 开始授权：%s，profile=%s，reuse_existing_profile=%s", email, opened.profile_id, reuse_existing_profile)
         if reuse_existing_profile and clear_existing_state:

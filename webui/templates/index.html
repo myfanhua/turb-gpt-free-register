@@ -121,7 +121,7 @@
     .col-expire { width: 168px; }
     .col-error { width: 320px; }
     .col-actions { width: 220px; }
-    .jobs-table .col-actions { width: 230px; }
+    .jobs-table .col-actions { width: 330px; }
     .accounts-table .col-token { width: 92px; }
     .accounts-table .col-plan { width: 340px; }
     .accounts-table .col-actions { width: 360px; }
@@ -139,6 +139,7 @@
     .status-used, .status-cancelled, .status-stopped, .status-disabled { color: #475467; background: #f2f4f7; }
     .status-stopping { color: var(--amber); background: #fff7e6; }
     .status-failed { color: var(--red); background: #fff0ef; }
+    .status-partial_success { color: #9a6700; background: #fff7d6; }
     .status-running { color: var(--amber); background: #fff7e6; }
     .status-success { color: var(--green); background: #e9f7ef; }
     .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -313,6 +314,7 @@
         <div><h2>任务列表</h2></div>
         <div class="buttons">
           <span class="muted" id="jobsSelectedHint" style="font-size:12px;align-self:center;margin-right:4px;">已选 0</span>
+          <button class="btn good" id="btnRetrySelectedJobs" disabled title="重试选中的失败、已停止或已取消任务">重试选中</button>
           <button class="btn" id="btnDeleteSelectedJobs" disabled title="删除选中的非运行中任务，并同时删除对应日志">删除选中</button>
           <button class="btn" id="btnCancelPending" title="把所有 status=排队 的任务标记为已取消，不再执行（已运行中的不影响）">取消所有排队</button>
           <button class="btn" id="btnRefreshJobs">手动刷新</button>
@@ -510,6 +512,7 @@ let ACCOUNTS = [], OUTLOOK = [], CONFIG = [];
 const ACCOUNT_SELECTED = new Set();
 const OUTLOOK_SELECTED = new Set();
 let JOBS = [];
+let jobsRenderSignature = '';
 const JOB_SELECTED = new Set();
 let activeLogJob = null, logTimer = null, jobsTimer = null;
 
@@ -566,7 +569,7 @@ function short(v, n=40) { const s = v || ''; return s.length > n ? s.slice(0,n)+
 function copyId(v) { if (!v) return ''; const id = 'c'+(++copySeq); copyStore.set(id, v); return id; }
 function cbtn(label, value, cls='') { const id = copyId(value); return `<button class="${cls}" data-copy-id="${id}" ${id?'':'disabled'}>${label}</button>`; }
 function pill(status) {
-  const map = { available:'可用', used:'已用', failed:'失败', disabled:'已停用', pending:'排队', running:'运行中', stopping:'停止中', stopped:'已停止', success:'成功', cancelled:'已取消' };
+  const map = { available:'可用', used:'已用', failed:'失败', partial_success:'部分成功', disabled:'已停用', pending:'排队', running:'运行中', stopping:'停止中', stopped:'已停止', success:'成功', cancelled:'已取消' };
   return `<span class="pill status-${esc(status)}">${esc(map[status]||status||'-')}</span>`;
 }
 function showToast(t) { const el=$('#toast'); el.textContent=t; el.classList.add('show'); clearTimeout(showToast.t); showToast.t=setTimeout(()=>el.classList.remove('show'),1400); }
@@ -639,12 +642,13 @@ $('#btnRefreshJobs').addEventListener('click', refreshJobs);
 $('#jobsSelectAll').addEventListener('change', (e) => {
   const p = PAGERS.jobs;
   const pageRows = JOBS.slice((p.page - 1) * p.size, p.page * p.size)
-    .filter(j => j.status !== 'running');
+    .filter(j => !['running','stopping'].includes(j.status));
   if (e.target.checked) pageRows.forEach(j => JOB_SELECTED.add(Number(j.id)));
   else pageRows.forEach(j => JOB_SELECTED.delete(Number(j.id)));
   renderJobs();
 });
 $('#btnDeleteSelectedJobs').addEventListener('click', deleteSelectedJobs);
+$('#btnRetrySelectedJobs').addEventListener('click', retrySelectedJobs);
 $('#btnCancelPending').addEventListener('click', async () => {
   const pendingCount = JOBS.filter(j => j.status === 'pending').length;
   if (pendingCount === 0) { showToast('当前没有排队任务'); return; }
@@ -662,15 +666,15 @@ function renderJobs() {
   const p = PAGERS.jobs;
   const total = JOBS.length;
   const rows = JOBS.slice((p.page - 1) * p.size, p.page * p.size);
-  const selectableIdsAll = new Set(JOBS.filter(j => j.status !== 'running').map(j => Number(j.id)));
+  const selectableIdsAll = new Set(JOBS.filter(j => !['running','stopping'].includes(j.status)).map(j => Number(j.id)));
   for (const id of Array.from(JOB_SELECTED)) {
     if (!selectableIdsAll.has(Number(id))) JOB_SELECTED.delete(id);
   }
   $('#jobsBody').innerHTML = rows.map(j => `
     <tr>
-      <td><input type="checkbox" class="job-row-check" data-job-id="${esc(j.id)}" ${JOB_SELECTED.has(Number(j.id)) ? 'checked' : ''} ${j.status === 'running' ? 'disabled title="运行中的任务不能选择删除"' : ''}></td>
-      <td class="muted">#${esc(j.id)}</td>
-      <td>${pill(j.status)}</td>
+      <td><input type="checkbox" class="job-row-check" data-job-id="${esc(j.id)}" ${JOB_SELECTED.has(Number(j.id)) ? 'checked' : ''} ${['running','stopping'].includes(j.status) ? 'disabled title="运行中的任务不能选择"' : ''}></td>
+      <td class="muted">#${esc(j.id)}${j.parent_job_id ? `<div class="sub-cell" title="重试自任务 #${esc(j.parent_job_id)}">↳ #${esc(j.parent_job_id)} · ${esc(j.retry_attempt || 1)}</div>` : ''}</td>
+      <td>${pill(j.display_status || j.status)}</td>
       <td title="${esc(j.email || '-')}">${esc(j.email || '-')}</td>
       <td class="muted" title="${esc(j.started_at || '-')}">${esc(j.started_at || '-')}</td>
       <td class="muted" title="${esc(j.completed_at || '-')}">${esc(j.completed_at || '-')}</td>
@@ -683,7 +687,8 @@ function renderJobs() {
             <button class="good" data-submit-otp-job="${esc(j.id)}" data-email="${esc(j.email)}">提交验证码</button>
           ` : ''}
           ${['pending','running','stopping'].includes(j.status) ? `<button class="danger" data-stop-job="${esc(j.id)}">${j.status === 'stopping' ? '停止/修复' : '停止'}</button>` : ''}
-          <button class="danger" data-delete-job="${esc(j.id)}" ${j.status === 'running' ? 'disabled title="运行中的任务不能删除；如需删除请先停止"' : ''}>删除</button>
+          ${j.retryable ? `<button class="good" data-retry-job="${esc(j.id)}" title="${esc(j.retry_action === 'codex' ? '账号已创建，仅补跑 Codex 授权' : '创建新的注册任务，不覆盖原任务')}">${esc(j.retry_label || '重试')}</button>` : ''}
+          <button class="danger" data-delete-job="${esc(j.id)}" ${['running','stopping'].includes(j.status) ? 'disabled title="运行中的任务不能删除；如需删除请先停止"' : ''}>删除</button>
         </div>
       </td>
     </tr>`).join('') || '<tr><td colspan="8" class="muted">暂无任务</td></tr>';
@@ -694,8 +699,12 @@ function renderJobs() {
 function updateJobsSelectionUi(pageRows = null) {
   const hint = $('#jobsSelectedHint');
   const bulkBtn = $('#btnDeleteSelectedJobs');
+  const bulkRetryBtn = $('#btnRetrySelectedJobs');
   if (hint) hint.textContent = `已选 ${JOB_SELECTED.size}`;
   if (bulkBtn) bulkBtn.disabled = JOB_SELECTED.size === 0;
+  if (bulkRetryBtn) {
+    bulkRetryBtn.disabled = !Array.from(JOB_SELECTED).some(id => JOBS.find(j => Number(j.id) === Number(id))?.retryable);
+  }
 
   const cbAll = $('#jobsSelectAll');
   if (!cbAll) return;
@@ -703,7 +712,7 @@ function updateJobsSelectionUi(pageRows = null) {
     const p = PAGERS.jobs;
     pageRows = JOBS.slice((p.page - 1) * p.size, p.page * p.size);
   }
-  const selectableIds = pageRows.filter(j => j.status !== 'running').map(j => Number(j.id));
+  const selectableIds = pageRows.filter(j => !['running','stopping'].includes(j.status)).map(j => Number(j.id));
   const checkedCount = selectableIds.filter(id => JOB_SELECTED.has(id)).length;
   cbAll.checked = selectableIds.length > 0 && checkedCount === selectableIds.length;
   cbAll.indeterminate = checkedCount > 0 && checkedCount < selectableIds.length;
@@ -712,8 +721,13 @@ function updateJobsSelectionUi(pageRows = null) {
 
 async function refreshJobs() {
   try {
-    JOBS = await api('/api/jobs?limit=500');
-    renderJobs();
+    const nextJobs = await api('/api/jobs?limit=500');
+    const nextSignature = JSON.stringify(nextJobs);
+    JOBS = nextJobs;
+    if (nextSignature !== jobsRenderSignature) {
+      jobsRenderSignature = nextSignature;
+      renderJobs();
+    }
     loadSummary();
   } catch(e) {}
 }
@@ -747,6 +761,14 @@ function closeRetryLogModal() {
   updateModalScrollLock();
 }
 
+$('#jobsBody').addEventListener('pointerdown', (e) => {
+  const retryBtn = e.target.closest('[data-retry-job]');
+  if (!retryBtn || retryBtn.disabled || e.button !== 0) return;
+  e.preventDefault();
+  retryBtn.dataset.pointerHandled = '1';
+  retryJob(parseInt(retryBtn.dataset.retryJob, 10), retryBtn);
+});
+
 $('#jobsBody').addEventListener('click', (e) => {
   const logBtn = e.target.closest('[data-log-job]');
   if (logBtn) {
@@ -761,6 +783,15 @@ $('#jobsBody').addEventListener('click', (e) => {
   const stopBtn = e.target.closest('[data-stop-job]');
   if (stopBtn) {
     stopJob(parseInt(stopBtn.dataset.stopJob, 10), stopBtn);
+    return;
+  }
+  const retryBtn = e.target.closest('[data-retry-job]');
+  if (retryBtn) {
+    if (retryBtn.dataset.pointerHandled === '1') {
+      delete retryBtn.dataset.pointerHandled;
+      return;
+    }
+    retryJob(parseInt(retryBtn.dataset.retryJob, 10), retryBtn);
     return;
   }
   const delBtn = e.target.closest('[data-delete-job]');
@@ -866,6 +897,52 @@ async function deleteSelectedJobs() {
   }
 }
 
+async function retryJob(jobId, btn) {
+  const job = JOBS.find(j => Number(j.id) === Number(jobId));
+  if (!job || !job.retryable) { showToast('该任务当前不可重试'); return; }
+  const actionText = job.retry_action === 'codex' ? '仅补跑 Codex 授权' : '创建新的完整注册任务';
+  if (!confirm(`确定${job.retry_label || '重试'}任务 #${jobId}？\n\n${actionText}\n原任务记录和日志会保留。`)) return;
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/jobs/${jobId}/retry`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({}),
+    });
+    showToast(r.message || '已提交重试任务');
+    JOB_SELECTED.delete(Number(jobId));
+    refreshJobs();
+  } catch (e) {
+    showToast('重试失败: ' + e.message);
+    btn.disabled = false;
+  }
+}
+
+async function retrySelectedJobs() {
+  const ids = Array.from(JOB_SELECTED);
+  const retryable = ids.filter(id => JOBS.find(j => Number(j.id) === Number(id))?.retryable);
+  if (retryable.length === 0) { showToast('选中的任务没有可重试项'); return; }
+  if (!confirm(`确定重试选中的 ${retryable.length} 个任务吗？\n\n已创建账号的任务只补跑 Codex，其余任务重新入队注册。`)) return;
+  const btn = $('#btnRetrySelectedJobs');
+  btn.disabled = true;
+  try {
+    const r = await api('/api/jobs/retry-bulk', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({job_ids: retryable}),
+    });
+    retryable.forEach(id => JOB_SELECTED.delete(Number(id)));
+    const skippedCount = (r.skipped || []).length;
+    const reusedCount = r.reused_count || 0;
+    showToast(`已提交 ${r.started_count || 0} 个${reusedCount ? `，复用 ${reusedCount} 个` : ''}${skippedCount ? `，跳过 ${skippedCount} 个` : ''}`);
+    refreshJobs();
+  } catch (e) {
+    showToast('批量重试失败: ' + e.message);
+  } finally {
+    updateJobsSelectionUi();
+  }
+}
+
 function openLog(jobId) {
   activeLogJob = jobId;
   $('#logJobId').textContent = jobId;
@@ -884,13 +961,48 @@ async function pollLog() {
     const atBottom = c.scrollTop + c.clientHeight >= c.scrollHeight - 30;
     c.textContent = r.log || '(暂无日志)';
     if (atBottom) c.scrollTop = c.scrollHeight;
-    if (r.job && ['success','failed'].includes(r.job.status)) clearInterval(logTimer);
+    if (r.job && ['success','failed','stopped','cancelled'].includes(r.job.status)) clearInterval(logTimer);
   } catch(e) {}
 }
 
 // ---------- 账号 ----------
+let accountsLoading = false;
+let planStatusLoading = false;
+let planStatusRevision = '';
 async function loadAccounts() {
+  if (accountsLoading) return;
+  accountsLoading = true;
   try { ACCOUNTS = await api('/api/accounts?limit=2000'); renderAccounts(); } catch(e) {}
+  finally { accountsLoading = false; }
+}
+async function pollAccountPlanStatuses() {
+  if (planStatusLoading || accountsLoading) return;
+  planStatusLoading = true;
+  try {
+    const snapshot = await api('/api/accounts/plan-check-status?limit=2000');
+    const items = snapshot.items || [];
+    const accountById = new Map(ACCOUNTS.map(r => [Number(r.id), r]));
+    const hasUnknown = items.some(item => !accountById.has(Number(item.id)));
+    if (hasUnknown || items.length !== ACCOUNTS.length) {
+      planStatusRevision = snapshot.revision || '';
+      await loadAccounts();
+      return;
+    }
+    if ((snapshot.revision || '') !== planStatusRevision) {
+      let needsFullReload = false;
+      items.forEach(item => {
+        const account = accountById.get(Number(item.id));
+        const wasChecking = ['queued', 'running'].includes(account?.plan_check_status);
+        const isChecking = ['queued', 'running'].includes(item.plan_check_status);
+        if (wasChecking && !isChecking) needsFullReload = true;
+        Object.assign(account, item);
+      });
+      planStatusRevision = snapshot.revision || '';
+      if (needsFullReload) await loadAccounts();
+      else renderAccounts();
+    }
+  } catch(e) {}
+  finally { planStatusLoading = false; }
 }
 function _codexCell(r) {
   const s = r.codex_status || '';
@@ -943,10 +1055,27 @@ function _planCell(r) {
     route === 'direct_fallback' ? `网络: 直连回退${r.plan_check_proxy_fallback_reason ? ` (${r.plan_check_proxy_fallback_reason})` : ''}` :
     route === 'direct' ? '网络: 直连' : '';
   const title = [err ? esc(err) : checked, routeLabel].filter(Boolean).join('；');
-  if (err && ok === false) return `<span class="pill status-failed" title="${title}">查询失败</span>`;
+  if (['queued','running'].includes(r.plan_check_status)) {
+    const automatic = r.plan_check_trigger === 'registration_auto';
+    const queued = r.plan_check_status === 'queued';
+    const label = automatic ? (queued ? '自动查询排队中' : '自动查询中') : (queued ? '查询排队中' : '查询中');
+    const stamp = queued ? r.plan_check_queued_at : r.plan_check_started_at;
+    const detail = stamp ? `${queued ? '入队' : '开始'}: ${esc(stamp)}` : '';
+    return `<span class="pill status-running" title="${detail}">${label}</span>`;
+  }
+  if (err && ok === false) {
+    const hasLastSuccess = Boolean(r.plan_last_success_at);
+    const lastPlan = hasLastSuccess ? `${plan}${r.plus_trial_eligible ? '/可Plus试用' : ''}` : '';
+    const lastText = lastPlan ? `（上次: ${lastPlan}）` : '';
+    const lastTitle = hasLastSuccess ? `上次成功: ${esc(r.plan_last_success_at)}` : '';
+    return `<span class="pill status-failed" title="${[title, lastTitle].filter(Boolean).join('；')}">查询失败${esc(lastText)}</span>`;
+  }
   const lower = plan.toLowerCase();
 
   if (lower === 'free') {
+    if (!r.plan_checked_at && ok !== true) {
+      return `<span class="pill status-running" title="${title}">${esc(plan)}（待查资格）</span>`;
+    }
     const text = r.plus_trial_eligible ? 'free(可Plus试用)' : 'free';
     const cls = r.plus_trial_eligible ? 'status-success' : 'status-used';
     const t = r.plus_trial_eligible ? `${title}；Plus 试用资格可用` : title;
@@ -973,6 +1102,12 @@ function _planCell(r) {
   return `<span class="pill ${cls}" title="${esc(detail.join('；'))}">${esc(text)}</span>`;
 }
 function _planAction(r) {
+  if (['queued','running'].includes(r.plan_check_status)) {
+    const automatic = r.plan_check_trigger === 'registration_auto';
+    const queued = r.plan_check_status === 'queued';
+    const label = automatic ? (queued ? '自动查询排队中…' : '自动查询中…') : (queued ? '查询排队中…' : '查询中…');
+    return `<button data-plan-check="${esc(r.id)}" disabled title="套餐查询正在执行，完成后可再次查询">${label}</button>`;
+  }
   return `<button data-plan-check="${esc(r.id)}" title="查询当前套餐；free 账号会检查 Plus 试用资格">查套餐</button>`;
 }
 function _codexAction(r) {
@@ -1172,17 +1307,11 @@ async function checkOnePlan(id, btn) {
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({account_id: id}),
     });
-    const ret = r.result || {};
-    if (ret.ok) {
-      const trial = ret.plus_trial_eligible ? '，有 Plus 试用资格' : '';
-      const route = ret.network_route === 'proxy' ? '代理' : ret.network_route === 'direct_fallback' ? '直连回退' : '直连';
-      showToast(`套餐：${ret.current_plan_type || '-'}${trial}（${route}）`);
-    } else {
-      showToast('查询失败: ' + (ret.error || 'unknown'));
-    }
-    await loadAccounts();
+    showToast(r.message || '套餐查询已加入后台队列');
+    await pollAccountPlanStatuses();
   } catch(err) {
-    showToast('查询失败: ' + err.message);
+    showToast(err.message);
+    await pollAccountPlanStatuses();
     btn.disabled = false;
     btn.textContent = old;
   }
@@ -1203,10 +1332,10 @@ async function checkSelectedPlans() {
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({account_ids: ids, workers}),
     });
-    const trialCount = (r.checked || []).filter(x => x.plus_trial_eligible).length;
     const failed = r.failed_count || 0;
-    showToast(`已查询 ${r.checked_count || 0} 个，成功 ${r.ok_count || 0}，Plus试用 ${trialCount}，失败 ${failed}`);
-    await loadAccounts();
+    const busy = r.busy_count || 0;
+    showToast(`已入队 ${r.started_count || 0} 个，查询中跳过 ${busy} 个，入队失败 ${failed} 个`);
+    await pollAccountPlanStatuses();
   } catch(err) {
     showToast('批量查询失败: ' + err.message);
     updateAccountSelectionUi();
@@ -2021,6 +2150,7 @@ loadSummary();
 activateTab(localStorage.getItem('gpt_console_active_tab') || 'register', false);
 jobsTimer = setInterval(() => { if (!$('#tab-register').classList.contains('hidden')) refreshJobs(); }, 3000);
 setInterval(loadSummary, 5000);
+setInterval(() => { if (!$('#tab-accounts').classList.contains('hidden')) pollAccountPlanStatuses(); }, 2000);
 </script>
 </body>
 </html>

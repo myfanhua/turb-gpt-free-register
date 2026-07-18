@@ -22,6 +22,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DATA_DIR = _PROJECT_ROOT
 _LEGACY_DATA_DIR = _PROJECT_ROOT / "data"
 _LOG_DIR = _PROJECT_ROOT / "注册日志"
+_PLAN_CHECK_STALE_SECONDS = 120
+_PLAN_CHECK_QUEUE_STALE_SECONDS = 1800
 
 _OUTLOOK_JSON = _PROJECT_ROOT / "用于注册的邮箱.json"
 _OUTLOOK_TXT = _PROJECT_ROOT / "用于注册的邮箱.txt"
@@ -513,6 +515,20 @@ def _find_by_email(rows: list[dict], email: str) -> dict | None:
 
 def _decorate_account(row: dict) -> dict:
     out = dict(row)
+    plan_status = out.get("plan_check_status")
+    if plan_status in {"queued", "running"}:
+        try:
+            stamp_key = "plan_check_queued_at" if plan_status == "queued" else "plan_check_started_at"
+            stale_after = _PLAN_CHECK_QUEUE_STALE_SECONDS if plan_status == "queued" else _PLAN_CHECK_STALE_SECONDS
+            started_at = datetime.fromisoformat(str(out.get(stamp_key) or ""))
+            if (datetime.now() - started_at).total_seconds() >= stale_after:
+                out["plan_check_status"] = "failed"
+                out["plan_check_error"] = "上次套餐查询状态已超时，可重新查询"
+                out["plan_check_stale"] = True
+        except (TypeError, ValueError):
+            out["plan_check_status"] = "failed"
+            out["plan_check_error"] = "上次套餐查询状态异常，可重新查询"
+            out["plan_check_stale"] = True
     out["copy_line"] = _account_line(out)
     return out
 
@@ -660,6 +676,81 @@ def update_account_codex_status(email: str, codex_status: str, codex_error: str 
         return True
 
 
+def claim_account_plan_check(
+    acc_id: int | None = None,
+    email: str | None = None,
+    trigger: str = "manual",
+) -> bool:
+    """原子占用账号的套餐查询；已有未超时查询时返回 False。"""
+    with _LOCK:
+        accounts = _load_accounts()
+        target_email = (email or "").lower()
+        row = next((
+            r for r in accounts
+            if (acc_id is not None and int(r.get("id") or 0) == int(acc_id))
+            or (target_email and (r.get("email") or "").lower() == target_email)
+        ), None)
+        if row is None:
+            return False
+
+        current_status = row.get("plan_check_status")
+        if current_status in {"queued", "running"}:
+            try:
+                stamp_key = "plan_check_queued_at" if current_status == "queued" else "plan_check_started_at"
+                stale_after = _PLAN_CHECK_QUEUE_STALE_SECONDS if current_status == "queued" else _PLAN_CHECK_STALE_SECONDS
+                started_at = datetime.fromisoformat(str(row.get(stamp_key) or ""))
+                if (datetime.now() - started_at).total_seconds() < stale_after:
+                    return False
+            except (TypeError, ValueError):
+                pass
+
+        now = _now()
+        row["plan_check_status"] = "queued"
+        row["plan_check_trigger"] = str(trigger or "manual")
+        row["plan_check_queued_at"] = now
+        row["plan_check_started_at"] = None
+        row["plan_check_completed_at"] = None
+        row["plan_check_error"] = None
+        row["updated_at"] = now
+        _save_accounts(accounts)
+        return True
+
+
+def mark_account_plan_check_running(acc_id: int) -> bool:
+    """把已排队的套餐查询标记为执行中。"""
+    with _LOCK:
+        accounts = _load_accounts()
+        row = next((r for r in accounts if int(r.get("id") or 0) == int(acc_id)), None)
+        if row is None or row.get("plan_check_status") not in {"queued", "running"}:
+            return False
+        row["plan_check_status"] = "running"
+        row["plan_check_started_at"] = _now()
+        row["plan_check_error"] = None
+        row["updated_at"] = _now()
+        _save_accounts(accounts)
+        return True
+
+
+def recover_interrupted_plan_checks() -> int:
+    """服务启动时把上次进程遗留的内存队列状态恢复为可重试失败。"""
+    with _LOCK:
+        accounts = _load_accounts()
+        recovered = 0
+        now = _now()
+        for row in accounts:
+            if row.get("plan_check_status") not in {"queued", "running"}:
+                continue
+            row["plan_check_status"] = "failed"
+            row["plan_check_ok"] = False
+            row["plan_check_error"] = "WebUI 重启导致套餐查询中断，请重新查询"
+            row["plan_check_completed_at"] = now
+            row["updated_at"] = now
+            recovered += 1
+        if recovered:
+            _save_accounts(accounts)
+        return recovered
+
+
 def update_account_plan_check(acc_id: int | None = None, email: str | None = None, result: dict | None = None) -> bool:
     """更新账号套餐/Plus 试用资格查询结果。"""
     result = result or {}
@@ -675,52 +766,59 @@ def update_account_plan_check(acc_id: int | None = None, email: str | None = Non
             return False
 
         ok = bool(result.get("ok"))
+        row["plan_check_status"] = "success" if ok else "failed"
         row["plan_check_ok"] = ok
         row["plan_checked_at"] = result.get("checked_at") or _now()
+        row["plan_check_completed_at"] = _now()
         row["plan_check_http_status"] = result.get("http_status")
         row["plan_check_error"] = None if ok else result.get("error")
 
         if result.get("account_id"):
             row["account_id"] = result.get("account_id")
-        if result.get("current_plan_type"):
-            row["current_plan_type"] = result.get("current_plan_type")
-            row["plan_type"] = result.get("current_plan_type")
-        if result.get("subscription_plan") is not None:
-            row["subscription_plan"] = result.get("subscription_plan")
-        if result.get("has_active_subscription") is not None:
-            row["has_active_subscription"] = bool(result.get("has_active_subscription"))
-        if result.get("expires_at") is not None:
-            row["plan_expires_at"] = result.get("expires_at")
-        if result.get("renews_at") is not None:
-            row["plan_renews_at"] = result.get("renews_at")
-        if result.get("cancels_at") is not None:
-            row["plan_cancels_at"] = result.get("cancels_at")
-        if result.get("billing_period") is not None:
-            row["billing_period"] = result.get("billing_period")
-        if result.get("billing_currency") is not None:
-            row["billing_currency"] = result.get("billing_currency")
-        if result.get("is_delinquent") is not None:
-            row["is_delinquent"] = bool(result.get("is_delinquent"))
-        for _k in (
-            "discount_type",
-            "discount_amount",
-            "discount_duration_num_periods",
-            "discount_expires_at",
-            "discount_cancellation_policy",
-            "discount_promo_campaign_id",
-            "last_purchase_origin_platform",
-            "last_will_renew",
-        ):
-            if result.get(_k) is not None:
-                row[_k] = result.get(_k)
+        # 查询失败只更新本次错误和网络信息，不覆盖上一次成功拿到的套餐、
+        # 试用资格、优惠及有效期，避免临时网络故障把真实权益清空。
+        if ok:
+            if result.get("current_plan_type"):
+                row["current_plan_type"] = result.get("current_plan_type")
+                row["plan_type"] = result.get("current_plan_type")
+            if result.get("subscription_plan") is not None:
+                row["subscription_plan"] = result.get("subscription_plan")
+            if result.get("has_active_subscription") is not None:
+                row["has_active_subscription"] = bool(result.get("has_active_subscription"))
+            if result.get("expires_at") is not None:
+                row["plan_expires_at"] = result.get("expires_at")
+            if result.get("renews_at") is not None:
+                row["plan_renews_at"] = result.get("renews_at")
+            if result.get("cancels_at") is not None:
+                row["plan_cancels_at"] = result.get("cancels_at")
+            if result.get("billing_period") is not None:
+                row["billing_period"] = result.get("billing_period")
+            if result.get("billing_currency") is not None:
+                row["billing_currency"] = result.get("billing_currency")
+            if result.get("is_delinquent") is not None:
+                row["is_delinquent"] = bool(result.get("is_delinquent"))
+            for _k in (
+                "discount_type",
+                "discount_amount",
+                "discount_duration_num_periods",
+                "discount_expires_at",
+                "discount_cancellation_policy",
+                "discount_promo_campaign_id",
+                "last_purchase_origin_platform",
+                "last_will_renew",
+            ):
+                if result.get(_k) is not None:
+                    row[_k] = result.get(_k)
 
-        row["plus_trial_eligible"] = bool(result.get("plus_trial_eligible"))
-        row["plus_trial_campaign_id"] = result.get("plus_trial_campaign_id")
-        row["plus_trial_title"] = result.get("plus_trial_title")
-        row["plus_trial_discount_percentage"] = result.get("plus_trial_discount_percentage")
-        row["plus_trial_duration_num_periods"] = result.get("plus_trial_duration_num_periods")
-        row["plus_trial_duration_period"] = result.get("plus_trial_duration_period")
-        row["eligible_offer_ids"] = result.get("eligible_offer_ids") or []
+            row["plus_trial_eligible"] = bool(result.get("plus_trial_eligible"))
+            row["plus_trial_campaign_id"] = result.get("plus_trial_campaign_id")
+            row["plus_trial_title"] = result.get("plus_trial_title")
+            row["plus_trial_discount_percentage"] = result.get("plus_trial_discount_percentage")
+            row["plus_trial_duration_num_periods"] = result.get("plus_trial_duration_num_periods")
+            row["plus_trial_duration_period"] = result.get("plus_trial_duration_period")
+            row["eligible_offer_ids"] = result.get("eligible_offer_ids") or []
+            row["plan_last_success_at"] = result.get("checked_at") or _now()
+            row["plan_last_success_result_json"] = json.dumps(result, ensure_ascii=False)
         row["plan_check_proxy_mode"] = result.get("proxy_mode")
         row["plan_check_network_route"] = result.get("network_route")
         row["plan_check_proxy_used"] = result.get("proxy_used")
@@ -731,6 +829,25 @@ def update_account_plan_check(acc_id: int | None = None, email: str | None = Non
         row["updated_at"] = _now()
         _save_accounts(accounts)
         return True
+
+
+def list_account_plan_check_statuses(limit: int = 5000) -> dict:
+    """返回不含 Token/邮箱密码的套餐查询轻量状态快照。"""
+    fields = (
+        "id", "email", "updated_at", "plan_type", "current_plan_type",
+        "plan_check_status", "plan_check_trigger", "plan_check_queued_at",
+        "plan_check_started_at", "plan_check_completed_at", "plan_check_ok",
+        "plan_check_error", "plan_checked_at", "plan_last_success_at",
+        "plus_trial_eligible", "plan_check_network_route",
+    )
+    with _LOCK:
+        rows = sorted(_load_accounts(), key=lambda x: int(x.get("id") or 0), reverse=True)[:max(1, int(limit))]
+        items = []
+        for row in rows:
+            decorated = _decorate_account(row)
+            items.append({key: decorated.get(key) for key in fields})
+        latest = max((str(row.get("updated_at") or "") for row in rows), default="")
+        return {"items": items, "revision": f"{len(rows)}:{latest}"}
 
 
 def list_accounts(limit: int = 500, offset: int = 0) -> list[dict]:
@@ -1009,6 +1126,23 @@ def release_outlook(email: str, status: str = "available", note: str | None = No
         _save_outlook(rows)
 
 
+def release_unconsumed_outlook(email: str, note: str | None = None) -> bool:
+    """原子回收未生成本地账号且仍为 used 的 Outlook 邮箱。"""
+    with _LOCK:
+        if _find_by_email(_load_accounts(), email) is not None:
+            return False
+        rows = _load_outlook()
+        row = _find_by_email(rows, email)
+        if row is None or row.get("status") != "used":
+            return False
+        row["status"] = "available"
+        row["used_at"] = None
+        if note is not None:
+            row["note"] = note
+        _save_outlook(rows)
+        return True
+
+
 def delete_outlook(email: str) -> bool:
     """从邮箱池彻底删除一个邮箱（按 email 匹配）。返回是否删到。"""
     with _LOCK:
@@ -1117,6 +1251,23 @@ def release_generic_api_email(email: str, status: str = "available", note: str |
         if note is not None:
             row["note"] = note
         _save_generic_api_emails(rows)
+
+
+def release_unconsumed_generic_api_email(email: str, note: str | None = None) -> bool:
+    """原子回收未生成本地账号且仍为 used 的通用 API 邮箱。"""
+    with _LOCK:
+        if _find_by_email(_load_accounts(), email) is not None:
+            return False
+        rows = _load_generic_api_emails()
+        row = _find_by_email(rows, email)
+        if row is None or row.get("status") != "used":
+            return False
+        row["status"] = "available"
+        row["used_at"] = None
+        if note is not None:
+            row["note"] = note
+        _save_generic_api_emails(rows)
+        return True
 
 
 def delete_generic_api_email(email: str) -> bool:
@@ -1306,29 +1457,100 @@ def codex_accounts_summary() -> dict:
 # registration_jobs
 # ============================================================
 
+def _new_job_row(
+    rows: list[dict],
+    *,
+    email_source: str,
+    job_type: str = "registration",
+    parent_job_id: int | None = None,
+    root_job_id: int | None = None,
+    retry_attempt: int = 0,
+    retry_action: str | None = None,
+    email: str | None = None,
+    account_id: int | None = None,
+) -> dict:
+    job_uuid = str(uuid.uuid4())
+    log_file = str(_LOG_DIR / f"{job_uuid}.log")
+    Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+    return {
+        "id": _next_id(rows),
+        "job_uuid": job_uuid,
+        "job_type": job_type,
+        "parent_job_id": parent_job_id,
+        "root_job_id": root_job_id,
+        "retry_attempt": int(retry_attempt or 0),
+        "retry_action": retry_action,
+        "email_source": email_source,
+        "email": email,
+        "status": "pending",
+        "error_message": None,
+        "log_file": log_file,
+        "started_at": None,
+        "completed_at": None,
+        "account_id": account_id,
+        "created_at": _now(),
+    }
+
+
 def create_job(email_source: str) -> dict:
-    """创建一个 pending 任务。"""
+    """创建一个首次执行的 pending 注册任务。"""
     with _LOCK:
         rows = _load_jobs()
-        job_uuid = str(uuid.uuid4())
-        log_file = str(_LOG_DIR / f"{job_uuid}.log")
-        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-        row = {
-            "id": _next_id(rows),
-            "job_uuid": job_uuid,
-            "email_source": email_source,
-            "email": None,
-            "status": "pending",
-            "error_message": None,
-            "log_file": log_file,
-            "started_at": None,
-            "completed_at": None,
-            "account_id": None,
-            "created_at": _now(),
-        }
+        row = _new_job_row(rows, email_source=email_source)
         rows.append(row)
         _save_jobs(rows)
         return dict(row)
+
+
+def create_retry_job(
+    source_job_id: int,
+    *,
+    job_type: str,
+    email_source: str,
+    email: str | None = None,
+    account_id: int | None = None,
+) -> tuple[dict, bool]:
+    """原子创建重试子任务；同一任务链已有活跃任务时直接复用。"""
+    with _LOCK:
+        rows = _load_jobs()
+        source = next((r for r in rows if int(r.get("id") or 0) == int(source_job_id)), None)
+        if source is None:
+            raise LookupError("任务不存在")
+        if source.get("status") not in ("failed", "stopped", "cancelled"):
+            raise ValueError(f"当前状态不支持重试：{source.get('status')}")
+
+        root_id = int(source.get("root_job_id") or source.get("id"))
+        active_states = {"pending", "running", "stopping"}
+        active = next((
+            r for r in rows
+            if int(r.get("id") or 0) != int(source_job_id)
+            and int(r.get("root_job_id") or 0) == root_id
+            and r.get("status") in active_states
+        ), None)
+        if active is not None:
+            if active.get("job_type", "registration") != job_type:
+                raise ValueError(f"已有其他类型重试任务 #{active.get('id')} 在排队或运行中")
+            return dict(active), False
+
+        attempts = [
+            int(r.get("retry_attempt") or 0)
+            for r in rows
+            if int(r.get("id") or 0) == root_id or int(r.get("root_job_id") or 0) == root_id
+        ]
+        row = _new_job_row(
+            rows,
+            email_source=email_source,
+            job_type=job_type,
+            parent_job_id=int(source_job_id),
+            root_job_id=root_id,
+            retry_attempt=(max(attempts) if attempts else 0) + 1,
+            retry_action=("codex" if job_type == "codex_retry" else "registration"),
+            email=email,
+            account_id=account_id,
+        )
+        rows.append(row)
+        _save_jobs(rows)
+        return dict(row), True
 
 
 def update_job(
@@ -1373,6 +1595,25 @@ def get_job(job_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+def get_successful_retry_for_job(job_id: int) -> dict | None:
+    """返回同一任务链中已成功的其他重试任务，用于保留原任务历史状态并阻止重复重试。"""
+    with _LOCK:
+        rows = _load_jobs()
+        source = next((r for r in rows if int(r.get("id") or 0) == int(job_id)), None)
+        if source is None:
+            return None
+        root_id = int(source.get("root_job_id") or source.get("id") or 0)
+        matches = [
+            r for r in rows
+            if int(r.get("id") or 0) != int(job_id)
+            and int(r.get("root_job_id") or 0) == root_id
+            and r.get("status") == "success"
+        ]
+        if not matches:
+            return None
+        return dict(max(matches, key=lambda r: int(r.get("id") or 0)))
+
+
 def delete_job(job_id: int, *, delete_log: bool = True, allow_running: bool = False) -> bool:
     """
     删除一个注册任务记录；默认同时删除该任务日志文件。返回是否删除到记录。
@@ -1383,7 +1624,7 @@ def delete_job(job_id: int, *, delete_log: bool = True, allow_running: bool = Fa
         idx = next((i for i, r in enumerate(rows) if int(r.get("id") or 0) == int(job_id)), None)
         if idx is None:
             return False
-        if not allow_running and rows[idx].get("status") == "running":
+        if not allow_running and rows[idx].get("status") in ("running", "stopping"):
             return False
         row = rows.pop(idx)
         _save_jobs(rows)
@@ -1620,6 +1861,29 @@ def release_domain_email(email: str, status: str = "available", note: str | None
         if note is not None:
             row["note"] = note
         _save_domain_pool(rows)
+
+
+def release_unconsumed_domain_email(email: str, note: str | None = None) -> bool:
+    """原子回收未生成本地账号且仍为 used 的域名邮箱。"""
+    with _LOCK:
+        if _find_by_email(_load_accounts(), email) is not None:
+            return False
+        rows = _load_domain_pool()
+        row = _find_domain_email(rows, email)
+        if row is None or row.get("status") != "used":
+            return False
+        row["status"] = "available"
+        row["used_at"] = None
+        if note is not None:
+            row["note"] = note
+        _save_domain_pool(rows)
+        return True
+
+
+def get_domain_email_by_email(email: str) -> dict | None:
+    with _LOCK:
+        row = _find_domain_email(_load_domain_pool(), email)
+        return dict(row) if row else None
 
 
 def list_domain_email_pool(status: str | None = None, limit: int = 500) -> list[dict]:

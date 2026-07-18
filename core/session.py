@@ -28,7 +28,7 @@ class BrowserSession:
     使用 curl_cffi 的 impersonate 功能绕过 Cloudflare TLS 指纹检测。
     """
 
-    def __init__(self, proxy: str = None):
+    def __init__(self, proxy: str = None, *, detect_exit_geo: bool = True):
         """
         初始化会话。
 
@@ -36,6 +36,8 @@ class BrowserSession:
             proxy: 代理地址，如 "socks5h://user:pass@host:port"。
                    不传则从 config.PROXY_POOL 随机抽一个。
                    显式传 "" 表示禁用代理。
+            detect_exit_geo: 是否探测出口 IP 并自动选择语言/时区画像。
+                             套餐查询等短请求可关闭，避免额外网络等待。
         """
         # proxy=None  → 从池里随机抽（默认行为）
         # proxy=""    → 禁用代理（直连）
@@ -71,7 +73,7 @@ class BrowserSession:
 
         # 先用当前代理检测出口 IP 地理信息，再为本会话挑一份稳定浏览器画像。
         # 这样 Accept-Language / navigator.language / timezone 可自动跟随出口地区。
-        self.exit_geo = self._detect_exit_geo()
+        self.exit_geo = self._detect_exit_geo() if detect_exit_geo else {}
         self.browser_profile = pick_browser_profile(self.exit_geo)
         self.browser_profile["react_listening_key"] = self.react_listening_key
         issues = validate_browser_profile(self.browser_profile)

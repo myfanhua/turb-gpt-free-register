@@ -32,12 +32,12 @@ EDITABLE_FIELDS = [
     # ---- WebUI 授权 ----
     {
         "key": "WEBUI_AUTH_CODE", "file": "codex.py", "type": "str", "group": "WebUI 授权",
-        "label": "WebUI 授权码", "help": "保存在 .env（WEBUI_AUTH_CODE）；启动也可传 python web.py --auth-code <code>。保存后重启 WebUI 生效",
+        "label": "WebUI 授权码", "help": "仅保存在 .env（WEBUI_AUTH_CODE），避免出现在进程命令行中；保存后重启 WebUI 生效",
         "storage": "env", "secret": True,
     },
     {
         "key": "WEBUI_SESSION_SECRET", "file": "codex.py", "type": "str", "group": "WebUI 授权",
-        "label": "Session 签名密钥", "help": "可选，保存在 .env（WEBUI_SESSION_SECRET）；不填则每次启动随机生成",
+        "label": "Session 签名密钥", "help": "可选，保存在 .env（WEBUI_SESSION_SECRET）；不填则从固定授权码派生，修改授权码会使已有登录失效",
         "storage": "env", "secret": True,
     },
     # ---- 功能开关 ----
@@ -346,6 +346,38 @@ EDITABLE_FIELDS = [
         "key": "PLAN_CHECK_PROXY", "file": "proxy.py", "type": "str", "group": "代理池",
         "label": "套餐查询专用代理", "help": "可选；留空时 auto/proxy 从代理池选择。可能包含认证信息，仅保存到 .env",
         "storage": "env", "secret": True,
+    },
+    {
+        "key": "PLAN_CHECK_TIMEOUT", "file": "proxy.py", "type": "float", "group": "代理池",
+        "label": "套餐查询超时(秒)", "help": "单次请求超时，建议 10-20 秒；独立于注册请求超时",
+    },
+    {
+        "key": "PLAN_CHECK_MAX_ATTEMPTS", "file": "proxy.py", "type": "int", "group": "代理池",
+        "label": "套餐查询最大尝试次数", "help": "仅网络错误、429、5xx 等临时错误会重试，建议 2 次",
+    },
+    {
+        "key": "PLAN_CHECK_RETRY_DELAY", "file": "proxy.py", "type": "float", "group": "代理池",
+        "label": "套餐查询重试间隔(秒)", "help": "按尝试次数递增；服务端 Retry-After 优先",
+    },
+    {
+        "key": "PLAN_CHECK_REGISTRATION_RECHECK_DELAY", "file": "proxy.py", "type": "float", "group": "代理池",
+        "label": "新账号资格复查延迟(秒)", "help": "新注册 free 账号未发现试用资格或首次查询失败时复查一次；0 表示关闭",
+    },
+    {
+        "key": "PLAN_CHECK_WORKERS", "file": "proxy.py", "type": "int", "group": "代理池",
+        "label": "套餐查询并发数", "help": "自动、手动和批量查询共用；建议 2-4 个线程",
+    },
+    {
+        "key": "PLAN_CHECK_QUEUE_LIMIT", "file": "proxy.py", "type": "int", "group": "代理池",
+        "label": "套餐查询队列上限", "help": "防止异常批量操作无限堆积，建议 100-1000",
+    },
+    {
+        "key": "PLAN_CHECK_MIN_INTERVAL", "file": "proxy.py", "type": "float", "group": "代理池",
+        "label": "套餐请求最小间隔(秒)", "help": "限制不同账号请求的启动频率，降低 429 风险",
+    },
+    {
+        "key": "PLAN_CHECK_JITTER", "file": "proxy.py", "type": "float", "group": "代理池",
+        "label": "套餐请求随机抖动(秒)", "help": "在最小间隔上增加随机延迟，避免请求过于规律",
     },
     # ---- 接码平台 ----
     # ---- CPA / Codex 授权 ----

@@ -48,6 +48,35 @@ def _build_driver(opened: RoxyOpenResult):
     raise RuntimeError("Roxy 未返回可连接的 Selenium 地址")
 
 
+def _center_browser_window(driver) -> None:
+    """把可见的 Roxy 窗口移动到 Windows 主屏工作区中央。"""
+    if bool(getattr(_cfg, "ROXY_OPEN_HEADLESS", False)):
+        return
+    try:
+        import ctypes
+
+        class _Rect(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        work_area = _Rect()
+        if not ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work_area), 0):
+            raise OSError("无法读取 Windows 工作区")
+        size = driver.get_window_size()
+        width = max(1, int(size.get("width") or 1))
+        height = max(1, int(size.get("height") or 1))
+        x = int(work_area.left + max(0, (work_area.right - work_area.left - width) // 2))
+        y = int(work_area.top + max(0, (work_area.bottom - work_area.top - height) // 2))
+        driver.set_window_position(x, y)
+        logger.info("[Roxy] 浏览器窗口已居中：x=%s y=%s width=%s height=%s", x, y, width, height)
+    except Exception as exc:
+        logger.warning("[Roxy] 浏览器窗口居中失败，继续执行：%s", exc)
+
+
 def _wait(driver, timeout: int | None = None):
     from selenium.webdriver.support.ui import WebDriverWait
     return WebDriverWait(driver, timeout or int(_cfg.ROXY_SELENIUM_TIMEOUT))
@@ -1225,6 +1254,7 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
     openai_password: str | None = None
     try:
         driver = _build_driver(opened)
+        _center_browser_window(driver)
         driver.set_page_load_timeout(int(_cfg.ROXY_SELENIUM_TIMEOUT))
         logger.info("[Roxy注册] 开始：%s，profile=%s", email, opened.profile_id)
 

@@ -30,6 +30,22 @@ PLAN_CHECK_PROXY_MODE = "auto"
 # 代理可能包含账号密码，因此 WebUI 会把它保存到 .env。
 PLAN_CHECK_PROXY = ""
 
+# 套餐查询使用独立的短超时和有限重试，避免注册成功后长时间卡在权益查询。
+PLAN_CHECK_TIMEOUT = 15.0
+PLAN_CHECK_MAX_ATTEMPTS = 2
+PLAN_CHECK_RETRY_DELAY = 1.5
+
+# 新注册账号的权益可能存在短暂同步延迟。首次查询失败，或返回 free 且暂未发现
+# Plus 试用资格时，等待该秒数后再复查一次；设为 0 可关闭复查。
+PLAN_CHECK_REGISTRATION_RECHECK_DELAY = 2.0
+
+# 自动、手动和批量套餐查询共用同一个后台队列，限制并发和请求启动频率，
+# 避免批量注册时同时打满 accounts/check 接口。
+PLAN_CHECK_WORKERS = 3
+PLAN_CHECK_QUEUE_LIMIT = 500
+PLAN_CHECK_MIN_INTERVAL = 0.4
+PLAN_CHECK_JITTER = 0.3
+
 
 def pick_proxy() -> str:
     """从代理池中随机抽取一个代理 URL；池为空时返回空串（即不使用代理）。"""
@@ -44,5 +60,13 @@ apply_env_overrides(globals(), {
     'PROXY_POOL': 'list_str_multiline',
     'PLAN_CHECK_PROXY_MODE': 'str',
     'PLAN_CHECK_PROXY': 'str',
+    'PLAN_CHECK_TIMEOUT': 'float',
+    'PLAN_CHECK_MAX_ATTEMPTS': 'int',
+    'PLAN_CHECK_RETRY_DELAY': 'float',
+    'PLAN_CHECK_REGISTRATION_RECHECK_DELAY': 'float',
+    'PLAN_CHECK_WORKERS': 'int',
+    'PLAN_CHECK_QUEUE_LIMIT': 'int',
+    'PLAN_CHECK_MIN_INTERVAL': 'float',
+    'PLAN_CHECK_JITTER': 'float',
 })
 PROXY = pick_proxy()

@@ -191,3 +191,29 @@ def release_email(email: str, status: str = "available", note: str | None = None
         from core.outlook_client import release_account
         release_account(email, status=status, note=note)
     return source
+
+
+def release_email_if_unconsumed(email: str, note: str | None = None) -> bool:
+    """回收仍停留在 used 的任务领取，且绝不覆盖已注册/已判废状态。"""
+    if not (email or "").strip():
+        return False
+
+    source = resolve_email_source(email)
+    from core import db
+
+    if source == "outlook":
+        changed = db.release_unconsumed_outlook(email, note=note)
+    elif source == "generic_api":
+        changed = db.release_unconsumed_generic_api_email(email, note=note)
+    elif source == "cloudflare_domain":
+        changed = db.release_unconsumed_domain_email(email, note=note)
+    else:
+        # 临时邮箱不重新进入本地池，只清理进程上下文；已有本地账号时保留上下文。
+        if db.get_account_by_email(email) is not None:
+            return False
+        release_email(email, status="available", note=note)
+        changed = True
+
+    if changed:
+        logger.info("[EmailProvider] 已回收未消耗邮箱: source=%s, email=%s", source, email)
+    return changed

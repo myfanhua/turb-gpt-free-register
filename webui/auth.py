@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import hashlib
 import logging
 import os
 import secrets
@@ -43,7 +44,11 @@ def init_auth(app: Any, *, auth_code: str | None = None) -> str:
         _GENERATED = False
 
     _AUTH_CODE = code
-    app.secret_key = os.getenv("WEBUI_SESSION_SECRET") or os.getenv("FLASK_SECRET_KEY") or secrets.token_urlsafe(32)
+    session_secret = os.getenv("WEBUI_SESSION_SECRET") or os.getenv("FLASK_SECRET_KEY")
+    if not session_secret:
+        # 授权码来自 .env 时，用带命名空间的摘要生成稳定签名密钥；修改授权码会自然注销旧会话。
+        session_secret = hashlib.sha256(f"turb-gpt-webui-session:{code}".encode("utf-8")).hexdigest()
+    app.secret_key = session_secret
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",

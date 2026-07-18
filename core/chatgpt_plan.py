@@ -7,6 +7,7 @@ import ipaddress
 import json
 import logging
 import socket
+import time
 from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import quote, urlparse
@@ -272,7 +273,48 @@ def parse_accounts_check(data: dict, *, token: str = "") -> dict:
     return result
 
 
-def check_account_plan(token: str, *, proxy: Optional[str] = None, timezone_offset_min: str = "-") -> dict:
+def _plan_check_settings(
+    timeout: float | None,
+    max_attempts: int | None,
+    retry_delay: float | None,
+) -> tuple[float, int, float]:
+    from config import proxy as proxy_cfg
+
+    timeout_value = timeout if timeout is not None else getattr(proxy_cfg, "PLAN_CHECK_TIMEOUT", 15.0)
+    attempts_value = max_attempts if max_attempts is not None else getattr(proxy_cfg, "PLAN_CHECK_MAX_ATTEMPTS", 2)
+    delay_value = retry_delay if retry_delay is not None else getattr(proxy_cfg, "PLAN_CHECK_RETRY_DELAY", 1.5)
+    return (
+        max(1.0, min(60.0, float(timeout_value or 15.0))),
+        max(1, min(4, int(attempts_value or 1))),
+        max(0.0, min(30.0, float(delay_value or 0.0))),
+    )
+
+
+def _retryable_plan_error(http_status: int | None) -> bool:
+    if http_status is None:
+        return True
+    return http_status in {408, 409, 425, 429} or http_status >= 500
+
+
+def _retry_wait_seconds(resp: Any, base_delay: float, attempt: int) -> float:
+    try:
+        retry_after = (getattr(resp, "headers", {}) or {}).get("retry-after")
+        if retry_after is not None:
+            return max(0.0, min(30.0, float(retry_after)))
+    except (TypeError, ValueError):
+        pass
+    return max(0.0, min(30.0, base_delay * attempt))
+
+
+def check_account_plan(
+    token: str,
+    *,
+    proxy: Optional[str] = None,
+    timezone_offset_min: str = "-",
+    timeout: float | None = None,
+    max_attempts: int | None = None,
+    retry_delay: float | None = None,
+) -> dict:
     token = normalize_token(token)
     if not token:
         return {"ok": False, "checked_at": now_iso(), "error": "token 为空"}
@@ -298,45 +340,110 @@ def check_account_plan(token: str, *, proxy: Optional[str] = None, timezone_offs
         }
     route_meta = {k: v for k, v in route.items() if k != "proxy"}
     url = f"https://chatgpt.com{ACCOUNTS_CHECK_PATH}?timezone_offset_min={quote(str(timezone_offset_min))}"
-    env = BrowserSession(proxy=route["proxy"])
     try:
-        resp = env.session.get(url, headers=_common_headers(env, token), allow_redirects=False)
-        text = resp.text or ""
-        try:
-            data: Any = resp.json()
-        except Exception:
-            data = json.loads(text) if text.strip().startswith(("{", "[")) else None
-        if not (200 <= int(resp.status_code) < 300):
-            return {
-                "ok": False,
-                "checked_at": now_iso(),
-                "http_status": resp.status_code,
-                "error": f"HTTP {resp.status_code}",
-                "response_preview": text[:500],
-                **route_meta,
-                **{k: v for k, v in claims.items() if k != "payload"},
-            }
-        if not isinstance(data, dict):
-            return {
-                "ok": False,
-                "checked_at": now_iso(),
-                "http_status": resp.status_code,
-                "error": "响应不是 JSON 对象",
-                "response_preview": text[:500],
-                **route_meta,
-                **{k: v for k, v in claims.items() if k != "payload"},
-            }
-        parsed = parse_accounts_check(data, token=token)
-        parsed["http_status"] = resp.status_code
-        parsed.update(route_meta)
-        return parsed
+        timeout_seconds, attempts, base_delay = _plan_check_settings(timeout, max_attempts, retry_delay)
     except Exception as exc:
-        logger.debug("套餐查询失败: %s: %s", type(exc).__name__, exc, exc_info=True)
         return {
             "ok": False,
             "checked_at": now_iso(),
             "http_status": None,
-            "error": f"{type(exc).__name__}: {exc}",
+            "error": f"套餐查询重试配置错误: {exc}",
+            "retryable": False,
             **route_meta,
             **{k: v for k, v in claims.items() if k != "payload"},
         }
+
+    last_result: dict | None = None
+    for attempt in range(1, attempts + 1):
+        env = None
+        resp = None
+        try:
+            # 套餐查询只需要稳定的请求头，不需要额外访问 IP 地理信息接口。
+            env = BrowserSession(proxy=route["proxy"], detect_exit_geo=False)
+            resp = env.session.get(
+                url,
+                headers=_common_headers(env, token),
+                allow_redirects=False,
+                timeout=timeout_seconds,
+            )
+            response_text = resp.text or ""
+            http_status = int(resp.status_code)
+            if not (200 <= http_status < 300):
+                last_result = {
+                    "ok": False,
+                    "checked_at": now_iso(),
+                    "http_status": http_status,
+                    "error": f"HTTP {http_status}",
+                    "response_preview": response_text[:500],
+                    "retryable": _retryable_plan_error(http_status),
+                }
+            else:
+                try:
+                    data: Any = resp.json()
+                except Exception:
+                    data = json.loads(response_text) if response_text.strip().startswith(("{", "[")) else None
+                if not isinstance(data, dict):
+                    last_result = {
+                        "ok": False,
+                        "checked_at": now_iso(),
+                        "http_status": http_status,
+                        "error": "响应不是 JSON 对象",
+                        "response_preview": response_text[:500],
+                        "retryable": True,
+                    }
+                else:
+                    parsed = parse_accounts_check(data, token=token)
+                    parsed["http_status"] = http_status
+                    parsed["attempt_count"] = attempt
+                    parsed["max_attempts"] = attempts
+                    parsed["request_timeout"] = timeout_seconds
+                    parsed["retryable"] = False
+                    parsed.update(route_meta)
+                    return parsed
+        except Exception as exc:
+            logger.debug("套餐查询失败: %s: %s", type(exc).__name__, exc, exc_info=True)
+            last_result = {
+                "ok": False,
+                "checked_at": now_iso(),
+                "http_status": int(resp.status_code) if resp is not None and getattr(resp, "status_code", None) else None,
+                "error": f"{type(exc).__name__}: {exc}",
+                "retryable": True,
+            }
+        finally:
+            if env is not None:
+                try:
+                    env.session.close()
+                except Exception:
+                    pass
+
+        last_result = last_result or {"ok": False, "checked_at": now_iso(), "error": "未知错误", "retryable": True}
+        last_result.update({
+            "attempt_count": attempt,
+            "max_attempts": attempts,
+            "request_timeout": timeout_seconds,
+            **route_meta,
+            **{k: v for k, v in claims.items() if k != "payload"},
+        })
+        if not last_result.get("retryable") or attempt >= attempts:
+            return last_result
+
+        wait_seconds = _retry_wait_seconds(resp, base_delay, attempt)
+        logger.warning(
+            "套餐查询临时失败，第 %s/%s 次，%.1fs 后重试: %s",
+            attempt,
+            attempts,
+            wait_seconds,
+            last_result.get("error"),
+        )
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
+
+    return last_result or {
+        "ok": False,
+        "checked_at": now_iso(),
+        "http_status": None,
+        "error": "套餐查询未执行",
+        "retryable": False,
+        **route_meta,
+        **{k: v for k, v in claims.items() if k != "payload"},
+    }
