@@ -1008,6 +1008,23 @@ def release_outlook(email: str, status: str = "available", note: str | None = No
         _save_outlook(rows)
 
 
+def release_unconsumed_outlook(email: str, note: str | None = None) -> bool:
+    """原子回收未生成本地账号且仍为 used 的 Outlook 邮箱。"""
+    with _LOCK:
+        if _find_by_email(_load_accounts(), email) is not None:
+            return False
+        rows = _load_outlook()
+        row = _find_by_email(rows, email)
+        if row is None or row.get("status") != "used":
+            return False
+        row["status"] = "available"
+        row["used_at"] = None
+        if note is not None:
+            row["note"] = note
+        _save_outlook(rows)
+        return True
+
+
 def delete_outlook(email: str) -> bool:
     """从邮箱池彻底删除一个邮箱（按 email 匹配）。返回是否删到。"""
     with _LOCK:
@@ -1116,6 +1133,23 @@ def release_generic_api_email(email: str, status: str = "available", note: str |
         if note is not None:
             row["note"] = note
         _save_generic_api_emails(rows)
+
+
+def release_unconsumed_generic_api_email(email: str, note: str | None = None) -> bool:
+    """原子回收未生成本地账号且仍为 used 的通用 API 邮箱。"""
+    with _LOCK:
+        if _find_by_email(_load_accounts(), email) is not None:
+            return False
+        rows = _load_generic_api_emails()
+        row = _find_by_email(rows, email)
+        if row is None or row.get("status") != "used":
+            return False
+        row["status"] = "available"
+        row["used_at"] = None
+        if note is not None:
+            row["note"] = note
+        _save_generic_api_emails(rows)
+        return True
 
 
 def delete_generic_api_email(email: str) -> bool:
@@ -1305,29 +1339,100 @@ def codex_accounts_summary() -> dict:
 # registration_jobs
 # ============================================================
 
+def _new_job_row(
+    rows: list[dict],
+    *,
+    email_source: str,
+    job_type: str = "registration",
+    parent_job_id: int | None = None,
+    root_job_id: int | None = None,
+    retry_attempt: int = 0,
+    retry_action: str | None = None,
+    email: str | None = None,
+    account_id: int | None = None,
+) -> dict:
+    job_uuid = str(uuid.uuid4())
+    log_file = str(_LOG_DIR / f"{job_uuid}.log")
+    Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+    return {
+        "id": _next_id(rows),
+        "job_uuid": job_uuid,
+        "job_type": job_type,
+        "parent_job_id": parent_job_id,
+        "root_job_id": root_job_id,
+        "retry_attempt": int(retry_attempt or 0),
+        "retry_action": retry_action,
+        "email_source": email_source,
+        "email": email,
+        "status": "pending",
+        "error_message": None,
+        "log_file": log_file,
+        "started_at": None,
+        "completed_at": None,
+        "account_id": account_id,
+        "created_at": _now(),
+    }
+
+
 def create_job(email_source: str) -> dict:
-    """创建一个 pending 任务。"""
+    """创建一个首次执行的 pending 注册任务。"""
     with _LOCK:
         rows = _load_jobs()
-        job_uuid = str(uuid.uuid4())
-        log_file = str(_LOG_DIR / f"{job_uuid}.log")
-        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-        row = {
-            "id": _next_id(rows),
-            "job_uuid": job_uuid,
-            "email_source": email_source,
-            "email": None,
-            "status": "pending",
-            "error_message": None,
-            "log_file": log_file,
-            "started_at": None,
-            "completed_at": None,
-            "account_id": None,
-            "created_at": _now(),
-        }
+        row = _new_job_row(rows, email_source=email_source)
         rows.append(row)
         _save_jobs(rows)
         return dict(row)
+
+
+def create_retry_job(
+    source_job_id: int,
+    *,
+    job_type: str,
+    email_source: str,
+    email: str | None = None,
+    account_id: int | None = None,
+) -> tuple[dict, bool]:
+    """原子创建重试子任务；同一任务链已有活跃任务时直接复用。"""
+    with _LOCK:
+        rows = _load_jobs()
+        source = next((r for r in rows if int(r.get("id") or 0) == int(source_job_id)), None)
+        if source is None:
+            raise LookupError("任务不存在")
+        if source.get("status") not in ("failed", "stopped", "cancelled"):
+            raise ValueError(f"当前状态不支持重试：{source.get('status')}")
+
+        root_id = int(source.get("root_job_id") or source.get("id"))
+        active_states = {"pending", "running", "stopping"}
+        active = next((
+            r for r in rows
+            if int(r.get("id") or 0) != int(source_job_id)
+            and int(r.get("root_job_id") or 0) == root_id
+            and r.get("status") in active_states
+        ), None)
+        if active is not None:
+            if active.get("job_type", "registration") != job_type:
+                raise ValueError(f"已有其他类型重试任务 #{active.get('id')} 在排队或运行中")
+            return dict(active), False
+
+        attempts = [
+            int(r.get("retry_attempt") or 0)
+            for r in rows
+            if int(r.get("id") or 0) == root_id or int(r.get("root_job_id") or 0) == root_id
+        ]
+        row = _new_job_row(
+            rows,
+            email_source=email_source,
+            job_type=job_type,
+            parent_job_id=int(source_job_id),
+            root_job_id=root_id,
+            retry_attempt=(max(attempts) if attempts else 0) + 1,
+            retry_action=("codex" if job_type == "codex_retry" else "registration"),
+            email=email,
+            account_id=account_id,
+        )
+        rows.append(row)
+        _save_jobs(rows)
+        return dict(row), True
 
 
 def update_job(
@@ -1372,6 +1477,25 @@ def get_job(job_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+def get_successful_retry_for_job(job_id: int) -> dict | None:
+    """返回同一任务链中已成功的其他重试任务，用于保留原任务历史状态并阻止重复重试。"""
+    with _LOCK:
+        rows = _load_jobs()
+        source = next((r for r in rows if int(r.get("id") or 0) == int(job_id)), None)
+        if source is None:
+            return None
+        root_id = int(source.get("root_job_id") or source.get("id") or 0)
+        matches = [
+            r for r in rows
+            if int(r.get("id") or 0) != int(job_id)
+            and int(r.get("root_job_id") or 0) == root_id
+            and r.get("status") == "success"
+        ]
+        if not matches:
+            return None
+        return dict(max(matches, key=lambda r: int(r.get("id") or 0)))
+
+
 def delete_job(job_id: int, *, delete_log: bool = True, allow_running: bool = False) -> bool:
     """
     删除一个注册任务记录；默认同时删除该任务日志文件。返回是否删除到记录。
@@ -1382,7 +1506,7 @@ def delete_job(job_id: int, *, delete_log: bool = True, allow_running: bool = Fa
         idx = next((i for i, r in enumerate(rows) if int(r.get("id") or 0) == int(job_id)), None)
         if idx is None:
             return False
-        if not allow_running and rows[idx].get("status") == "running":
+        if not allow_running and rows[idx].get("status") in ("running", "stopping"):
             return False
         row = rows.pop(idx)
         _save_jobs(rows)
@@ -1619,6 +1743,29 @@ def release_domain_email(email: str, status: str = "available", note: str | None
         if note is not None:
             row["note"] = note
         _save_domain_pool(rows)
+
+
+def release_unconsumed_domain_email(email: str, note: str | None = None) -> bool:
+    """原子回收未生成本地账号且仍为 used 的域名邮箱。"""
+    with _LOCK:
+        if _find_by_email(_load_accounts(), email) is not None:
+            return False
+        rows = _load_domain_pool()
+        row = _find_domain_email(rows, email)
+        if row is None or row.get("status") != "used":
+            return False
+        row["status"] = "available"
+        row["used_at"] = None
+        if note is not None:
+            row["note"] = note
+        _save_domain_pool(rows)
+        return True
+
+
+def get_domain_email_by_email(email: str) -> dict | None:
+    with _LOCK:
+        row = _find_domain_email(_load_domain_pool(), email)
+        return dict(row) if row else None
 
 
 def list_domain_email_pool(status: str | None = None, limit: int = 500) -> list[dict]:

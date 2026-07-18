@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from core import db
+from core import codex_retry_service, db
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,23 @@ _THREAD_CTX = threading.local()
 
 class StopRequested(RuntimeError):
     """用户手动停止注册任务。"""
+
+
+def _activate_job(job_id: int) -> None:
+    _THREAD_CTX.job_id = int(job_id)
+    with _STOP_LOCK:
+        _STOP_EVENTS.setdefault(int(job_id), threading.Event())
+        _ACTIVE_JOBS.add(int(job_id))
+
+
+def _deactivate_job(job_id: int) -> None:
+    with _STOP_LOCK:
+        _STOP_EVENTS.pop(int(job_id), None)
+        _ACTIVE_JOBS.discard(int(job_id))
+    try:
+        delattr(_THREAD_CTX, "job_id")
+    except Exception:
+        pass
 
 
 def is_stop_requested(job_id: int | None = None) -> bool:
@@ -100,6 +117,13 @@ def _prepare_registration_args() -> tuple[str, str, str]:
     if name in {"-", "—", "无", "空", "none", "None", "null", "NULL"}:
         name = ""
 
+    if not name:
+        # 手动模式也自动生成显示名，减少配置负担
+        name = _random_display_name()
+
+    birthday = generate_random_birthday()
+
+    # 邮箱领取会把池状态置为 used，因此放在所有其他准备逻辑之后。
     if not email:
         if _e.USE_EMAIL_SERVICE:
             email = acquire_email()
@@ -109,11 +133,19 @@ def _prepare_registration_args() -> tuple[str, str, str]:
                 "或开启 USE_EMAIL_SERVICE 并从邮箱池领取。"
             )
 
-    if not name:
-        # 手动模式也自动生成显示名，减少配置负担
-        name = _random_display_name()
+    return email, name, birthday
 
-    return email, name, generate_random_birthday()
+
+def _release_unconsumed_job_email(email: str | None, reason: str) -> None:
+    """任务失败兜底：只回收尚未生成账号、仍处于 used 的邮箱领取。"""
+    if not email:
+        return
+    try:
+        from core.email_provider import release_email_if_unconsumed
+
+        release_email_if_unconsumed(email, note=f"任务未消耗，已自动回收: {reason[:180]}")
+    except Exception:
+        logger.exception("[Service] 回收未消耗邮箱失败: %s", email)
 
 
 def _normalize_workers(max_workers: int | None) -> int:
@@ -209,23 +241,23 @@ class _JobLogContext:
 def _run_one_job(job_id: int, log_file: str) -> None:
     """单任务入口（线程池里跑这个）。"""
     log_logger = logging.getLogger(__name__)
-    _THREAD_CTX.job_id = int(job_id)
-    with _STOP_LOCK:
-        _STOP_EVENTS.setdefault(int(job_id), threading.Event())
-        _ACTIVE_JOBS.add(int(job_id))
+    _activate_job(job_id)
 
     # 取消检查：用户可能在任务排队期间点了"取消排队"，把 status 改成了 cancelled。
     # 因为 Future 已经 submit 进线程池无法撤回，只能在真正执行前自检一下，跳过 cancelled 的。
     current = db.get_job(job_id)
     if not current:
         log_logger.info(f"[Job {job_id}] 任务记录已删除，跳过执行")
+        _deactivate_job(job_id)
         return
     if current.get("status") == "cancelled":
         log_logger.info(f"[Job {job_id}] 已被用户取消，跳过执行")
+        _deactivate_job(job_id)
         return
 
     db.update_job(job_id, status="running", started_at=datetime.now().isoformat(timespec="seconds"))
 
+    email: str | None = None
     try:
         with _JobLogContext(log_file):
             from main import run_registration
@@ -235,6 +267,7 @@ def _run_one_job(job_id: int, log_file: str) -> None:
             check_stop_requested()
             result = run_registration(email=email, name=name, birthday=birthday)
             if is_stop_requested(job_id):
+                _release_unconsumed_job_email(email, "用户手动停止")
                 db.update_job(
                     job_id,
                     status="stopped",
@@ -263,8 +296,10 @@ def _run_one_job(job_id: int, log_file: str) -> None:
                     error=str(err)[:500],
                     completed_at=datetime.now().isoformat(timespec="seconds"),
                 )
+                _release_unconsumed_job_email(email, str(err))
                 log_logger.error(f"[Job {job_id}] 失败: {err}")
     except StopRequested as exc:
+        _release_unconsumed_job_email(email, str(exc))
         log_logger.warning(f"[Job {job_id}] 已停止: {exc}")
         db.update_job(
             job_id,
@@ -273,6 +308,7 @@ def _run_one_job(job_id: int, log_file: str) -> None:
             completed_at=datetime.now().isoformat(timespec="seconds"),
         )
     except Exception as exc:
+        _release_unconsumed_job_email(email, f"{type(exc).__name__}: {exc}")
         if is_stop_requested(job_id):
             log_logger.warning(f"[Job {job_id}] 停止中捕获异常，按停止处理: {type(exc).__name__}: {exc}")
             db.update_job(
@@ -290,13 +326,56 @@ def _run_one_job(job_id: int, log_file: str) -> None:
             completed_at=datetime.now().isoformat(timespec="seconds"),
         )
     finally:
-        with _STOP_LOCK:
-            _STOP_EVENTS.pop(int(job_id), None)
-            _ACTIVE_JOBS.discard(int(job_id))
-        try:
-            delattr(_THREAD_CTX, "job_id")
-        except Exception:
-            pass
+        _deactivate_job(job_id)
+
+
+def _run_codex_retry_job(job_id: int, log_file: str, email: str, account_id: int) -> None:
+    """把 Codex 补跑作为标准任务执行，并复用任务状态、日志和停止入口。"""
+    _activate_job(job_id)
+    current = db.get_job(job_id)
+    if not current or current.get("status") == "cancelled":
+        codex_retry_service.release(email)
+        _deactivate_job(job_id)
+        return
+
+    db.update_job(job_id, status="running", started_at=datetime.now().isoformat(timespec="seconds"))
+    try:
+        result = codex_retry_service.run_worker(
+            email,
+            clear_log=False,
+            target_log_path=log_file,
+        )
+        now_iso = datetime.now().isoformat(timespec="seconds")
+        if is_stop_requested(job_id):
+            db.update_job(job_id, status="stopped", email=email, account_id=account_id, error="用户手动停止", completed_at=now_iso)
+        elif result.get("ok"):
+            db.update_job(
+                job_id,
+                status="success",
+                email=email,
+                account_id=account_id,
+                completed_at=now_iso,
+            )
+        else:
+            db.update_job(
+                job_id,
+                status="failed",
+                email=email,
+                account_id=account_id,
+                error=str(result.get("message") or "Codex 补跑失败")[:500],
+                completed_at=now_iso,
+            )
+    except Exception as exc:
+        db.update_job(
+            job_id,
+            status="failed",
+            error=f"{type(exc).__name__}: {exc}"[:500],
+            completed_at=datetime.now().isoformat(timespec="seconds"),
+        )
+        codex_retry_service.release(email)
+        logger.exception("[Job %s] Codex 补跑异常", job_id)
+    finally:
+        _deactivate_job(job_id)
 
 
 # ============================================================
@@ -323,10 +402,164 @@ def submit_registration(count: int = 1, email_source: str | None = None, workers
         jobs = []
         for _ in range(count):
             job = db.create_job(email_source=email_source)
-            jobs.append(job)
-            executor.submit(_run_one_job, job["id"], job["log_file"])
+            try:
+                executor.submit(_run_one_job, job["id"], job["log_file"])
+            except Exception as exc:
+                db.update_job(
+                    int(job["id"]),
+                    status="failed",
+                    error=f"队列提交失败：{type(exc).__name__}: {exc}"[:500],
+                    completed_at=datetime.now().isoformat(timespec="seconds"),
+                )
+                logger.exception("[Service] 注册任务 #%s 提交线程池失败", job["id"])
+            jobs.append(db.get_job(int(job["id"])) or job)
     logger.info(f"[Service] 已提交 {count} 个注册任务，源={email_source}，workers={effective_workers}")
     return jobs
+
+
+def _account_for_job(job: dict) -> dict | None:
+    account_id = job.get("account_id")
+    if account_id is not None:
+        try:
+            account = db.get_account(int(account_id))
+            if account is not None:
+                return account
+        except (TypeError, ValueError):
+            pass
+    email = str(job.get("email") or "").strip()
+    return db.get_account_by_email(email) if email else None
+
+
+def get_retry_info(job: dict) -> dict:
+    """返回给 API/UI 的重试能力描述，不依赖前端猜测错误阶段。"""
+    status = str(job.get("status") or "")
+    info = {
+        "retryable": False,
+        "retry_action": None,
+        "retry_label": None,
+        "retry_reason": None,
+        "display_status": status,
+    }
+    if status not in ("failed", "stopped", "cancelled"):
+        return info
+
+    successful_retry = db.get_successful_retry_for_job(int(job.get("id") or 0))
+    if successful_retry is not None:
+        info["retry_reason"] = f"后续重试任务 #{successful_retry.get('id')} 已成功"
+        info["successful_retry_job_id"] = successful_retry.get("id")
+        return info
+
+    account = _account_for_job(job)
+    if account and job.get("account_id") is not None and status in ("failed", "stopped"):
+        info["display_status"] = "success" if (account.get("codex_status") or "") == "success" else "partial_success"
+
+    if account:
+        codex_status = str(account.get("codex_status") or "")
+        if codex_status == "deactivated":
+            info["retry_reason"] = "账号已废号，不能补跑 Codex"
+            return info
+        if codex_status == "success":
+            info["retry_reason"] = "账号和 Codex 授权均已完成"
+            return info
+        info.update({
+            "retryable": True,
+            "retry_action": "codex",
+            "retry_label": "补跑 Codex",
+        })
+        return info
+
+    info.update({
+        "retryable": True,
+        "retry_action": "registration",
+        "retry_label": "重试",
+    })
+    return info
+
+
+def retry_job(job_id: int, workers: int | None = None) -> dict:
+    """智能重试终态任务：未生成账号则重新注册，已有账号则仅补跑 Codex。"""
+    source = db.get_job(job_id)
+    if source is None:
+        return {"ok": False, "error": "任务不存在", "status": 404}
+
+    retry_info = get_retry_info(source)
+    if not retry_info["retryable"]:
+        reason = retry_info.get("retry_reason") or f"当前状态不支持重试：{source.get('status')}"
+        return {"ok": False, "error": reason, "status": 409}
+
+    action = str(retry_info["retry_action"])
+    account = _account_for_job(source)
+    email = str((account or {}).get("email") or source.get("email") or "").strip()
+    account_id = int(account["id"]) if account and account.get("id") is not None else None
+    reserved_codex = False
+    if action == "codex":
+        if not email or account_id is None:
+            return {"ok": False, "error": "已注册账号信息不完整，无法补跑 Codex", "status": 409}
+        if not codex_retry_service.reserve(email):
+            return {"ok": False, "error": "该账号正在补跑 Codex，请稍候", "status": 409}
+        reserved_codex = True
+
+    try:
+        job, created = db.create_retry_job(
+            int(job_id),
+            job_type="codex_retry" if action == "codex" else "registration",
+            email_source=str(source.get("email_source") or "outlook"),
+            email=email if action == "codex" else None,
+            account_id=account_id if action == "codex" else None,
+        )
+    except LookupError as exc:
+        if reserved_codex:
+            codex_retry_service.release(email)
+        return {"ok": False, "error": str(exc), "status": 404}
+    except ValueError as exc:
+        if reserved_codex:
+            codex_retry_service.release(email)
+        return {"ok": False, "error": str(exc), "status": 409}
+
+    if not created:
+        if reserved_codex:
+            codex_retry_service.release(email)
+        return {
+            "ok": True,
+            "created": False,
+            "reused": True,
+            "message": f"已有重试任务 #{job['id']} 在排队或运行中",
+            "source_job_id": int(job_id),
+            "retry_action": action,
+            "job": job,
+        }
+
+    try:
+        if action == "codex":
+            db.update_account_codex_status(email, "retrying", None)
+        with _executor_lock:
+            executor = get_executor(max_workers=workers)
+            if action == "codex":
+                executor.submit(_run_codex_retry_job, job["id"], job["log_file"], email, int(account_id))
+            else:
+                executor.submit(_run_one_job, job["id"], job["log_file"])
+    except Exception as exc:
+        if reserved_codex:
+            codex_retry_service.release(email)
+            db.update_account_codex_status(email, "failed", f"队列提交失败：{type(exc).__name__}: {exc}"[:500])
+        db.update_job(
+            int(job["id"]),
+            status="failed",
+            error=f"队列提交失败：{type(exc).__name__}: {exc}"[:500],
+            completed_at=datetime.now().isoformat(timespec="seconds"),
+        )
+        logger.exception("[Service] 重试任务 #%s 提交线程池失败", job["id"])
+        return {"ok": False, "error": "重试任务创建成功，但提交执行失败", "status": 500, "job": db.get_job(int(job["id"]))}
+
+    return {
+        "ok": True,
+        "created": True,
+        "reused": False,
+        "message": f"已创建重试任务 #{job['id']}（{'Codex 补跑' if action == 'codex' else '完整注册'}）",
+        "source_job_id": int(job_id),
+        "retry_action": action,
+        "job": job,
+    }
 
 
 def cancel_pending_jobs() -> int:
@@ -383,6 +616,10 @@ def request_stop_job(job_id: int) -> dict:
                 status="stopped",
                 completed_at=now_iso,
                 error="用户手动停止（任务实例不存在）",
+            )
+            _release_unconsumed_job_email(
+                str(job.get("email") or "").strip() or None,
+                "任务实例不存在，确认未继续执行",
             )
             _append_job_log(job_id, "用户手动停止：未找到运行中的任务实例，已直接标记为已停止。")
             logger.warning("[Service] 用户停止任务 #%s：任务实例不存在，已直接标记 stopped", job_id)
