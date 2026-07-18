@@ -427,7 +427,16 @@ def _fill_password_if_present(page, email: str, timeout: int = 25, context=None)
     last_log = 0.0
     while time.time() < end:
         if time.time() - last_heartbeat > 3:
-            page = _browser_use_heartbeat(page, context=context, label="password-detect")
+            try:
+                page = _browser_use_heartbeat(page, context=context, label="password-detect")
+            except Exception as exc:
+                if _is_target_closed_error(exc):
+                    raise
+                if _is_transient_navigation_error(exc):
+                    logger.info("[BrowserUse] 密码页检测遇到页面跳转，稍后重试：%s", str(exc)[:140])
+                    time.sleep(0.4 if _fast_mode() else 1.0)
+                    continue
+                raise
             last_heartbeat = time.time()
         state_info = _quick_auth_state(page)
         state = str(state_info.get("state") or "other")
@@ -1069,6 +1078,16 @@ def _is_target_closed_error(exc: Exception | str) -> bool:
     return any(x in text for x in ("targetclosed", "target page", "context or browser has been closed", "browser has been closed", "page.is_closed"))
 
 
+def _is_transient_navigation_error(exc: Exception | str) -> bool:
+    text = str(exc).lower()
+    return any(x in text for x in (
+        "execution context was destroyed",
+        "most likely because of a navigation",
+        "navigation",
+        "frame was detached",
+    ))
+
+
 def _pick_live_page(context, preferred=None):
     """Browser Use 远端有时会打开/切换 target；优先选择处在验证码/密码/资料页的活页。"""
     pages = []
@@ -1147,7 +1166,12 @@ def _browser_use_heartbeat(page, context=None, label: str = ""):
         page.evaluate("() => ({href: location.href, visibility: document.visibilityState, t: Date.now()})", timeout=2500)
     except TypeError:
         # 兼容旧 Playwright：evaluate 不支持 timeout 参数。
-        page.evaluate("() => ({href: location.href, visibility: document.visibilityState, t: Date.now()})")
+        try:
+            page.evaluate("() => ({href: location.href, visibility: document.visibilityState, t: Date.now()})")
+        except Exception as exc:
+            if _is_target_closed_error(exc):
+                raise RuntimeError(f"BrowserUse 页面已关闭，无法继续心跳：{exc}") from exc
+            logger.debug("[BrowserUse] 心跳失败%s：%s", f"({label})" if label else "", str(exc)[:180])
     except Exception as exc:
         if _is_target_closed_error(exc):
             raise RuntimeError(f"BrowserUse 页面已关闭，无法继续心跳：{exc}") from exc
