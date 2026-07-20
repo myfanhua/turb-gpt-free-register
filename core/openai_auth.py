@@ -306,6 +306,8 @@ def build_sentinel_header(session: BrowserSession, sentinel_resp: dict, flow: st
         browser_profile=getattr(session, "browser_profile", None),
         sentinel_sid=getattr(session, "sentinel_sid", None),
         react_listening_key=getattr(session, "react_listening_key", None),
+        react_container_key=getattr(session, "react_container_key", None),
+        react_resources_key=getattr(session, "react_resources_key", None),
     )
 
     # 解析 runner 输出，单独抽出 so 字段填充 openai-sentinel-so-token

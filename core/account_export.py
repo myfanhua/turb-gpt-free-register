@@ -157,7 +157,7 @@ def fetch_session(session: BrowserSession) -> dict:
             - expires: ISO 时间字符串
     """
     url = "https://chatgpt.com/api/auth/session"
-    headers = session.get_chatgpt_headers(referer="https://chatgpt.com/")
+    headers = session.get_nextauth_headers(referer="https://chatgpt.com/")
 
     logger.info("[Session] 拉取 ChatGPT session 信息...")
     resp = session.get(url, headers=headers)
@@ -184,7 +184,7 @@ def _trigger_reauth(session: BrowserSession, email: str) -> str:
     """
     # 重新拿一次 csrf（旧的可能已过期）
     csrf_url = "https://chatgpt.com/api/auth/csrf"
-    csrf_resp = session.get(csrf_url, headers=session.get_chatgpt_headers())
+    csrf_resp = session.get(csrf_url, headers=session.get_nextauth_headers(referer="https://chatgpt.com/"))
     csrf_resp.raise_for_status()
     csrf_token = csrf_resp.json()["csrfToken"]
     logger.info(f"[2FA] 重认证 CSRF: {csrf_token[:20]}...")
@@ -199,7 +199,7 @@ def _trigger_reauth(session: BrowserSession, email: str) -> str:
     }
     signin_url = "https://chatgpt.com/api/auth/signin/openai?" + urlencode(query)
 
-    headers = session.get_chatgpt_headers()
+    headers = session.get_nextauth_headers(referer="https://chatgpt.com/")
     headers["content-type"] = "application/x-www-form-urlencoded"
     headers["origin"] = "https://chatgpt.com"
 

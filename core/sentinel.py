@@ -75,6 +75,8 @@ def generate_fingerprint_data(device_id: str, attempt: int = 1, elapsed_ms: floa
     user_agent = str(profile.get("user_agent", USER_AGENT))
     build_id = profile.get("build_id")
     react_listening_key = str(profile.get("react_listening_key") or ("_reactListening" + "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=11))))
+    react_container_key = str(profile.get("react_container_key") or ("__reactContainer$" + "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=11))))
+    react_resources_key = str(profile.get("react_resources_key") or react_container_key.replace("__reactContainer$", "__reactResources$", 1))
     tz_offset = int(profile.get("timezone_offset_minutes", TIMEZONE_OFFSET_MINUTES))
     tz_name = str(profile.get("timezone_name", TIMEZONE_NAME))
 
@@ -101,6 +103,7 @@ def generate_fingerprint_data(device_id: str, attempt: int = 1, elapsed_ms: floa
     window_keys = list(profile.get("window_key_samples") or WINDOW_KEY_SAMPLES)
     window_flags = dict(WINDOW_FEATURE_FLAGS)
     window_flags.update(profile.get("window_feature_flags") or {})
+    script_src_samples = list(profile.get("script_src_samples") or [f"https://sentinel.openai.com/sentinel/{SENTINEL_SV}/sdk.js"])
 
     config = [
         screen_width + screen_height,       # [0] screen.width + screen.height
@@ -108,13 +111,13 @@ def generate_fingerprint_data(device_id: str, attempt: int = 1, elapsed_ms: floa
         js_heap_size_limit,              # [2] jsHeapSizeLimit
         attempt,                         # [3] PoW尝试次数 / Math.random()
         user_agent,                      # [4] UA
-        f"https://sentinel.openai.com/sentinel/{SENTINEL_SV}/sdk.js",  # [5] script src
+        random.choice(script_src_samples),  # [5] script src
         build_id,                        # [6] data-build
         navigator_language,              # [7] navigator.language
         ",".join(navigator_languages),   # [8] navigator.languages
         round(elapsed_ms) if elapsed_ms else random.randint(1, 100),  # [9] 耗时 / Math.random()
         random.choice(navigator_props),  # [10] 随机navigator属性
-        random.choice(document_keys + [react_listening_key]),  # [11] 随机document key
+        random.choice(document_keys + [react_listening_key, react_container_key, react_resources_key]),  # [11] 随机document key / React 注入 key
         random.choice(window_keys),       # [12] 随机window key
         round(perf_now, 10),             # [13] performance.now()
         sid,                             # [14] sid

@@ -20,40 +20,40 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 
-def _latest_chrome_major(default: str = "146") -> str:
-    """兼容旧模块导入；Safari 指纹下不再用于 UA/Client Hints。"""
+def _latest_chrome_major(default: str = "149") -> str:
+    """兼容旧模块导入；默认按 2026-07-19 抓包里的 Chrome 149 画像。"""
     return default
 
 
-CHROME_MAJOR = ""
-CHROME_FULL_VERSION = ""
+CHROME_MAJOR = "149"
+CHROME_FULL_VERSION = "149.0.0.0"
 
-SAFARI_VERSION = "18.5"
-SAFARI_WEBKIT_VERSION = "605.1.15"
+SAFARI_VERSION = ""
+SAFARI_WEBKIT_VERSION = "537.36"
 MAC_OS_UA_VERSION = "10_15_7"
 
 # ---------- curl_cffi 模拟浏览器 ----------
-IMPERSONATE = "safari"
+# curl_cffi 0.15 当前最高内置到 chrome146；HTTP/JS 画像按抓包补齐到 Chrome/149。
+IMPERSONATE = "chrome146"
 
-# ---------- 桌面 Safari 画像 ----------
-BROWSER_FAMILY = "safari"
+# ---------- 桌面 Chrome 画像 ----------
+BROWSER_FAMILY = "chrome"
 BROWSER_OS = "macOS"
 USER_AGENT = (
     f"Mozilla/5.0 (Macintosh; Intel Mac OS X {MAC_OS_UA_VERSION}) "
     f"AppleWebKit/{SAFARI_WEBKIT_VERSION} (KHTML, like Gecko) "
-    f"Version/{SAFARI_VERSION} Safari/{SAFARI_WEBKIT_VERSION}"
+    f"Chrome/{CHROME_FULL_VERSION} Safari/{SAFARI_WEBKIT_VERSION}"
 )
 
-# Safari 不发送 Chromium Client Hints。保留这些常量仅兼容旧导入。
-SEC_CH_UA = ""
-SEC_CH_UA_FULL_VERSION_LIST = ""
-SEC_CH_UA_PLATFORM = ""
-SEC_CH_UA_PLATFORM_VERSION = ""
-SEC_CH_UA_MOBILE = ""
-SEC_CH_UA_ARCH = ""
-SEC_CH_UA_BITNESS = ""
-SEC_CH_UA_MODEL = ""
-SEND_CLIENT_HINTS = False
+SEC_CH_UA = '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"'
+SEC_CH_UA_FULL_VERSION_LIST = '"Google Chrome";v="149.0.0.0", "Chromium";v="149.0.0.0", "Not)A;Brand";v="24.0.0.0"'
+SEC_CH_UA_PLATFORM = '"macOS"'
+SEC_CH_UA_PLATFORM_VERSION = '"15.7.0"'
+SEC_CH_UA_MOBILE = "?0"
+SEC_CH_UA_ARCH = '"arm"'
+SEC_CH_UA_BITNESS = '"64"'
+SEC_CH_UA_MODEL = '""'
+SEND_CLIENT_HINTS = True
 SEND_HIGH_ENTROPY_CLIENT_HINTS = False
 
 # ---------- 语言 / 时区 ----------
@@ -71,16 +71,16 @@ COUNTRY_LOCALE_PROFILE_MAP = {
 }
 
 BROWSER_LOCALE_PROFILES = {
-    "jp": {"navigator_language": "ja-JP", "navigator_languages": ["ja-JP", "ja", "en-US", "en"], "accept_language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Asia/Tokyo", "timezone_offset_minutes": 9 * 60, "timezone_name": "Japan Standard Time"},
-    "cn": {"navigator_language": "zh-CN", "navigator_languages": ["zh-CN", "zh", "en-US", "en"], "accept_language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Asia/Shanghai", "timezone_offset_minutes": 8 * 60, "timezone_name": "China Standard Time"},
-    "us": {"navigator_language": "en-US", "navigator_languages": ["en-US", "en"], "accept_language": "en-US,en;q=0.9", "timezone_iana": "America/Los_Angeles", "timezone_offset_minutes": -7 * 60, "timezone_name": "Pacific Daylight Time"},
-    "sg": {"navigator_language": "en-SG", "navigator_languages": ["en-SG", "en-US", "en"], "accept_language": "en-SG,en-US;q=0.9,en;q=0.8", "timezone_iana": "Asia/Singapore", "timezone_offset_minutes": 8 * 60, "timezone_name": "Singapore Standard Time"},
-    "hk": {"navigator_language": "zh-HK", "navigator_languages": ["zh-HK", "zh-TW", "zh", "en-US", "en"], "accept_language": "zh-HK,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6", "timezone_iana": "Asia/Hong_Kong", "timezone_offset_minutes": 8 * 60, "timezone_name": "Hong Kong Standard Time"},
-    "tw": {"navigator_language": "zh-TW", "navigator_languages": ["zh-TW", "zh", "en-US", "en"], "accept_language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Asia/Taipei", "timezone_offset_minutes": 8 * 60, "timezone_name": "Taipei Standard Time"},
-    "gb": {"navigator_language": "en-GB", "navigator_languages": ["en-GB", "en-US", "en"], "accept_language": "en-GB,en-US;q=0.9,en;q=0.8", "timezone_iana": "Europe/London", "timezone_offset_minutes": 1 * 60, "timezone_name": "British Summer Time"},
-    "de": {"navigator_language": "de-DE", "navigator_languages": ["de-DE", "de", "en-US", "en"], "accept_language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Europe/Berlin", "timezone_offset_minutes": 2 * 60, "timezone_name": "Central European Summer Time"},
-    "fr": {"navigator_language": "fr-FR", "navigator_languages": ["fr-FR", "fr", "en-US", "en"], "accept_language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Europe/Paris", "timezone_offset_minutes": 2 * 60, "timezone_name": "Central European Summer Time"},
-    "nl": {"navigator_language": "nl-NL", "navigator_languages": ["nl-NL", "nl", "en-US", "en"], "accept_language": "nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Europe/Amsterdam", "timezone_offset_minutes": 2 * 60, "timezone_name": "Central European Summer Time"},
+    "jp": {"navigator_language": "ja-JP", "navigator_languages": ["ja-JP"], "accept_language": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Asia/Tokyo", "timezone_offset_minutes": 9 * 60, "timezone_name": "Japan Standard Time"},
+    "cn": {"navigator_language": "zh-CN", "navigator_languages": ["zh-CN"], "accept_language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Asia/Shanghai", "timezone_offset_minutes": 8 * 60, "timezone_name": "China Standard Time"},
+    "us": {"navigator_language": "en-US", "navigator_languages": ["en-US"], "accept_language": "en-US,en;q=0.9", "timezone_iana": "America/Los_Angeles", "timezone_offset_minutes": -7 * 60, "timezone_name": "Pacific Daylight Time"},
+    "sg": {"navigator_language": "en-SG", "navigator_languages": ["en-SG"], "accept_language": "en-SG,en-US;q=0.9,en;q=0.8", "timezone_iana": "Asia/Singapore", "timezone_offset_minutes": 8 * 60, "timezone_name": "Singapore Standard Time"},
+    "hk": {"navigator_language": "zh-HK", "navigator_languages": ["zh-HK"], "accept_language": "zh-HK,zh-TW;q=0.9,zh;q=0.8,en-US;q=0.7,en;q=0.6", "timezone_iana": "Asia/Hong_Kong", "timezone_offset_minutes": 8 * 60, "timezone_name": "Hong Kong Standard Time"},
+    "tw": {"navigator_language": "zh-TW", "navigator_languages": ["zh-TW"], "accept_language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Asia/Taipei", "timezone_offset_minutes": 8 * 60, "timezone_name": "Taipei Standard Time"},
+    "gb": {"navigator_language": "en-GB", "navigator_languages": ["en-GB"], "accept_language": "en-GB,en-US;q=0.9,en;q=0.8", "timezone_iana": "Europe/London", "timezone_offset_minutes": 1 * 60, "timezone_name": "British Summer Time"},
+    "de": {"navigator_language": "de-DE", "navigator_languages": ["de-DE"], "accept_language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Europe/Berlin", "timezone_offset_minutes": 2 * 60, "timezone_name": "Central European Summer Time"},
+    "fr": {"navigator_language": "fr-FR", "navigator_languages": ["fr-FR"], "accept_language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Europe/Paris", "timezone_offset_minutes": 2 * 60, "timezone_name": "Central European Summer Time"},
+    "nl": {"navigator_language": "nl-NL", "navigator_languages": ["nl-NL"], "accept_language": "nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7", "timezone_iana": "Europe/Amsterdam", "timezone_offset_minutes": 2 * 60, "timezone_name": "Central European Summer Time"},
 }
 
 TIMEZONE_NAME_BY_IANA = {
@@ -139,18 +139,25 @@ TIMEZONE_OFFSET_MINUTES = int(_LOCALE["timezone_offset_minutes"])
 TIMEZONE_NAME = _LOCALE["timezone_name"]
 
 # ---------- Sentinel / JS VM 环境 ----------
-SCREEN_WIDTH = 1728
-SCREEN_HEIGHT = 1117
-HARDWARE_CONCURRENCY = 10
-JS_HEAP_SIZE_LIMIT = 4294967296
+SCREEN_WIDTH = 1680
+SCREEN_HEIGHT = 1050
+HARDWARE_CONCURRENCY = 6
+JS_HEAP_SIZE_LIMIT = 4395630592
 DEVICE_MEMORY = 8
 
 # 这些列表必须与 sentinel/sentinel-runner.js 的 createBrowserContext 保持一致。
 NAVIGATOR_PROTO_SAMPLES = [
+    "createAuctionNonce−function createAuctionNonce() { [native code] }",
+    "clearOriginJoinedAdInterestGroups−function clearOriginJoinedAdInterestGroups() { [native code] }",
+    "updateAdInterestGroups−function updateAdInterestGroups() { [native code] }",
+    "canLoadAdAuctionFencedFrame−function canLoadAdAuctionFencedFrame() { [native code] }",
+    "gpu−[object GPU]",
+    "getBattery−function getBattery() { [native code] }",
+    "getGamepads−function getGamepads() { [native code] }",
     "javaEnabled−function javaEnabled() { [native code] }",
     "sendBeacon−function sendBeacon() { [native code] }",
-    "getGamepads−function getGamepads() { [native code] }",
-    "webkitGetUserMedia−function webkitGetUserMedia() { [native code] }",
+    "vibrate−function vibrate() { [native code] }",
+    "login−[object NavigatorLogin]",
 ]
 DOCUMENT_KEY_SAMPLES = [
     "currentScript", "scripts", "cookie", "URL", "documentURI", "referrer",
@@ -162,10 +169,18 @@ DOCUMENT_KEY_SAMPLES = [
 WINDOW_KEY_SAMPLES = [
     "window", "self", "top", "parent", "frames", "navigator", "screen", "location",
     "localStorage", "sessionStorage", "history", "innerWidth", "innerHeight",
-    "outerWidth", "outerHeight", "devicePixelRatio", "safari", "performance", "crypto",
+    "outerWidth", "outerHeight", "devicePixelRatio", "chrome", "performance", "crypto",
     "TextEncoder", "URL", "URLSearchParams", "AbortController",
-    "requestAnimationFrame", "webkitRequestAnimationFrame", "onfocus", "onblur", "onpageshow",
+    "locationbar", "scrollX", "scrollY", "ondevicemotion",
+    "requestAnimationFrame", "queueMicrotask", "onfocus", "onblur", "onpageshow",
 ]
+
+SCRIPT_SRC_SAMPLES = [
+    "https://accounts.google.com/gsi/client",
+    "https://chatgpt.com/cdn-cgi/challenge-platform/scripts/jsd/api.js?onload=jsdOnload",
+    "https://sentinel.openai.com/sentinel/20260219f9f6/sdk.js",
+]
+
 WINDOW_FEATURE_FLAGS = {
     "ai": 0,
     "InstallTrigger": 0,
@@ -173,15 +188,20 @@ WINDOW_FEATURE_FLAGS = {
     "data": 0,
     "solana": 0,
     "dump": 0,
-    # Safari 支持 requestIdleCallback 的覆盖面不稳定；runner 会按该标记暴露。
+    # HAR 样本 p[24] 为 0；默认不暴露，必要时由画像开关启用。
     "requestIdleCallback": 0,
 }
 
 # ---------- HTTP 超时 ----------
 REQUEST_TIMEOUT = 30
 
-# 常见 macOS Safari 桌面画像池。同一 session 内保持不变。
+# HAR 参考画像：Default-all-domains-1784468371563.json 解码 p[0]/p[2]/p[16] 得出。
+HAR_CAPTURE_BASE_PROFILE = {"screen_width": 1680, "screen_height": 1050, "hardware_concurrency": 6, "device_memory": 8, "js_heap_size_limit": 4395630592, "device_pixel_ratio": 2}
+
+# 常见 macOS Chrome 桌面画像池。同一 session 内保持不变；不同 session 随机分散。
+# HAR_CAPTURE_BASE_PROFILE 只是候选之一，不全局固定。
 BROWSER_PROFILE_POOL = [
+    HAR_CAPTURE_BASE_PROFILE,
     {"screen_width": 1440, "screen_height": 900,  "hardware_concurrency": 8,  "device_memory": 8, "js_heap_size_limit": 4294967296, "device_pixel_ratio": 2},
     {"screen_width": 1512, "screen_height": 982,  "hardware_concurrency": 8,  "device_memory": 8, "js_heap_size_limit": 4294967296, "device_pixel_ratio": 2},
     {"screen_width": 1680, "screen_height": 1050, "hardware_concurrency": 8,  "device_memory": 8, "js_heap_size_limit": 4294967296, "device_pixel_ratio": 2},
@@ -217,6 +237,7 @@ def build_browser_environment(geo: dict | None = None, base_profile: dict | None
         "navigator_proto_samples": list(NAVIGATOR_PROTO_SAMPLES),
         "document_key_samples": list(DOCUMENT_KEY_SAMPLES),
         "window_key_samples": list(WINDOW_KEY_SAMPLES),
+        "script_src_samples": list(SCRIPT_SRC_SAMPLES),
         "window_feature_flags": dict(WINDOW_FEATURE_FLAGS),
         "build_id": __import__("config.openai_protocol", fromlist=["OPENAI_BUILD_ID"]).OPENAI_BUILD_ID,
     })
@@ -224,7 +245,7 @@ def build_browser_environment(geo: dict | None = None, base_profile: dict | None
 
 
 def pick_browser_profile(geo: dict | None = None) -> dict:
-    """为一个 BrowserSession 挑选一份稳定桌面画像。"""
+    """为一个 BrowserSession 随机挑选稳定桌面画像；HAR 尺寸只是候选之一。"""
     return build_browser_environment(geo)
 
 

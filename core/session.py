@@ -6,14 +6,16 @@ curl_cffi Session 封装
 import logging
 import random
 import threading
+import time
 import uuid
+from urllib.parse import urlparse
 from curl_cffi.requests import Session
 
 from config import (
     USER_AGENT, SEC_CH_UA, SEC_CH_UA_PLATFORM, SEC_CH_UA_MOBILE,
     SEC_CH_UA_FULL_VERSION_LIST, SEC_CH_UA_PLATFORM_VERSION, SEC_CH_UA_ARCH,
     SEC_CH_UA_BITNESS, SEC_CH_UA_MODEL, SEND_HIGH_ENTROPY_CLIENT_HINTS,
-    ACCEPT_LANGUAGE, IMPERSONATE,
+    ACCEPT_LANGUAGE, IMPERSONATE, OAI_CLIENT_BUILD_NUMBER, OAI_CLIENT_VERSION,
     REQUEST_TIMEOUT, pick_proxy, pick_browser_profile, validate_browser_profile,
 )
 
@@ -54,6 +56,9 @@ class BrowserSession:
         # 生成 auth_session_logging_id
         self.auth_session_logging_id = str(uuid.uuid4())
 
+        # ChatGPT 前端会话 ID：CES / Statsig / API 链路内保持稳定。
+        self.oai_session_id = str(uuid.uuid4())
+
         # Datadog/RUM 关联 ID：每个 BrowserSession 独立生成，禁止跨账号复用。
         # 只作为前端同形态诊断头，贯穿本会话内所有 auth/chatgpt/sentinel API 调用。
         self.datadog_trace_id = str(random.getrandbits(63))
@@ -64,6 +69,8 @@ class BrowserSession:
         # Python 初始 p 与 Node Runner 最终 token 都复用这个 sid，保持同一 SDK 实例语义。
         self.sentinel_sid = str(uuid.uuid4())
         self.react_listening_key = "_reactListening" + uuid.uuid4().hex[:12]
+        self.react_container_key = "__reactContainer$" + uuid.uuid4().hex[:11]
+        self.react_resources_key = "__reactResources$" + self.react_container_key.split("$", 1)[1]
 
         # 创建 curl_cffi 会话
         self.session = Session(impersonate=IMPERSONATE)
@@ -78,11 +85,17 @@ class BrowserSession:
         # 设置超时
         self.session.timeout = REQUEST_TIMEOUT
 
+        # 会话级熔断：收到 403/429 后停止继续打后续接口，避免异常状态下扩大误伤。
+        self.blocked_until = 0.0
+        self.blocked_reason = ""
+
         # 先用当前代理检测出口 IP 地理信息，再为本会话挑一份稳定浏览器画像。
         # 这样 Accept-Language / navigator.language / timezone 可自动跟随出口地区。
         self.exit_geo = self._detect_exit_geo() if detect_exit_geo else {}
         self.browser_profile = pick_browser_profile(self.exit_geo)
         self.browser_profile["react_listening_key"] = self.react_listening_key
+        self.browser_profile["react_container_key"] = self.react_container_key
+        self.browser_profile["react_resources_key"] = self.react_resources_key
         issues = validate_browser_profile(self.browser_profile)
         if issues:
             logger.warning("[指纹] 浏览器画像存在不一致: %s", "; ".join(issues))
@@ -202,6 +215,27 @@ class BrowserSession:
             "x-datadog-parent-id": self.datadog_parent_id,
         }
 
+    def get_trace_context_headers(self) -> dict:
+        """补齐 Auth Web 抓包里的 W3C traceparent / Datadog tracestate。"""
+        trace_hex = format(int(self.datadog_trace_id), "032x")[-32:]
+        parent_hex = format(int(self.datadog_parent_id), "016x")[-16:]
+        return {
+            "traceparent": f"00-{trace_hex}-{parent_hex}-01",
+            "tracestate": f"dd=s:1;o:{self.datadog_origin}",
+        }
+
+    def _attach_auth_rum_headers(self, headers: dict) -> dict:
+        """Auth Web JSON 接口头：HAR 中只出现 RUM/trace/access-flow，不带 oai-client-*。"""
+        headers.update(self.get_trace_context_headers())
+        headers["x-access-flow-invocation-id"] = str(uuid.uuid4())
+        headers.update(self.get_datadog_headers())
+        return headers
+
+    def js_timezone_offset_min(self) -> int:
+        """返回 JS Date.getTimezoneOffset() 语义：UTC-local，东八区为 -480。"""
+        profile = getattr(self, "browser_profile", {}) or {}
+        return -int(profile.get("timezone_offset_minutes", 0) or 0)
+
     def _attach_datadog_headers(self, headers: dict) -> dict:
         """为前端 API 请求补齐 Datadog 头，降低无诊断头 silent-drop 概率。"""
         headers.update(self.get_datadog_headers())
@@ -209,14 +243,31 @@ class BrowserSession:
 
     def _attach_oai_context_headers(self, headers: dict) -> dict:
         """补齐同一设备上下文头，和 oai-did Cookie / OAuth ext-oai-did 保持一致。"""
+        headers["oai-client-build-number"] = OAI_CLIENT_BUILD_NUMBER
+        headers["oai-client-version"] = OAI_CLIENT_VERSION
         headers["oai-device-id"] = self.device_id
         headers["oai-language"] = self.navigator_language()
+        headers["oai-session-id"] = self.oai_session_id
         return headers
 
     def _attach_frontend_api_headers(self, headers: dict) -> dict:
         """前端 API 统一头：BrowserProfile + oai 上下文 + Datadog。"""
         self._attach_oai_context_headers(headers)
         self._attach_datadog_headers(headers)
+        return headers
+
+    def get_nextauth_headers(self, referer: str = "https://chatgpt.com/") -> dict:
+        """NextAuth `/api/auth/*` 头；HAR 中不携带 oai-client-*。"""
+        headers = self._get_common_headers()
+        headers.update({
+            "accept": "*/*",
+            "content-type": "application/json",
+            "sec-fetch-site": "same-origin",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-dest": "empty",
+            "referer": referer,
+            "priority": "u=1, i",
+        })
         return headers
 
     def get_chatgpt_headers(self, referer: str = "https://chatgpt.com/login") -> dict:
@@ -252,7 +303,7 @@ class BrowserSession:
             "priority": "u=1, i",
             "origin": "https://auth.openai.com",
         })
-        return self._attach_frontend_api_headers(headers)
+        return self._attach_auth_rum_headers(headers)
 
     def get_auth_navigate_headers(self, referer: str = "https://chatgpt.com/", user_initiated: bool = True, target_origin: str = "https://auth.openai.com") -> dict:
         """
@@ -308,10 +359,79 @@ class BrowserSession:
         })
         return self._attach_frontend_api_headers(headers)
 
+
+    @staticmethod
+    def _chatgpt_target_route(path: str) -> str:
+        """把真实 URL path 归一成 HAR 里的 x-openai-target-route 形态。"""
+        if path.startswith("/backend-api/accounts/check/"):
+            return "/backend-api/accounts/check/{version}"
+        if path.startswith("/backend-anon/accounts/check/"):
+            return "/backend-anon/accounts/check/{version}"
+        if path.startswith("/backend-api/conversation/") and path != "/backend-api/conversation/init":
+            return "/backend-api/conversation/{conversation_id}"
+        if path.startswith("/backend-anon/conversation/") and path != "/backend-anon/conversation/init":
+            return "/backend-anon/conversation/{conversation_id}"
+        return path
+
+    def _attach_openai_target_headers_for_url(self, url: str, headers: dict | None) -> dict | None:
+        """
+        自动补齐 HAR 中 chatgpt.com 前端 API 的 target 诊断头。
+
+        NextAuth `/api/auth/*` 和 auth.openai.com JSON 接口在抓包中不带这些头，
+        这里仅对 chatgpt.com 的 backend/ces 前端接口补齐，避免各调用点手动维护。
+        """
+        if headers is None:
+            return headers
+        try:
+            parsed = urlparse(str(url))
+        except Exception:
+            return headers
+        host = (parsed.hostname or "").lower()
+        path = parsed.path or "/"
+        if host != "chatgpt.com":
+            return headers
+        if not (path.startswith("/backend-api/") or path.startswith("/backend-anon/") or path.startswith("/ces/")):
+            return headers
+        # 不覆盖调用方显式指定的值，便于后续特殊接口单独调整。
+        headers.setdefault("x-openai-target-path", path)
+        headers.setdefault("x-openai-target-route", self._chatgpt_target_route(path))
+        return headers
+
+    def _raise_if_circuit_open(self) -> None:
+        if self.blocked_until and time.time() < self.blocked_until:
+            remain = max(0, int(self.blocked_until - time.time()))
+            raise RuntimeError(f"当前 BrowserSession 已熔断冷却（剩余 {remain}s）：{self.blocked_reason}")
+
+    @staticmethod
+    def _parse_retry_after(value: str | None) -> int:
+        if not value:
+            return 0
+        text = str(value).strip()
+        if text.isdigit():
+            return max(0, int(text))
+        return 0
+
+    def _observe_response_for_circuit_breaker(self, resp, url: str):
+        status = int(getattr(resp, "status_code", 0) or 0)
+        if status not in (403, 429):
+            return resp
+        retry_after = self._parse_retry_after(getattr(resp, "headers", {}).get("retry-after") if getattr(resp, "headers", None) else None)
+        cool_down = retry_after if retry_after > 0 else (300 if status == 429 else 900)
+        self.blocked_until = max(self.blocked_until, time.time() + min(cool_down, 3600))
+        self.blocked_reason = f"HTTP {status} from {url}"
+        logger.warning("[熔断] 当前会话收到 HTTP %s，进入冷却 %ss，停止后续请求：%s", status, min(cool_down, 3600), url)
+        return resp
+
     def get(self, url: str, headers: dict = None, **kwargs):
         """发送 GET 请求"""
-        return self.session.get(url, headers=headers, **kwargs)
+        self._raise_if_circuit_open()
+        headers = self._attach_openai_target_headers_for_url(url, headers)
+        resp = self.session.get(url, headers=headers, **kwargs)
+        return self._observe_response_for_circuit_breaker(resp, url)
 
     def post(self, url: str, headers: dict = None, **kwargs):
         """发送 POST 请求"""
-        return self.session.post(url, headers=headers, **kwargs)
+        self._raise_if_circuit_open()
+        headers = self._attach_openai_target_headers_for_url(url, headers)
+        resp = self.session.post(url, headers=headers, **kwargs)
+        return self._observe_response_for_circuit_breaker(resp, url)

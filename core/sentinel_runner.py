@@ -30,6 +30,8 @@ from config import (
     SEC_CH_UA_BITNESS,
     SEC_CH_UA_MODEL,
     TIMEZONE_IANA,
+    TIMEZONE_NAME,
+    TIMEZONE_OFFSET_MINUTES,
     NAVIGATOR_LANGUAGE,
     NAVIGATOR_LANGUAGES,
     SCREEN_WIDTH,
@@ -89,6 +91,8 @@ def generate_sentinel_token(
     browser_profile: dict | None = None,
     sentinel_sid: str | None = None,
     react_listening_key: str | None = None,
+    react_container_key: str | None = None,
+    react_resources_key: str | None = None,
 ) -> str:
     """
     把 sentinel.openai.com 返回的 challenge 喂给 sdk.js，生成最终 sentinel-token 字符串。
@@ -115,7 +119,7 @@ def generate_sentinel_token(
         raise ValueError("device_id 不能为空")
 
     profile = browser_profile or {}
-    browser_family = str(profile.get("browser_family") or "safari")
+    browser_family = str(profile.get("browser_family") or "chrome")
     request_idle_callback = int((profile.get("window_feature_flags") or {}).get("requestIdleCallback", 0))
     ua = user_agent or str(profile.get("user_agent") or USER_AGENT)
     screen_width = int(profile.get("screen_width", SCREEN_WIDTH))
@@ -136,7 +140,12 @@ def generate_sentinel_token(
     sec_ch_ua_bitness = str(profile.get("sec_ch_ua_bitness", SEC_CH_UA_BITNESS))
     sec_ch_ua_model = str(profile.get("sec_ch_ua_model", SEC_CH_UA_MODEL))
     build_id = str(profile.get("build_id", OPENAI_BUILD_ID))
+    # Auth 页面 Sentinel token 的 documentElement 通常没有 data-build；
+    # ChatGPT 页面 prepare/finalize 的 p 才带前端 build。
+    runner_build_id = "" if page_url is None and flow in {"authorize_continue", "oauth_create_account", "username_password_create"} else build_id
     timezone_iana = str(profile.get("timezone_iana", TIMEZONE_IANA))
+    timezone_name = str(profile.get("timezone_name", TIMEZONE_NAME))
+    timezone_offset_minutes = int(profile.get("timezone_offset_minutes", TIMEZONE_OFFSET_MINUTES))
 
     page = page_url or _FLOW_PAGE_URL.get(
         flow, "https://auth.openai.com/create-account/password"
@@ -163,19 +172,24 @@ def generate_sentinel_token(
             "--device-id", device_id,
             "--sentinel-sid", sentinel_sid or "",
             "--react-listening-key", react_listening_key or "",
+            "--react-container-key", react_container_key or str(profile.get("react_container_key") or ""),
+            "--react-resources-key", react_resources_key or str(profile.get("react_resources_key") or ""),
             "--page-url", page,
             "--user-agent", ua,
             "--browser-family", browser_family,
             "--request-idle-callback", "1" if request_idle_callback else "0",
             "--sdk", str(_SDK_PATH),
             "--script-src", f"https://sentinel.openai.com/sentinel/{SENTINEL_SV}/sdk.js",
-            "--build-id", build_id,
+            "--build-id", runner_build_id,
             # 与 config.browser / core.sentinel.py 中的指纹默认值保持一致
             "--width", str(screen_width),
             "--height", str(screen_height),
             "--cores", str(hardware_concurrency),
             "--language", navigator_language,
             "--languages", ",".join(navigator_languages),
+            "--time-zone", timezone_iana,
+            "--timezone-name", timezone_name,
+            "--timezone-offset-minutes", str(timezone_offset_minutes),
             "--js-heap-size-limit", str(js_heap_size_limit),
             "--device-memory", str(device_memory),
             "--device-pixel-ratio", str(device_pixel_ratio),

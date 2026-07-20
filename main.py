@@ -16,6 +16,7 @@ from config import REGISTER_EMAIL, REGISTER_NAME  # 这两个一般不在 WebUI 
 from config import twofa as _twofa_cfg
 from config import email as _email_cfg
 from config import roxybrowser as _roxy_cfg
+from config import openai_protocol as _protocol_cfg
 from core.session import BrowserSession
 from core.chatgpt_auth import get_providers, get_csrf_token, signin_openai
 from core.openai_auth import (
@@ -263,6 +264,15 @@ def run_registration(
         network_preflight(session)
         human_delay("navigate")
 
+        # 根据 2026-07-19 HAR 补齐匿名态 ChatGPT 首屏/模型预热链路。
+        if getattr(_protocol_cfg, "CHATGPT_ANON_BOOTSTRAP_ENABLED", True):
+            from core.chatgpt_bootstrap import anonymous_bootstrap
+            anonymous_bootstrap(
+                session,
+                strict=bool(getattr(_protocol_cfg, "CHATGPT_BOOTSTRAP_STRICT", False)),
+            )
+            human_delay("navigate")
+
         # ==================== 阶段1: ChatGPT 认证 ====================
         # 步骤1: 获取 providers
         providers = get_providers(session)
@@ -309,12 +319,16 @@ def run_registration(
 
             human_delay("otp_input")
             try:
-                # 步骤9: 获取 Sentinel Token（authorize_continue），紧贴步骤10使用。
-                sentinel_resp_9 = request_sentinel_token(session, "authorize_continue")
-                sentinel_header_9, so_header_9 = build_sentinel_header(session, sentinel_resp_9, "authorize_continue")
-                human_delay("challenge")
+                # HAR 对齐：2026-07-19 抓包中的 email-otp/validate 未携带 Sentinel。
+                # 保留开关，必要时可切回旧逻辑。
+                sentinel_header_9 = None
+                so_header_9 = None
+                if getattr(_protocol_cfg, "SEND_SENTINEL_ON_EMAIL_OTP_VALIDATE", False):
+                    sentinel_resp_9 = request_sentinel_token(session, "authorize_continue")
+                    sentinel_header_9, so_header_9 = build_sentinel_header(session, sentinel_resp_9, "authorize_continue")
+                    human_delay("challenge")
 
-                # 步骤10: 提交验证码（带 sentinel-token + so-token 头）
+                # 步骤10: 提交验证码
                 validate_result = validate_email_otp(session, current_otp, sentinel_header_9, so_header_9)
                 break
             except EmailOtpInvalidError as exc:
@@ -372,6 +386,13 @@ def run_registration(
                 email,
                 callback_referer="https://auth.openai.com/email-verification",
             )
+            if getattr(_protocol_cfg, "CHATGPT_AUTH_BOOTSTRAP_ENABLED", True):
+                from core.chatgpt_bootstrap import authenticated_bootstrap
+                authenticated_bootstrap(
+                    session,
+                    access_token,
+                    strict=bool(getattr(_protocol_cfg, "CHATGPT_BOOTSTRAP_STRICT", False)),
+                )
             human_delay("post_auth")
         else:
             # 兼容服务端只返回 continue_url=/about-you 但 page.type 为空/变化的情况。
@@ -413,6 +434,13 @@ def run_registration(
 
             # 步骤13: 拉 /api/auth/session 提取 accessToken
             session_info, access_token = _finalize_registration_session(session, continue_url, email)
+            if getattr(_protocol_cfg, "CHATGPT_AUTH_BOOTSTRAP_ENABLED", True):
+                from core.chatgpt_bootstrap import authenticated_bootstrap
+                authenticated_bootstrap(
+                    session,
+                    access_token,
+                    strict=bool(getattr(_protocol_cfg, "CHATGPT_BOOTSTRAP_STRICT", False)),
+                )
             human_delay("post_auth")
 
         # ==================== 阶段7: 设置 2FA（受 config.ENABLE_2FA 控制）====================

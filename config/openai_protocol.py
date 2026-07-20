@@ -27,4 +27,24 @@ OPENAI_REDIRECT_URI = "https://chatgpt.com/api/auth/callback/openai"
 SENTINEL_SV = "20260219f9f6"
 
 # ChatGPT 页面 build 标识（用于 Sentinel p[6] / documentElement data-build 模拟）
-OPENAI_BUILD_ID = "c/prod-4987068829830ddc3ae6683bd4e633f61b79dec9/_"
+OPENAI_BUILD_ID = "prod-fb4a8a2a751dfec391053cfd7b01c52699ccf78c"
+
+# ChatGPT 前端 CES / API 上报头，来自 2026-07-19 抓包。
+OAI_CLIENT_BUILD_NUMBER = "8370486"
+OAI_CLIENT_VERSION = OPENAI_BUILD_ID
+
+# Statsig / Analytics SDK 版本，纯协议补齐前端同形态链路时使用。
+STATSIG_CLIENT_KEY = "client-nb0qtYlZuy2tCMN5s5ncnuIBCJncjRViT0IzFm7GqST"
+STATSIG_SDK_VERSION = "3.32.6"
+STATSIG_SDK_TYPE = "javascript-client"
+AB_CLIENT_KEY = "client-tN5GMyzpIPKXd3KNv7ANIfiqjRSvNNTTWbZdbdabF58"
+AB_SDK_VERSION = "3.32.4"
+
+# HAR 中 email-otp/validate 未携带 Sentinel；默认按 HAR 对齐，保留开关便于回退。
+SEND_SENTINEL_ON_EMAIL_OTP_VALIDATE = False
+
+# 是否补齐 HAR 中 ChatGPT Web 首屏 bootstrap 预热链路。
+CHATGPT_ANON_BOOTSTRAP_ENABLED = True
+CHATGPT_AUTH_BOOTSTRAP_ENABLED = True
+# True 时预热失败会中断主流程；默认 False，仅记录日志并继续。
+CHATGPT_BOOTSTRAP_STRICT = False

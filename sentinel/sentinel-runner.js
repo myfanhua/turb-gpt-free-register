@@ -440,6 +440,31 @@ function createElementNode(tagName, ownerDocument, rect = createDomRect()) {
   return element;
 }
 
+
+function createIntlObject(options) {
+  const intlObject = Object.create(Intl);
+  const NativeDateTimeFormat = Intl.DateTimeFormat;
+  function DateTimeFormatMock(locales, formatOptions = {}) {
+    const mergedOptions = { ...(formatOptions || {}) };
+    if (options.timeZone) mergedOptions.timeZone = options.timeZone;
+    const fmt = new NativeDateTimeFormat(locales || options.languages || options.language, mergedOptions);
+    const nativeResolvedOptions = fmt.resolvedOptions.bind(fmt);
+    Object.defineProperty(fmt, "resolvedOptions", {
+      value: () => {
+        const resolved = nativeResolvedOptions();
+        if (options.timeZone) resolved.timeZone = options.timeZone;
+        if (options.language) resolved.locale = options.language;
+        return resolved;
+      },
+    });
+    return fmt;
+  }
+  DateTimeFormatMock.prototype = NativeDateTimeFormat.prototype;
+  Object.setPrototypeOf(DateTimeFormatMock, NativeDateTimeFormat);
+  intlObject.DateTimeFormat = DateTimeFormatMock;
+  return intlObject;
+}
+
 function createPerformanceObserver() {
   return class PerformanceObserverMock {
     constructor(callback) { this.callback = callback; this._observed = false; }
@@ -648,6 +673,8 @@ function createBrowserContext(options) {
     decodedBodySize: 0,
     toJSON() { return { ...this }; },
   }];
+  const browserIntl = createIntlObject(options);
+
   const browserPerformance = {
     now: () => performance.now(),
     timeOrigin: performance.timeOrigin || Date.now() - performance.now(),
@@ -669,15 +696,23 @@ function createBrowserContext(options) {
     mathObject.random = () => options.fixedRandom;
   }
   const currentScript = { src: options.scriptSrc, length: options.scriptSrc.length };
-  const appScriptSrc = `https://chatgpt.com/${options.buildId}ssg.js`;
+  const appBuildPath = options.buildId && String(options.buildId).startsWith("c/")
+    ? String(options.buildId)
+    : (options.buildId ? `c/${options.buildId}/_/` : "c/prod-fb4a8a2a751dfec391053cfd7b01c52699ccf78c/_/");
+  const appScriptSrc = `https://chatgpt.com/${appBuildPath}ssg.js`;
   const scripts = [
     currentScript,
+    { src: "https://accounts.google.com/gsi/client", length: 38 },
+    { src: "https://chatgpt.com/cdn-cgi/challenge-platform/scripts/jsd/api.js?onload=jsdOnload", length: 84 },
     { src: appScriptSrc, length: appScriptSrc.length },
     { src: "https://chatgpt.com/_next/static/chunks/webpack.js", length: 48 },
     { src: "https://js.stripe.com/v3/", length: 24 },
   ];
-  const attrs = new Map([["data-build", options.buildId]]);
+  const attrs = new Map();
+  if (options.buildId) attrs.set("data-build", options.buildId);
   const reactListeningKey = options.reactListeningKey || "_reactListening" + crypto.randomBytes(6).toString("hex");
+  const reactContainerKey = options.reactContainerKey || "__reactContainer$" + crypto.randomBytes(6).toString("hex");
+  const reactResourcesKey = options.reactResourcesKey || reactContainerKey.replace("__reactContainer$", "__reactResources$");
 
   const cookieJar = createCookieJar(options.cookie);
   const location = new URL(options.pageUrl);
@@ -704,6 +739,8 @@ function createBrowserContext(options) {
     hidden: false,
     hasFocus() { return true; },
     [reactListeningKey]: true,
+    [reactContainerKey]: true,
+    [reactResourcesKey]: true,
     defaultView: null,
     head: null,
     documentElement: {
@@ -855,7 +892,9 @@ function createBrowserContext(options) {
     getGamepads: makeNativeFunction("getGamepads", () => []),
     webkitGetUserMedia: makeNativeFunction("webkitGetUserMedia"),
   } : {
+    createAuctionNonce: makeNativeFunction("createAuctionNonce", () => crypto.randomUUID()),
     clearOriginJoinedAdInterestGroups: makeNativeFunction("clearOriginJoinedAdInterestGroups"),
+    updateAdInterestGroups: makeNativeFunction("updateAdInterestGroups"),
     canLoadAdAuctionFencedFrame: makeNativeFunction("canLoadAdAuctionFencedFrame", () => false),
     getBattery: makeNativeFunction("getBattery", () => Promise.resolve({ charging: true, chargingTime: 0, dischargingTime: Infinity, level: 1 })),
     getGamepads: makeNativeFunction("getGamepads", () => []),
@@ -881,6 +920,7 @@ function createBrowserContext(options) {
     vendor: isSafari ? "Apple Computer, Inc." : "Google Inc.",
     webdriver: false,
     bluetooth: { toString: () => "[object Bluetooth]" },
+    ...(isSafari ? {} : { gpu: { toString: () => "[object GPU]" } }),
     connection: createNetworkInformation(),
     permissions: { query: async () => ({ state: "prompt", onchange: null }) },
     geolocation: {
@@ -894,6 +934,7 @@ function createBrowserContext(options) {
     },
     storage: { estimate: async () => ({ quota: 10737418240, usage: 0 }) },
     ...(isSafari ? {} : {
+      login: { toString: () => "[object NavigatorLogin]" },
       userAgentData: {
         mobile: false,
         platform: options.secChUaPlatform || "macOS",
@@ -962,6 +1003,14 @@ function createBrowserContext(options) {
     navigator,
     screen: options.screen,
     location,
+    locationbar: { visible: true },
+    menubar: { visible: true },
+    personalbar: { visible: true },
+    scrollbars: { visible: true },
+    statusbar: { visible: true },
+    toolbar: { visible: true },
+    scrollX: 0,
+    scrollY: 0,
     localStorage,
     sessionStorage,
     history,
@@ -982,13 +1031,14 @@ function createBrowserContext(options) {
     clearTimeout: managedClearTimeout,
     setInterval: managedSetTimeout,
     clearInterval: managedClearTimeout,
+    queueMicrotask: queueMicrotask.bind(globalThis),
     btoa: btoaBinary,
     atob: atobBinary,
     fetch,
     console,
     Math: mathObject,
     Date,
-    Intl,
+    Intl: browserIntl,
     AudioContext: createAudioContext(),
     webkitAudioContext: createAudioContext(),
     JSON,
@@ -1026,6 +1076,7 @@ function createBrowserContext(options) {
     },
     __privateStripeFrame8094: {},
     onpageswap: null,
+    ondevicemotion: null,
     onpagehide: null,
     onpageshow: null,
     onvisibilitychange: null,
@@ -1072,13 +1123,14 @@ function createBrowserContext(options) {
       clearTimeout: managedClearTimeout,
       setInterval: managedSetTimeout,
       clearInterval: managedClearTimeout,
+      queueMicrotask: queueMicrotask.bind(globalThis),
       btoa: btoaBinary,
       atob: atobBinary,
       fetch,
       console,
       Math: mathObject,
       Date,
-      Intl,
+      Intl: browserIntl,
       AudioContext: window.AudioContext,
       webkitAudioContext: window.webkitAudioContext,
       JSON,
@@ -1179,10 +1231,12 @@ async function main(argv = process.argv.slice(2), writeOutput = true) {
         args["script-src"],
         cfg("scriptSrc", "script_src"),
         process.env.SENTINEL_SCRIPT_SRC,
-      "https://chatgpt.com/sentinel/20260423af3c/sdk.js",
+      "https://sentinel.openai.com/sentinel/20260219f9f6/sdk.js",
       ),
-    buildId: pick(args["build-id"], cfg("buildId", "build_id"), process.env.SENTINEL_BUILD_ID, "prod-4987068829830ddc3ae6683bd4e633f61b79dec9"),
+    buildId: pick(args["build-id"], cfg("buildId", "build_id"), process.env.SENTINEL_BUILD_ID, ""),
     reactListeningKey: pick(args["react-listening-key"], cfg("reactListeningKey", "react_listening_key"), process.env.SENTINEL_REACT_LISTENING_KEY, ""),
+    reactContainerKey: pick(args["react-container-key"], cfg("reactContainerKey", "react_container_key"), process.env.SENTINEL_REACT_CONTAINER_KEY, ""),
+    reactResourcesKey: pick(args["react-resources-key"], cfg("reactResourcesKey", "react_resources_key"), process.env.SENTINEL_REACT_RESOURCES_KEY, ""),
     cookie: noCookie
       ? `oai-did=${deviceId}`
       : cookieArg ||
@@ -1193,24 +1247,27 @@ async function main(argv = process.argv.slice(2), writeOutput = true) {
         args["user-agent"],
         cfg("userAgent", "user_agent"),
         process.env.SENTINEL_USER_AGENT,
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
       ),
     contentType,
-    browserFamily: pick(args["browser-family"], cfg("browserFamily", "browser_family"), process.env.SENTINEL_BROWSER_FAMILY, "safari"),
+    browserFamily: pick(args["browser-family"], cfg("browserFamily", "browser_family"), process.env.SENTINEL_BROWSER_FAMILY, "chrome"),
     requestIdleCallback: truthy(pick(args["request-idle-callback"], cfg("requestIdleCallback", "request_idle_callback"), process.env.SENTINEL_REQUEST_IDLE_CALLBACK, "0")),
-    language: pick(args.language, cfg("language"), process.env.SENTINEL_LANGUAGE, "zh-CN"),
-    languages: normalizeList(pick(args.languages, cfg("languages")), process.env.SENTINEL_LANGUAGES || "zh-CN,zh,en-US,en"),
-    hardwareConcurrency: Number(pick(args.cores, cfg("cores", "hardwareConcurrency"), process.env.SENTINEL_CORES, 10)),
-    jsHeapSizeLimit: Number(pick(args["js-heap-size-limit"], cfg("jsHeapSizeLimit", "js_heap_size_limit"), process.env.SENTINEL_JS_HEAP_SIZE_LIMIT, 4294967296)),
+    language: pick(args.language, cfg("language"), process.env.SENTINEL_LANGUAGE, "ja-JP"),
+    languages: normalizeList(pick(args.languages, cfg("languages")), process.env.SENTINEL_LANGUAGES || "ja-JP"),
+    timeZone: pick(args["time-zone"], args.timezone, cfg("timeZone", "time_zone", "timezone"), process.env.SENTINEL_TIME_ZONE, "Asia/Tokyo"),
+    timezoneName: pick(args["timezone-name"], cfg("timezoneName", "timezone_name"), process.env.SENTINEL_TIMEZONE_NAME, "Japan Standard Time"),
+    timezoneOffsetMinutes: Number(pick(args["timezone-offset-minutes"], cfg("timezoneOffsetMinutes", "timezone_offset_minutes"), process.env.SENTINEL_TIMEZONE_OFFSET_MINUTES, 540)),
+    hardwareConcurrency: Number(pick(args.cores, cfg("cores", "hardwareConcurrency"), process.env.SENTINEL_CORES, 6)),
+    jsHeapSizeLimit: Number(pick(args["js-heap-size-limit"], cfg("jsHeapSizeLimit", "js_heap_size_limit"), process.env.SENTINEL_JS_HEAP_SIZE_LIMIT, 4395630592)),
     fixedRandom:
       pick(args.random, cfg("random", "fixedRandom"), process.env.SENTINEL_FIXED_RANDOM)
         ? Number(pick(args.random, cfg("random", "fixedRandom"), process.env.SENTINEL_FIXED_RANDOM))
         : Number.NaN,
     deviceMemory: Number(pick(args["device-memory"], cfg("deviceMemory", "device_memory"), process.env.SENTINEL_DEVICE_MEMORY, 8)),
     devicePixelRatio: Number(pick(args["device-pixel-ratio"], cfg("devicePixelRatio", "device_pixel_ratio"), process.env.SENTINEL_DEVICE_PIXEL_RATIO, 2)),
-    chromeMajor: pick(args["chrome-major"], cfg("chromeMajor", "chrome_major"), process.env.SENTINEL_CHROME_MAJOR, ""),
-    chromeFullVersion: pick(args["chrome-full-version"], cfg("chromeFullVersion", "chrome_full_version"), process.env.SENTINEL_CHROME_FULL_VERSION, ""),
-    secChUa: pick(args["sec-ch-ua"], cfg("secChUa", "sec_ch_ua"), process.env.SENTINEL_SEC_CH_UA, ""),
+    chromeMajor: pick(args["chrome-major"], cfg("chromeMajor", "chrome_major"), process.env.SENTINEL_CHROME_MAJOR, "149"),
+    chromeFullVersion: pick(args["chrome-full-version"], cfg("chromeFullVersion", "chrome_full_version"), process.env.SENTINEL_CHROME_FULL_VERSION, "149.0.0.0"),
+    secChUa: pick(args["sec-ch-ua"], cfg("secChUa", "sec_ch_ua"), process.env.SENTINEL_SEC_CH_UA, '"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"'),
     secChUaPlatform: String(pick(args["sec-ch-ua-platform"], cfg("secChUaPlatform", "sec_ch_ua_platform"), process.env.SENTINEL_SEC_CH_UA_PLATFORM, "macOS")).replace(/^"|"$/g, ""),
     secChUaFullVersionList: pick(args["sec-ch-ua-full-version-list"], cfg("secChUaFullVersionList", "sec_ch_ua_full_version_list"), process.env.SENTINEL_SEC_CH_UA_FULL_VERSION_LIST, ""),
     secChUaPlatformVersion: String(pick(args["sec-ch-ua-platform-version"], cfg("secChUaPlatformVersion", "sec_ch_ua_platform_version"), process.env.SENTINEL_SEC_CH_UA_PLATFORM_VERSION, "15.5.0")).replace(/^"|"$/g, ""),
@@ -1218,8 +1275,8 @@ async function main(argv = process.argv.slice(2), writeOutput = true) {
     secChUaBitness: String(pick(args["sec-ch-ua-bitness"], cfg("secChUaBitness", "sec_ch_ua_bitness"), process.env.SENTINEL_SEC_CH_UA_BITNESS, "64")).replace(/^"|"$/g, ""),
     secChUaModel: String(pick(args["sec-ch-ua-model"], cfg("secChUaModel", "sec_ch_ua_model"), process.env.SENTINEL_SEC_CH_UA_MODEL, "")).replace(/^"|"$/g, ""),
     screen: (() => {
-      const width = Number(pick(args.width, cfg("width", "screenWidth"), process.env.SENTINEL_SCREEN_WIDTH, 1728));
-      const height = Number(pick(args.height, cfg("height", "screenHeight"), process.env.SENTINEL_SCREEN_HEIGHT, 1117));
+      const width = Number(pick(args.width, cfg("width", "screenWidth"), process.env.SENTINEL_SCREEN_WIDTH, 1680));
+      const height = Number(pick(args.height, cfg("height", "screenHeight"), process.env.SENTINEL_SCREEN_HEIGHT, 1050));
       return {
         width,
         height,
@@ -1263,6 +1320,10 @@ async function main(argv = process.argv.slice(2), writeOutput = true) {
       };
     },
   };
+
+  if (options.timeZone) {
+    process.env.TZ = options.timeZone;
+  }
 
   const { context, clearTimers } = createBrowserContext(options);
   let sdkCode = fs.readFileSync(sdkPath, "utf8");
