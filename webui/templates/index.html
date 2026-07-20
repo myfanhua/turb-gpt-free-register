@@ -1380,43 +1380,38 @@ async function downloadSelectedCpa() {
   btn.disabled = true;
   btn.textContent = '下载中…';
   try {
-    const resp = await fetch('/api/accounts/download-cpa-bulk', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({account_ids: ids}),
-    });
-    if (!resp.ok) {
-      const text = await resp.text();
-      let msg = text || resp.statusText;
-      try {
-        const j = JSON.parse(text);
-        msg = j.error || msg;
-        if (Array.isArray(j.errors) && j.errors.length) msg += `；失败 ${j.errors.length} 个`;
-      } catch(e) {}
-      throw new Error(msg);
+    // 用原生表单 POST 触发 attachment 下载，避免 fetch -> blob/objectURL 被浏览器标记为“不安全下载”。
+    // 返回的是同源 HTTP 响应，浏览器会按普通文件下载处理。
+    const frameName = 'accountsCpaDownloadFrame';
+    let iframe = document.querySelector(`iframe[name="${frameName}"]`);
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.name = frameName;
+      iframe.style.display = 'none';
+      document.body.appendChild(iframe);
     }
-    const rawBlob = await resp.blob();
-    const blob = new Blob([rawBlob], {type: 'application/zip'});
-    const cd = resp.headers.get('Content-Disposition') || '';
-    let filename = 'accounts-cpa-bulk.zip';
-    const m = cd.match(/filename\*=UTF-8''([^;]+)|filename="([^"]+)"|filename=([^;]+)/i);
-    if (m) filename = decodeURIComponent(m[1] || m[2] || m[3] || filename).replace(/^["']|["']$/g, '');
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    // 不要立刻 remove/revoke：Chrome 对 blob URL 下载仍在异步接管时过早释放，
-    // 可能出现文件已落盘但下载任务一直显示“未确认/进行中”。
-    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 60000);
-    showToast(`已生成下载：${filename}`);
-    loadCodex();
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = '/api/accounts/download-cpa-bulk';
+    form.target = frameName;
+    form.style.display = 'none';
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'account_ids';
+    input.value = JSON.stringify(ids);
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+    setTimeout(() => form.remove(), 30000);
+    showToast('已提交下载，浏览器会直接保存 ZIP');
+    setTimeout(loadCodex, 1200);
   } catch(err) {
     showToast('下载 CPA 失败: ' + err.message);
   } finally {
-    btn.textContent = old;
-    updateAccountSelectionUi();
+    setTimeout(() => {
+      btn.textContent = old;
+      updateAccountSelectionUi();
+    }, 1200);
   }
 }
 

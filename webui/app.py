@@ -304,7 +304,14 @@ def create_app(auth_code: str | None = None) -> Flask:
         from core.codex_oauth import download_cpa_codex_auth_text, list_cpa_codex_auth_files
 
         data = request.get_json(silent=True) or {}
-        ids = data.get("account_ids") or data.get("ids") or []
+        if not data and request.form:
+            ids_text = (request.form.get("account_ids") or request.form.get("ids") or "").strip()
+            try:
+                ids = _json.loads(ids_text) if ids_text else []
+            except Exception:
+                ids = [x.strip() for x in ids_text.split(",") if x.strip()]
+        else:
+            ids = data.get("account_ids") or data.get("ids") or []
         if not isinstance(ids, list) or not ids:
             return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
         if len(ids) > 1000:
