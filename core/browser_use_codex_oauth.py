@@ -20,7 +20,6 @@ from core.browser_use_registration import (
     _maybe_accept_cookies,
     _type_otp,
     _clear_otp_inputs,
-    _click_resend_otp,
     _wait_after_otp,
 )
 from core.humanize import delay as human_delay
@@ -642,6 +641,25 @@ def _fill_email_and_otp(page, email: str, otp_provider, auth_url: str, dead_trac
         raise RuntimeError(f"Codex BrowserUse 授权页未出现邮箱输入框：{str(exc)[:220]}") from exc
 
     used_codes: set[str] = set()
+
+    def _restart_email_otp_flow(reason: str) -> None:
+        """Codex Auth 上直接点 resend 可能触发服务端 500；改为重开授权地址并重新提交邮箱。"""
+        nonlocal otp_after_ts
+        logger.info("[Codex][BrowserUse] 重新触发邮箱 OTP：%s", reason)
+        otp_after_ts = time.time()
+        try:
+            page.goto(auth_url, wait_until="domcontentloaded", timeout=_timeout_ms(getattr(_cfg, "BROWSER_USE_NAVIGATION_TIMEOUT", 90)))
+            _bu_delay("navigate")
+            _maybe_accept_cookies(page)
+            if _looks_email_otp_page(page) or _looks_next_step_after_login(page):
+                logger.info("[Codex][BrowserUse] 重开授权后已在 OTP/下一步页面：%s", _current_state_for_log(page))
+                return
+            _fill_email_for_codex(page, email)
+            logger.info("[Codex][BrowserUse] 已重新提交邮箱触发 OTP")
+        except Exception as exc:
+            logger.warning("[Codex][BrowserUse] 重新提交邮箱失败，继续按当前页面轮询：%s", str(exc)[:180])
+        _bu_delay("api")
+
     for attempt in range(1, 4):
         wait_end = time.time() + 35
         while time.time() < wait_end and not _looks_email_otp_page(page):
@@ -663,10 +681,7 @@ def _fill_email_and_otp(page, email: str, otp_provider, auth_url: str, dead_trac
                 type(exc).__name__,
                 str(exc)[:180],
             )
-            otp_after_ts = time.time()
-            resent = _click_resend_otp(page)
-            logger.info("[Codex][BrowserUse] 重发按钮点击结果：%s", "ok" if resent else "not_found")
-            _bu_delay("api")
+            _restart_email_otp_flow("等待验证码超时，避免点击 resend 导致 500")
             continue
         used_codes.add(str(code))
         logger.info("[Codex][BrowserUse] 邮箱 OTP 收到：%s", code)
@@ -699,9 +714,7 @@ def _fill_email_and_otp(page, email: str, otp_provider, auth_url: str, dead_trac
             return
         if attempt >= 3:
             raise RuntimeError("Codex 邮箱验证码连续错误/过期")
-        otp_after_ts = time.time()
-        _click_resend_otp(page)
-        _bu_delay("api")
+        _restart_email_otp_flow("验证码错误/过期或页面未跳转，避免点击 resend 导致 500")
 
 
 def _select_sms_channel(page) -> None:

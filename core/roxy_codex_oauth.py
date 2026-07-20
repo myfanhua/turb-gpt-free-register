@@ -27,8 +27,8 @@ from core.roxy_registration import (
     _click_email_entry_option,
     _type_otp,
     _clear_otp_inputs,
-    _click_resend_email_otp,
     _email_otp_page_state,
+    _is_email_verification_page,
 )
 
 _base_logger = logging.getLogger(__name__)
@@ -199,6 +199,28 @@ def _fill_email_and_otp(driver, email: str, otp_provider, auth_url: str) -> None
 
     used_codes: set[str] = set()
     max_otp_attempts = 3
+
+    def _restart_email_otp_flow(reason: str) -> None:
+        """Codex Auth 上直接点 resend 可能触发服务端 500；这里改为重新打开授权地址并提交邮箱。"""
+        nonlocal otp_after_ts
+        logger.info("[Codex][Browser] 重新触发邮箱 OTP：%s", reason)
+        otp_after_ts = time.time()
+        driver.get(auth_url)
+        human_delay("navigate")
+        _maybe_accept(driver)
+        try:
+            _type_email_address(driver, email, timeout=12)
+            human_delay("form")
+            _submit_email_step(driver)
+            logger.info("[Codex][Browser] 已重新提交邮箱触发 OTP")
+        except Exception as exc:
+            # 如果重进授权地址后已经停在验证码/下一步页面，就不要再强行提交。
+            if not _is_email_verification_page(driver):
+                logger.warning("[Codex][Browser] 重新提交邮箱失败，继续按当前页面轮询：%s", str(exc)[:180])
+            else:
+                logger.info("[Codex][Browser] 重开授权后已在邮箱 OTP 页面")
+        human_delay("api")
+
     for otp_attempt in range(1, max_otp_attempts + 1):
         logger.info("[Codex][Browser] 等待邮箱 OTP：%s（第 %s/%s 次）", email, otp_attempt, max_otp_attempts)
         try:
@@ -219,12 +241,7 @@ def _fill_email_and_otp(driver, email: str, otp_provider, auth_url: str) -> None
                 type(exc).__name__,
                 str(exc)[:180],
             )
-            otp_after_ts = time.time()
-            try:
-                _click_resend_email_otp(driver, timeout=25)
-            except Exception as resend_exc:
-                logger.warning("[Codex][Browser] 点击重新发送邮箱验证码失败，仍将继续轮询最新验证码：%s", str(resend_exc)[:200])
-            human_delay("api")
+            _restart_email_otp_flow("等待验证码超时，避免点击 resend 导致 500")
             continue
         used_codes.add(str(code))
         logger.info("[Codex][Browser] 邮箱 OTP 收到：%s", code)
@@ -261,12 +278,7 @@ def _fill_email_and_otp(driver, email: str, otp_provider, auth_url: str) -> None
             otp_attempt + 1,
             max_otp_attempts,
         )
-        otp_after_ts = time.time()
-        try:
-            _click_resend_email_otp(driver, timeout=25)
-        except Exception as exc:
-            logger.warning("[Codex][Browser] 点击重新发送邮箱验证码失败，仍将继续轮询最新验证码：%s", str(exc)[:200])
-        human_delay("api")
+        _restart_email_otp_flow("验证码错误/过期或页面未跳转，避免点击 resend 导致 500")
 
 
 
