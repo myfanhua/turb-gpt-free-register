@@ -2,7 +2,7 @@
 """Plus 试用提链服务配置。"""
 from config.env_loader import apply_env_overrides
 
-# 提链服务地址，文档默认 https://ple.bzb.qzz.io
+# 提链服务地址
 EXTRACT_LINK_API_BASE: str = ""
 
 # 提链 CDK；创建任务和监听事件都需要。

@@ -472,7 +472,7 @@ EDITABLE_FIELDS = [
     # ---- 提链 ----
     {
         "key": "EXTRACT_LINK_API_BASE", "file": "extract_link.py", "type": "str", "group": "提链",
-        "label": "提链服务地址", "help": "默认 https://ple.bzb.qzz.io；公网部署时填你的服务域名",
+        "label": "提链服务地址", "help": "填写提链服务 API 地址",
     },
     {
         "key": "EXTRACT_LINK_CDK", "file": "extract_link.py", "type": "str", "group": "提链",
