@@ -3,93 +3,362 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>授权码登录</title>
+  <title>GPT Registrator · 授权码登录</title>
   <style>
     * { box-sizing: border-box; }
+
     body {
       margin: 0;
       min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f4f6fb;
+      color: #1e293b;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      overflow: hidden;
+    }
+
+    .bg {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .bg-circle {
+      position: absolute;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(59, 102, 245, 0.12) 0%, rgba(59, 102, 245, 0) 70%);
+    }
+
+    .bg-circle--tl {
+      width: 420px;
+      height: 420px;
+      top: -120px;
+      right: -80px;
+    }
+
+    .bg-circle--br {
+      width: 360px;
+      height: 360px;
+      bottom: -100px;
+      right: -60px;
+      left: auto;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.1) 0%, rgba(99, 102, 241, 0) 70%);
+    }
+
+    .bg-quarter-bl {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: min(420px, 55vw);
+      height: min(420px, 55vw);
+      border-radius: 0 100% 0 0;
+      background: #e8ecf3;
+    }
+
+    .bg-dots {
+      position: absolute;
+      display: grid;
+      grid-template-columns: repeat(6, 10px);
+      grid-template-rows: repeat(4, 10px);
+      gap: 10px;
+      place-items: center;
+    }
+
+    .bg-dots span {
+      display: block;
+      border-radius: 50%;
+      background: #94a3b8;
+    }
+
+    .bg-dots--tl { top: 48px; left: 56px; }
+    .bg-dots--br { bottom: 56px; right: 64px; }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      width: min(440px, calc(100vw - 40px));
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 28px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 40px;
+      height: 44px;
+      flex-shrink: 0;
+    }
+
+    .brand-title {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+      color: #0f172a;
+    }
+
+    .card {
+      width: 100%;
+      padding: 36px 32px 32px;
+      border-radius: 16px;
+      background: #fff;
+      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.08), 0 1px 3px rgba(15, 23, 42, 0.04);
+    }
+
+    .card h1 {
+      margin: 0;
+      text-align: center;
+      font-size: 24px;
+      font-weight: 800;
+      color: #0f172a;
+      letter-spacing: -0.02em;
+    }
+
+    .desc {
+      margin: 10px 0 0;
+      text-align: center;
+      color: #64748b;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .err {
+      margin: 18px 0 0;
+      padding: 10px 14px;
+      border: 1px solid #fecaca;
+      border-radius: 10px;
+      background: #fef2f2;
+      color: #dc2626;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    .field {
+      margin-top: 24px;
+    }
+
+    .input-wrap {
+      position: relative;
+    }
+
+    .input-icon {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 18px;
+      height: 18px;
+      color: #94a3b8;
+      pointer-events: none;
+    }
+
+    .toggle-password {
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 36px;
+      height: 36px;
       display: grid;
       place-items: center;
-      background: #eef3f8;
-      color: #172033;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    }
-    .card {
-      width: min(420px, calc(100vw - 32px));
-      padding: 24px;
-      border: 1px solid #d9e2ec;
-      border-radius: 12px;
-      background: #fff;
-      box-shadow: 0 18px 50px rgba(15, 23, 42, .14);
-    }
-    h1 { margin: 0 0 8px; font-size: 22px; }
-    .desc { margin: 0 0 14px; color: #667085; font-size: 13px; line-height: 1.45; }
-    input {
-      width: 100%;
-      min-height: 42px;
-      border: 1px solid #d9e2ec;
+      border: 0;
       border-radius: 8px;
-      padding: 9px 12px;
-      font: inherit;
+      background: transparent;
+      color: #94a3b8;
+      cursor: pointer;
+      padding: 0;
     }
+
+    .toggle-password:hover {
+      color: #64748b;
+      background: #f1f5f9;
+    }
+
+    .toggle-password svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    .toggle-password .icon-hide { display: none; }
+    .toggle-password.is-visible .icon-show { display: none; }
+    .toggle-password.is-visible .icon-hide { display: block; }
+
+    .input-wrap input {
+      width: 100%;
+      min-height: 48px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 0 44px 0 42px;
+      font: inherit;
+      font-size: 14px;
+      color: #0f172a;
+      background: #fff;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .input-wrap input::placeholder {
+      color: #94a3b8;
+    }
+
+    .input-wrap input:focus {
+      outline: none;
+      border-color: #3b66f5;
+      box-shadow: 0 0 0 3px rgba(59, 102, 245, 0.12);
+    }
+
     .remember {
       display: flex;
       align-items: center;
       gap: 8px;
-      margin-top: 12px;
-      color: #667085;
+      margin-top: 14px;
+      color: #64748b;
       font-size: 13px;
       user-select: none;
-    }
-    .remember input {
-      width: auto;
-      min-height: auto;
-      margin: 0;
-      padding: 0;
-    }
-    button {
-      width: 100%;
-      min-height: 42px;
-      margin-top: 14px;
-      border: 0;
-      border-radius: 8px;
-      background: #2563eb;
-      color: #fff;
-      font-weight: 800;
       cursor: pointer;
     }
-    .err {
-      margin: 0 0 12px;
-      padding: 9px 12px;
-      border: 1px solid #f3b4af;
-      border-radius: 8px;
-      background: #fff0ef;
-      color: #b3261e;
-      font-size: 13px;
+
+    .remember input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      accent-color: #3b66f5;
+      cursor: pointer;
+    }
+
+    .submit {
+      width: 100%;
+      min-height: 48px;
+      margin-top: 20px;
+      border: 0;
+      border-radius: 10px;
+      background: #3b66f5;
+      color: #fff;
+      font: inherit;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    .submit:hover {
+      background: #2f55d4;
+    }
+
+    .submit:active {
+      transform: scale(0.99);
     }
   </style>
 </head>
 <body>
-  <form class="card" method="post" action="{{ login_url }}">
-    <h1>授权码登录</h1>
-    <p class="desc">请输入启动命令或配置文件中设置的授权码。</p>
-    {% if error %}<div class="err">{{ error }}</div>{% endif %}
-    <input id="authCodeInput" name="auth_code" type="password" autocomplete="current-password" autofocus placeholder="授权码">
-    <label class="remember"><input id="rememberAuthCode" name="remember" type="checkbox" value="1">记住授权码</label>
-    <input name="next" type="hidden" value="{{ next_url }}">
-    <button type="submit">登录</button>
-  </form>
+  <div class="bg" aria-hidden="true">
+    <div class="bg-quarter-bl"></div>
+    <div class="bg-circle bg-circle--tl"></div>
+    <div class="bg-circle bg-circle--br"></div>
+    <div class="bg-dots bg-dots--tl" data-rows="4" data-cols="6"></div>
+    <div class="bg-dots bg-dots--br" data-rows="4" data-cols="6"></div>
+  </div>
+
+  <div class="page">
+    <div class="brand">
+      <svg class="brand-icon" viewBox="0 0 44 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="logoGrad" x1="10" y1="4" x2="34" y2="44" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#3b66f5"/>
+            <stop offset="1" stop-color="#7c3aed"/>
+          </linearGradient>
+        </defs>
+        <path d="M22 3L38.928 12.75V35.25L22 45L5.072 35.25V12.75L22 3Z" fill="url(#logoGrad)"/>
+        <path d="M22 13L30.928 18.25V29.75L22 35L13.072 29.75V18.25L22 13Z" fill="white" fill-opacity="0.92"/>
+      </svg>
+      <span class="brand-title">GPT Registrator</span>
+    </div>
+
+    <form class="card" method="post" action="{{ login_url }}">
+      <h1>授权码登录</h1>
+      <p class="desc">请输入启动命令或配置文件中设置的授权码</p>
+      {% if error %}<div class="err">{{ error }}</div>{% endif %}
+
+      <div class="field">
+        <div class="input-wrap">
+          <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+          </svg>
+          <input id="authCodeInput" name="auth_code" type="password" autocomplete="current-password" autofocus placeholder="请输入授权码">
+          <button class="toggle-password" id="togglePassword" type="button" aria-label="显示授权码" title="显示/隐藏">
+            <svg class="icon-show" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <svg class="icon-hide" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+              <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+              <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>
+              <line x1="1" y1="1" x2="23" y2="23"/>
+            </svg>
+          </button>
+        </div>
+        <label class="remember">
+          <input id="rememberAuthCode" name="remember" type="checkbox" value="1">
+          记住授权码
+        </label>
+      </div>
+
+      <input name="next" type="hidden" value="{{ next_url }}">
+      <button class="submit" type="submit">登录</button>
+    </form>
+  </div>
+
   <script>
     (() => {
       const key = 'webui_auth_code';
       const input = document.getElementById('authCodeInput');
       const remember = document.getElementById('rememberAuthCode');
+      const toggle = document.getElementById('togglePassword');
       const saved = localStorage.getItem(key) || '';
       if (saved) { input.value = saved; remember.checked = true; }
       document.querySelector('form').addEventListener('submit', () => {
         if (remember.checked) localStorage.setItem(key, input.value || '');
         else localStorage.removeItem(key);
+      });
+      toggle.addEventListener('click', () => {
+        const show = input.type === 'password';
+        input.type = show ? 'text' : 'password';
+        toggle.classList.toggle('is-visible', show);
+        toggle.setAttribute('aria-label', show ? '隐藏授权码' : '显示授权码');
+      });
+
+      document.querySelectorAll('.bg-dots').forEach((grid) => {
+        const rows = Number(grid.dataset.rows || 4);
+        const cols = Number(grid.dataset.cols || 6);
+        const rowMid = (rows - 1) / 2;
+        const colMid = (cols - 1) / 2;
+        let maxDist = 0;
+        const cells = [];
+        for (let r = 0; r < rows; r += 1) {
+          for (let c = 0; c < cols; c += 1) {
+            const dist = Math.hypot(r - rowMid, c - colMid);
+            maxDist = Math.max(maxDist, dist);
+            cells.push({ dist });
+          }
+        }
+        cells.forEach(({ dist }) => {
+          const t = dist / maxDist;
+          const size = 7.5 - t * 3.5;
+          const opacity = 0.55 - t * 0.3;
+          const dot = document.createElement('span');
+          dot.style.width = `${size}px`;
+          dot.style.height = `${size}px`;
+          dot.style.opacity = String(opacity);
+          grid.appendChild(dot);
+        });
       });
     })();
   </script>
