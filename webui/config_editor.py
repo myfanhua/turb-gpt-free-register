@@ -39,8 +39,8 @@ EDITABLE_FIELDS = [
     {"key": "PROTOCOL_CONVERSATION_ENABLE", "file": "conversation_pool.py", "type": "bool", "group": "会话池", "label": "真实对话发送", "help": "总开关：开启后绑定才会真正向 ChatGPT 网页端发消息（五轮对话）；关闭时只排队不发送"},
     {"key": "CONVERSATION_POOL_TIMEOUT", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "单条消息超时秒数", "help": "每条消息等待 SSE 完成的硬上限"},
     {"key": "CONVERSATION_POOL_DEFAULT_TEMPLATE", "file": "conversation_pool.py", "type": "str", "group": "会话池", "label": "注册后默认模板 ID", "help": "注册成功后自动绑定并开跑的模板 ID；留空则不自动绑定"},
-    {"key": "CONVERSATION_POOL_MESSAGE_DELAY_MIN", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "消息间隔下限(秒)", "help": "两条消息之间的随机等待下限；拟人化节奏可显著降低风控"},
-    {"key": "CONVERSATION_POOL_MESSAGE_DELAY_MAX", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "消息间隔上限(秒)", "help": "两条消息之间的随机等待上限；建议 15-40"},
+    {"key": "CONVERSATION_POOL_MESSAGE_DELAY_MIN", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "消息间隔下限(秒)", "help": "两条消息之间的随机等待下限；生产路径硬保证 >=30 秒（对齐 chatgpt2api 节奏，显著降低风控）"},
+    {"key": "CONVERSATION_POOL_MESSAGE_DELAY_MAX", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "消息间隔上限(秒)", "help": "两条消息之间的随机等待上限；建议 45-90"},
     {"key": "CONVERSATION_POOL_START_DELAY_MIN", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "注册后启动延迟下限(秒)", "help": "注册成功后自动开跑前的随机等待下限；避免注册完立刻连发消息的机器特征"},
     {"key": "CONVERSATION_POOL_START_DELAY_MAX", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "注册后启动延迟上限(秒)", "help": "建议 120-600；调低更快但风控更高"},
     # ---- WebUI 授权 ----

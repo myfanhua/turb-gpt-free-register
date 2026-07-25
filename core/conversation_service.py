@@ -74,9 +74,14 @@ def run_binding_async(account_id: int, template_id: str, *, retry: bool = False,
                     wait = _rng_delay(cfg.CONVERSATION_POOL_MANUAL_START_DELAY_MIN, cfg.CONVERSATION_POOL_MANUAL_START_DELAY_MAX)
             if wait > 0:
                 time.sleep(wait)
-            delay_fn = message_delay if message_delay is not None else (
-                lambda: _rng_delay(cfg.CONVERSATION_POOL_MESSAGE_DELAY_MIN, cfg.CONVERSATION_POOL_MESSAGE_DELAY_MAX)
-            )
+            if message_delay is not None:
+                delay_fn = message_delay
+            else:
+                # 生产路径硬下限 30 秒（对齐 chatgpt2api 实测节奏）：即使配置调低也不突破；
+                # 测试显式传 message_delay=lambda: 0 可关闭等待。
+                lo = max(int(getattr(cfg, "CONVERSATION_POOL_MESSAGE_DELAY_MIN", 0) or 0), 30)
+                hi = max(int(getattr(cfg, "CONVERSATION_POOL_MESSAGE_DELAY_MAX", 0) or 0), lo)
+                delay_fn = lambda: _rng_delay(lo, hi)
             conversation_runner.run_binding(
                 int(account_id),
                 str(template_id),

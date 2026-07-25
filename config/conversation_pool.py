@@ -8,9 +8,10 @@ PROTOCOL_CONVERSATION_ENABLE = False  # 仅 HAR 契约验证后才允许真实�
 
 # ---- 风控抑制（拟人化节奏）----
 # 两条消息之间的随机等待秒数区间：模拟真人读完回答再发问。
-# 调低会更快但更像机器人；0/0 表示不等待（仅建议测试用）。
-CONVERSATION_POOL_MESSAGE_DELAY_MIN = 8
-CONVERSATION_POOL_MESSAGE_DELAY_MAX = 25
+# 对齐 chatgpt2api 实测节奏：生产路径硬性保证 >=30 秒（service 层兜底钳制），
+# 调低会更快但更像机器人；测试可显式传 message_delay=lambda: 0 关闭等待。
+CONVERSATION_POOL_MESSAGE_DELAY_MIN = 32
+CONVERSATION_POOL_MESSAGE_DELAY_MAX = 45
 # 注册成功后、自动开跑前的随机等待秒数区间：避免"注册完立刻连发 5 条"的机器特征。
 CONVERSATION_POOL_START_DELAY_MIN = 45
 CONVERSATION_POOL_START_DELAY_MAX = 180
