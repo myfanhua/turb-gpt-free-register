@@ -16,7 +16,7 @@ class Tests(unittest.TestCase):
   self.t=tempfile.TemporaryDirectory();self.p=Path(self.t.name)/'pool.json';self.x=patch.object(m,'_PATH',self.p);self.x.start();m.put_template('t','Name',['a','b'])
  def tearDown(self):self.x.stop();self.t.cleanup()
  def test_template_safe_list_and_crud(self):
-  self.assertEqual(m.list_templates()[0]['message_count'],2);self.assertNotIn('messages',m.list_templates()[0]);self.assertEqual(m.get_template('t')['name'],'Name');m.delete_template('t');self.assertIsNone(m.get_template('t'))
+  t=[x for x in m.list_templates() if x['id']=='t'];self.assertEqual(t[0]['message_count'],2);self.assertNotIn('messages',t[0]);self.assertEqual(m.get_template('t')['name'],'Name');m.delete_template('t');self.assertIsNone(m.get_template('t'))
  def test_bind_claim_and_completed_idempotence(self):
   b=m.bind(1,'t');self.assertEqual(b['status'],'queued');self.assertIsNotNone(m.claim(1,'t'));self.assertIsNone(m.claim(1,'t'));m.checkpoint(1,'t',status='completed');self.assertIsNone(m.claim(1,'t'))
  def test_runner_checkpoint_and_resume(self):
