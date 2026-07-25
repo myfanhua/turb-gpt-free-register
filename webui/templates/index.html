@@ -488,6 +488,14 @@
     .pill { letter-spacing: .2px; box-shadow: inset 0 0 0 1px rgba(16,24,40,.04); }
     .log { border-radius: 10px; background: #0b1226; }
     #toast { border-radius: 10px; background: rgba(10,17,40,.96); backdrop-filter: blur(6px); }
+    #toast.toast-ok { border-left: 4px solid #22c55e; }
+    #toast.toast-err { border-left: 4px solid #ef4444; }
+    .stat-click { cursor: pointer; transition: transform .12s ease, box-shadow .12s ease; }
+    .stat-click:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(15,23,42,.14); }
+    .stat-active { outline: 2px solid #4f7cff; outline-offset: 2px; }
+    .drawer-actions-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+    .drawer-actions-grid button { width: 100%; }
+    @media (max-width: 650px) { .drawer-actions-grid { grid-template-columns: 1fr; } }
     .account-drawer:not(.hidden) { border-radius: 14px 0 0 14px; }
     .drawer-actions button {
       border-radius: 9px; transition: all .16s ease; box-shadow: var(--shadow-sm);
@@ -890,6 +898,20 @@ let ACCOUNTS = [], OUTLOOK = [], CONFIG = [];
 let SHOW_ARCHIVED_ACCOUNTS = false;
 let ACCOUNT_TYPE_FILTER = '';
 let ACCOUNT_HEALTH_FILTER = '';
+function _filteredAccounts() {
+  const qEl = $('#qAccounts');
+  const q = (qEl ? qEl.value : '').trim().toLowerCase();
+  return ACCOUNTS.filter(r => {
+    if (q && !Object.values(r).join('\n').toLowerCase().includes(q)) return false;
+    const plan = String(r.current_plan_type || r.plan_type || '').toLowerCase();
+    if (ACCOUNT_TYPE_FILTER === 'plus' && plan !== 'plus') return false;
+    if (ACCOUNT_TYPE_FILTER === 'free' && plan !== 'free') return false;
+    if (ACCOUNT_TYPE_FILTER === 'free_trial' && !(plan === 'free' && r.plus_trial_eligible)) return false;
+    const h = r.health_status || 'unknown';
+    if (ACCOUNT_HEALTH_FILTER && h !== ACCOUNT_HEALTH_FILTER) return false;
+    return true;
+  });
+}
 const ACCOUNT_SELECTED = new Set();
 const OUTLOOK_SELECTED = new Set();
 let JOBS = [];
@@ -954,6 +976,16 @@ function pill(status) {
   return `<span class="pill status-${esc(status)}">${esc(map[status]||status||'-')}</span>`;
 }
 function showToast(t) { const el=$('#toast'); el.textContent=t; el.classList.add('show'); clearTimeout(showToast.t); showToast.t=setTimeout(()=>el.classList.remove('show'),1400); }
+function toast(msg, type) {
+  const el = $('#toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.remove('toast-ok', 'toast-err');
+  el.classList.add(type === 'err' ? 'toast-err' : 'toast-ok');
+  el.classList.add('show');
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => { el.classList.remove('show', 'toast-ok', 'toast-err'); }, type === 'err' ? 4200 : 2600);
+}
 async function copyText(text) {
   if (!text) { showToast('没有可复制内容'); return false; }
   try {
@@ -1578,7 +1610,7 @@ async function loadAccounts() {
   accountsLoading = true;
   try {
     const archived = SHOW_ARCHIVED_ACCOUNTS ? 'only' : '0';
-    const plan = ['plus', 'free'].includes(ACCOUNT_TYPE_FILTER) ? ACCOUNT_TYPE_FILTER : '';
+    const plan = ''; // type/status filters are applied client-side in _filteredAccounts
     ACCOUNTS = await api(`/api/accounts?limit=2000&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}`);
     renderAccounts();
     loadAccountHealthSummary();
@@ -1590,7 +1622,7 @@ async function pollAccountPlanStatuses() {
   planStatusLoading = true;
   try {
     const archived = SHOW_ARCHIVED_ACCOUNTS ? 'only' : '0';
-    const plan = ['plus', 'free'].includes(ACCOUNT_TYPE_FILTER) ? ACCOUNT_TYPE_FILTER : '';
+    const plan = ''; // type/status filters are applied client-side in _filteredAccounts
     const snapshot = await api(`/api/accounts/plan-check-status?limit=2000&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}`);
     const items = snapshot.items || [];
     const accountById = new Map(ACCOUNTS.map(r => [Number(r.id), r]));
@@ -1777,17 +1809,32 @@ async function loadAccountHealthSummary() {
     const el = $('#accountsStats');
     if (!el) return;
     const cards = [
-      ['账号总数', s.total ?? 0, ''],
-      ['正常', s.normal ?? 0, 'stat-good'],
-      ['异常', s.abnormal ?? 0, 'stat-danger'],
-      ['未检测', s.unknown ?? 0, 'stat-muted'],
-      ['plus', s.plus ?? 0, 'stat-plus'],
-      ['free', s.free ?? 0, ''],
-      ['free(可试用)', s.free_trial ?? 0, 'stat-good'],
+      ['账号总数', s.total ?? 0, '', 'all', ''],
+      ['正常', s.normal ?? 0, 'stat-good', 'health', 'normal'],
+      ['异常', s.abnormal ?? 0, 'stat-danger', 'health', 'abnormal'],
+      ['未检测', s.unknown ?? 0, 'stat-muted', 'health', 'unknown'],
+      ['plus', s.plus ?? 0, 'stat-plus', 'type', 'plus'],
+      ['free', s.free ?? 0, '', 'type', 'free'],
+      ['free(可试用)', s.free_trial ?? 0, 'stat-good', 'type', 'free_trial'],
     ];
-    el.innerHTML = cards.map(([label, value, cls]) => `<div class="stat-card ${cls}"><div class="stat-label">${label}</div><div class="stat-value">${value}</div></div>`).join('');
+    const isActive = (kind, v) => kind === 'all' ? (!ACCOUNT_TYPE_FILTER && !ACCOUNT_HEALTH_FILTER)
+      : kind === 'type' ? ACCOUNT_TYPE_FILTER === v : ACCOUNT_HEALTH_FILTER === v;
+    el.innerHTML = cards.map(([label, value, cls, kind, fval]) => `<div class="stat-card ${cls} stat-click ${isActive(kind, fval) ? 'stat-active' : ''}" data-stat-kind="${kind}" data-stat-value="${fval}" title="点击筛选：${label}${isActive(kind, fval) ? '（再点一次取消）' : ''}"><div class="stat-label">${label}</div><div class="stat-value">${value}</div></div>`).join('');
   } catch(e) {}
 }
+$('#accountsStats').addEventListener('click', (e) => {
+  const card = e.target.closest('[data-stat-kind]');
+  if (!card) return;
+  const kind = card.dataset.statKind, value = card.dataset.statValue;
+  if (kind === 'all') { ACCOUNT_TYPE_FILTER = ''; ACCOUNT_HEALTH_FILTER = ''; }
+  else if (kind === 'type') { ACCOUNT_TYPE_FILTER = ACCOUNT_TYPE_FILTER === value ? '' : value; }
+  else { ACCOUNT_HEALTH_FILTER = ACCOUNT_HEALTH_FILTER === value ? '' : value; }
+  const typeSel = $('#accountTypeFilter'); if (typeSel) typeSel.value = ACCOUNT_TYPE_FILTER;
+  const healthSel = $('#accountHealthFilter'); if (healthSel) healthSel.value = ACCOUNT_HEALTH_FILTER;
+  PAGERS.accounts.page = 1;
+  renderAccounts();
+  loadAccountHealthSummary();
+});
 function _fmtExtractExpire(v) {
   if (!v) return '';
   const raw = String(v).trim();
@@ -1850,16 +1897,16 @@ function openAccountDrawer(id) {
   const agent = r.codex_agent_status || '未生成';
   const refresh = s.session_renewal_possible ? `<button data-refresh-session="${esc(r.id)}">刷新登录态</button>` : '<button disabled title="未保存可用会话 Cookie">无法续期</button>';
   drawer.innerHTML = `<div class="drawer-head"><div><h2>${esc(r.email || ('账号 #' + r.id))}</h2><div class="sub-cell">${esc(r.user_name || '未保存显示名')} · #${esc(r.id)}</div></div><button class="btn" data-close-account-drawer>关闭</button></div>
-    <section class="drawer-section"><h3>认证与交付</h3><div class="drawer-grid"><div class="drawer-kv"><b>Token</b>${esc(s.access_token_present ? (s.expired ? '已过期' : '已保存') : '未生成')}</div><div class="drawer-kv"><b>JWT 到期</b>${esc(_fmtPlanTime(s.expires_at) || '未知')}</div><div class="drawer-kv"><b>刷新能力</b>${esc(s.refresh_label || '无可用刷新材料')}</div><div class="drawer-kv"><b>2FA</b>${r.has_totp_secret ? '已启用' : '未启用'}</div></div><div class="drawer-actions" style="margin-top:10px;"><button class="primary" data-copy-access-token="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>${r.has_access_token ? '复制 accessToken' : 'Token 未生成'}</button><button data-copy-email-asset="${esc(r.id)}">复制邮箱资产</button>${refresh}</div><p class="hint">邮箱资产按来源原始格式交付；完整账号资产请使用下方 JSON 导出。</p></section>
+    <section class="drawer-section"><h3>常用操作</h3><div class="drawer-actions drawer-actions-grid"><button data-plan-check="${esc(r.id)}">查套餐 / 资格</button>${_extractLinkAction(r) || '<button disabled title="仅 free(可Plus试用) 账号可提链">提链</button>'}<button data-codex-retry="${esc(r.email)}">补跑 Codex</button><button data-codex-agent="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>生成 Agent</button><button class="good" data-synthetic-one="${esc(r.id)}">免手机验证转化</button><button class="primary" data-copy-access-token="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>复制 accessToken</button><button data-copy-email-asset="${esc(r.id)}">复制邮箱资产</button>${refresh}</div></section>
     <section class="drawer-section"><h3>账号状态</h3><div class="drawer-grid"><div class="drawer-kv"><b>来源</b>${esc(r.email_source || '-')}</div><div class="drawer-kv"><b>创建时间</b>${esc(r.created_at || '-')}</div><div class="drawer-kv"><b>套餐</b>${esc(plan)}</div><div class="drawer-kv"><b>Codex / Agent</b>${esc(codex)} / ${esc(agent)}</div><div class="drawer-kv"><b>备注</b>${esc(r.note || '—')}</div></div></section>
-    <section class="drawer-section"><h3>操作</h3><div class="drawer-actions"><button data-account-note="${esc(r.id)}">备注</button><button data-plan-check="${esc(r.id)}">查套餐</button>${_extractLinkAction(r)}<button data-codex-retry="${esc(r.email)}">补跑 Codex</button><button data-codex-agent="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>生成 Agent</button><button data-synthetic-one="${esc(r.id)}">免手机验证转化</button><button class="good" data-export-one-full-assets="${esc(r.id)}">导出完整账号资产 JSON</button><button data-account-archive="${esc(r.id)}" data-archived="${r.archived ? '0' : '1'}">${r.archived ? '恢复账号' : '归档账号'}</button><button class="danger" data-account-delete="${esc(r.id)}" data-email="${esc(r.email)}">删除账号</button></div><p class="hint">导出完整账号资产 JSON 含认证和邮箱敏感资产，仅通过受控下载提供。</p></section>`;
+    <section class="drawer-section"><h3>认证与交付</h3><div class="drawer-grid"><div class="drawer-kv"><b>Token</b>${esc(s.access_token_present ? (s.expired ? '已过期' : '已保存') : '未生成')}</div><div class="drawer-kv"><b>JWT 到期</b>${esc(_fmtPlanTime(s.expires_at) || '未知')}</div><div class="drawer-kv"><b>刷新能力</b>${esc(s.refresh_label || '无可用刷新材料')}</div><div class="drawer-kv"><b>2FA</b>${r.has_totp_secret ? '已启用' : '未启用'}</div></div><p class="hint">邮箱资产按来源原始格式交付；完整账号资产请使用下方 JSON 导出。</p></section>
+    <section class="drawer-section"><h3>管理</h3><div class="drawer-actions"><button data-account-note="${esc(r.id)}">备注</button><button class="good" data-export-one-full-assets="${esc(r.id)}">导出完整账号资产 JSON</button><button data-account-archive="${esc(r.id)}" data-archived="${r.archived ? '0' : '1'}">${r.archived ? '恢复账号' : '归档账号'}</button><button class="danger" data-account-delete="${esc(r.id)}" data-email="${esc(r.email)}">删除账号</button></div><p class="hint">导出完整账号资产 JSON 含认证和邮箱敏感资产，仅通过受控下载提供。</p></section>`;
   drawer.classList.remove('hidden');
   updateModalScrollLock();
 }
 function closeAccountDrawer() { $('#accountDrawer').classList.add('hidden'); updateModalScrollLock(); }
 function renderAccounts() {
-  const q = $('#qAccounts').value.trim().toLowerCase();
-  const filtered = ACCOUNTS.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+  const filtered = _filteredAccounts();
   const p = PAGERS.accounts;
   const total = filtered.length;
   const rows = filtered.slice((p.page - 1) * p.size, p.page * p.size);
@@ -2251,17 +2298,18 @@ $('#showArchivedAccounts').addEventListener('change', async (e) => {
   await loadAccounts();
   await pollAccountPlanStatuses();
 });
-$('#accountTypeFilter').addEventListener('change', async (e) => {
+$('#accountTypeFilter').addEventListener('change', (e) => {
   ACCOUNT_TYPE_FILTER = e.target.value || '';
   ACCOUNT_SELECTED.clear();
   PAGERS.accounts.page = 1;
-  await loadAccounts();
-  await pollAccountPlanStatuses();
+  renderAccounts();
+  loadAccountHealthSummary();
 });
 $('#accountHealthFilter').addEventListener('change', (e) => {
   ACCOUNT_HEALTH_FILTER = e.target.value || '';
   PAGERS.accounts.page = 1;
   renderAccounts();
+  loadAccountHealthSummary();
 });
 $('#btnRefreshAccounts').addEventListener('click', async () => {
   await loadAccounts();
