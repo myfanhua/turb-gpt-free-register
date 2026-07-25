@@ -4,8 +4,20 @@ from pathlib import Path
 from core import db
 
 _PATH=Path(__file__).resolve().parent.parent/"会话池.json"
+_DEFAULT_MESSAGES=[
+ "你好，请用一句话介绍你自己。",
+ "请给我三条提高英语学习效率的建议。",
+ "用 Python 写一个计算斐波那契数列第 n 项的函数，并简单解释。",
+ "请用两句话向小学生解释什么是人工智能。",
+ "谢谢，请给我一句坚持下去的鼓励。",
+]
 def _now(): return db._now()
-def _load(): return db._read_json(_PATH,{"templates":{},"bindings":{}})
+def _load():
+ fresh=not _PATH.exists()
+ v=db._read_json(_PATH,{"templates":{},"bindings":{}})
+ if fresh and not v.get("templates"):
+  now=_now();v["templates"]["default-five"]={"id":"default-five","name":"默认五轮对话","messages":list(_DEFAULT_MESSAGES),"enabled":True,"retry":{},"created_at":now,"updated_at":now};_save(v)
+ return v
 def _save(v): db._write_json(_PATH,v)
 def _key(account_id,template_id): return f"{int(account_id)}:{template_id}"
 def put_template(template_id,name,messages,enabled=True,retry=None):
