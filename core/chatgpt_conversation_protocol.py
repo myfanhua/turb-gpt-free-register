@@ -31,7 +31,7 @@ class ConversationCompletion:
     error: str = ""
 
 
-def text_payload(message: str, *, model: str = "auto", conversation_id: str = "", parent_message_id: str = "") -> dict:
+def text_payload(message: str, *, model: str = "auto", conversation_id: str = "", parent_message_id: str = "", history_disabled: bool = False) -> dict:
     if not isinstance(message, str) or not message.strip():
         raise ValueError("message 必须是非空文本")
     payload = {
@@ -42,7 +42,8 @@ def text_payload(message: str, *, model: str = "auto", conversation_id: str = ""
         "conversation_mode": {"kind": "primary_assistant"},
         "conversation_origin": None,
         "force_use_sse": True,
-        "history_and_training_disabled": True,
+        # False = 普通会话（保存进历史记录，网页端可见）；True = 临时聊天（不留痕，服务端不可回查）。
+        "history_and_training_disabled": bool(history_disabled),
     }
     if conversation_id:
         payload["conversation_id"] = conversation_id
@@ -161,9 +162,11 @@ class ChatGPTConversationProtocol:
         return {"token": token, "proof_token": proof, "turnstile_token": turnstile_token, "so_token": finalized.get("so_token", "")}
 
     def stream_message(self, message: str, *, conversation_id: str = "", model: str = "auto") -> ConversationCompletion:
+        from config import conversation_pool as pool_cfg
+        history_disabled = bool(getattr(pool_cfg, "CONVERSATION_POOL_HISTORY_DISABLED", False))
         requirements = self.chat_requirements()
         headers = conversation_headers(self._headers(sse=True), requirements)
-        response = self.session.post(_BASE + CONVERSATION_PATH, headers=headers, json=text_payload(message, model=model, conversation_id=conversation_id), timeout=self.timeout, stream=True)
+        response = self.session.post(_BASE + CONVERSATION_PATH, headers=headers, json=text_payload(message, model=model, conversation_id=conversation_id, history_disabled=history_disabled), timeout=self.timeout, stream=True)
         status = int(getattr(response, "status_code", 0) or 0)
         if status >= 400:
             raise ConversationProtocolError(f"conversation HTTP {status}", stage="conversation", http_status=status)

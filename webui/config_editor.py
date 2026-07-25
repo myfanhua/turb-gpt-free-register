@@ -43,6 +43,7 @@ EDITABLE_FIELDS = [
     {"key": "CONVERSATION_POOL_MESSAGE_DELAY_MAX", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "消息间隔上限(秒)", "help": "两条消息之间的随机等待上限；建议 45-90"},
     {"key": "CONVERSATION_POOL_START_DELAY_MIN", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "注册后启动延迟下限(秒)", "help": "注册成功后自动开跑前的随机等待下限；避免注册完立刻连发消息的机器特征"},
     {"key": "CONVERSATION_POOL_START_DELAY_MAX", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "注册后启动延迟上限(秒)", "help": "建议 120-600；调低更快但风控更高"},
+    {"key": "CONVERSATION_POOL_HISTORY_DISABLED", "file": "conversation_pool.py", "type": "bool", "group": "会话池", "label": "临时聊天(不留历史)", "help": "关闭=普通会话，网页端左侧历史可见（推荐）；开启=临时聊天，服务端不留痕不可回查"},
     # ---- WebUI 授权 ----
     {
         "key": "WEBUI_AUTH_CODE", "file": "codex.py", "type": "str", "group": "WebUI 授权",
