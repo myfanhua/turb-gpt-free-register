@@ -478,26 +478,6 @@ def save_account_data(
                     logger.info("[ConversationPool] 注册后自动开跑五轮对话: id=%s", row_id)
         except Exception as exc:
             logger.warning("[ConversationPool] 入队失败但不回滚账号: %s", type(exc).__name__)
-        try:
-            from core import synthetic_auth
-            if synthetic_auth.synthetic_enabled():
-                from core.db import get_account, merge_account_extra
-                row = get_account(row_id)
-                if row:
-                    converted = synthetic_auth.convert_account_row(row)
-                    out_path = synthetic_auth.write_auth_file(converted)
-                    merge_account_extra(row_id, {"synthetic_auth": {
-                        "status": "success",
-                        "converted_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
-                        "account_id": converted["account_id"],
-                        "plan_type": converted["plan_type"],
-                        "expires_at": converted["expires_at"],
-                        "filename": out_path.name,
-                        "auto": True,
-                    }})
-                    logger.info("[SyntheticAuth] 注册后自动转化成功: id=%s, email=%s", row_id, email)
-        except Exception as exc:
-            logger.warning("[SyntheticAuth] 自动转化失败但不回滚账号: %s, %s", email, type(exc).__name__)
     # session 中的 account.planType 不能说明 Plus 试用资格。账号落库后只负责
     # 入队，由专用线程池异步查询并回写，避免占用注册工作线程。
     try:

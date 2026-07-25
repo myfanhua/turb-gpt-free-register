@@ -274,14 +274,11 @@ def create_app(auth_code: str | None = None) -> Flask:
                 _extra_syn = row.get("extra_json") or {}
                 if isinstance(_extra_syn, str):
                     _extra_syn = _json_syn.loads(_extra_syn) if _extra_syn.strip() else {}
-                _syn = (_extra_syn.get("synthetic_auth") or {}) if isinstance(_extra_syn, dict) else {}
-                item["synthetic_auth_status"] = str(_syn.get("status") or "")
                 _co = (_extra_syn.get("codex_oauth") or {}) if isinstance(_extra_syn, dict) else {}
                 item["codex_oauth_status"] = str(_co.get("status") or "")
                 item["codex_oauth_message"] = str(_co.get("message") or "")[:120]
                 item["codex_oauth_filename"] = str(_co.get("filename") or "")
             except Exception:
-                item["synthetic_auth_status"] = ""
                 item["codex_oauth_status"] = ""
                 item["codex_oauth_message"] = ""
                 item["codex_oauth_filename"] = ""
@@ -470,34 +467,7 @@ def create_app(auth_code: str | None = None) -> Flask:
         return Response(path.read_text(encoding="utf-8"), mimetype="application/json", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
     # ----------------------------------------------------------
-    # 免手机验证 synthetic 转化（codex-auth-helper 原理，纯本地）
-    # ----------------------------------------------------------
-    def _synthetic_convert_row(acc):
-        from core import synthetic_auth
-        converted = synthetic_auth.convert_account_row(acc)
-        path = synthetic_auth.write_auth_file(converted)
-        db.merge_account_extra(int(acc["id"]), {"synthetic_auth": {
-            "status": "success",
-            "converted_at": db._now(),
-            "account_id": converted["account_id"],
-            "plan_type": converted["plan_type"],
-            "expires_at": converted["expires_at"],
-            "filename": path.name,
-        }})
-        return converted, path
-
-    def _synthetic_mark_failed(acc_id, exc):
-        try:
-            db.merge_account_extra(int(acc_id), {"synthetic_auth": {
-                "status": "failed",
-                "converted_at": db._now(),
-                "error": f"{type(exc).__name__}: {str(exc)[:160]}",
-            }})
-        except Exception:
-            pass
-
-    # ----------------------------------------------------------
-    # Codex OAuth 真凭证授权（接码）。与 synthetic 转化不同，产出的是
+    # Codex OAuth 真凭证授权（接码）。产出的是
     # 含真 refresh_token 的 CLIProxyAPI 格式 auth.json，可直接导入
     # Cockpit / Sub2API 并真实调用 Codex。
     # ----------------------------------------------------------
@@ -526,94 +496,6 @@ def create_app(auth_code: str | None = None) -> Flask:
         if not res["queued"]:
             return jsonify({"ok": False, "error": "没有可入队的账号", "skipped": res["skipped"]}), 422
         return jsonify({"ok": True, **res})
-
-    @app.post("/api/accounts/<int:acc_id>/synthetic-auth")
-    def api_account_synthetic_auth(acc_id: int):
-        """单个账号一键转化为 synthetic Codex auth.json（纯本地零网络）。"""
-        acc = db.get_account(acc_id)
-        if not acc:
-            return jsonify({"ok": False, "error": "账号不存在"}), 404
-        try:
-            converted, path = _synthetic_convert_row(acc)
-        except Exception as exc:
-            _synthetic_mark_failed(acc_id, exc)
-            return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 422
-        return jsonify({
-            "ok": True,
-            "email": converted["email"],
-            "account_id": converted["account_id"],
-            "plan_type": converted["plan_type"],
-            "expires_at": converted["expires_at"],
-            "filename": path.name,
-            "refreshable": bool(converted.get("session_token")),
-        })
-
-    @app.post("/api/accounts/synthetic-auth-bulk")
-    def api_accounts_synthetic_auth_bulk():
-        """批量转化选中账号，产出 auth.json/sub2api/cockpit 文件，可选直传 sub2api。"""
-        from core import synthetic_auth
-        data = request.get_json(silent=True) or {}
-        raw_ids = data.get("account_ids") or data.get("ids") or []
-        if not isinstance(raw_ids, list) or not raw_ids:
-            return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
-        upload = bool(data.get("upload_sub2api"))
-        converted_ok, failed = [], []
-        sub2_entries, cockpit_entries = [], []
-        for raw in raw_ids[:1000]:
-            try:
-                acc_id = int(raw)
-            except (TypeError, ValueError):
-                failed.append({"id": raw, "error": "ID 非法"})
-                continue
-            acc = db.get_account(acc_id)
-            if not acc:
-                failed.append({"id": acc_id, "error": "账号不存在"})
-                continue
-            try:
-                converted, path = _synthetic_convert_row(acc)
-                sub2_entries.append(synthetic_auth.build_sub2api_session_entry(converted))
-                cockpit_entries.append(synthetic_auth.build_cockpit_entry(converted))
-                item = {
-                    "id": acc_id,
-                    "email": converted["email"],
-                    "account_id": converted["account_id"],
-                    "plan_type": converted["plan_type"],
-                    "expires_at": converted["expires_at"],
-                    "filename": path.name,
-                }
-                if upload:
-                    try:
-                        up = synthetic_auth.upload_to_sub2api(converted)
-                        item["sub2api_upload"] = {"ok": True, "status_code": up.get("status_code")}
-                    except Exception as exc:
-                        item["sub2api_upload"] = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
-                converted_ok.append(item)
-            except Exception as exc:
-                _synthetic_mark_failed(acc_id, exc)
-                failed.append({"id": acc_id, "email": acc.get("email"), "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
-        if not converted_ok:
-            return jsonify({"ok": False, "error": "没有可转化的账号", "failed": failed}), 422
-        sub2_path = synthetic_auth.write_sub2api_file(sub2_entries)
-        cockpit_path = synthetic_auth.write_cockpit_file(cockpit_entries)
-        return jsonify({
-            "ok": True,
-            "converted": converted_ok,
-            "converted_count": len(converted_ok),
-            "failed": failed,
-            "failed_count": len(failed),
-            "sub2api_file": sub2_path.name,
-            "cockpit_file": cockpit_path.name,
-        })
-
-    @app.get("/api/accounts/synthetic-auth/download/<filename>")
-    def api_synthetic_auth_download(filename: str):
-        if not re.fullmatch(r"synthetic-(?:auth|sub2api|cockpit)-[\w.@\-]+\.json", filename):
-            return jsonify({"ok": False, "error": "文件名非法"}), 404
-        from core.synthetic_auth import _EXPORT_DIR
-        path = _EXPORT_DIR / filename
-        if not path.is_file():
-            return jsonify({"ok": False, "error": "文件不存在"}), 404
-        return Response(path.read_text(encoding="utf-8"), mimetype="application/json", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
     @app.get("/api/accounts/plan-check-status")
     def api_account_plan_check_status():

@@ -734,11 +734,6 @@
             <button class="btn primary" id="btnCodexOauthSelected" disabled title="走真 Codex OAuth 流程（邮箱OTP+手机接码，逐个后台执行），产出含真 refresh_token 的 auth.json，可直接导入 Cockpit / Sub2API 真实调用 Codex；需先在 配置 里准备好接码服务">一键授权</button>
           </div>
           <div class="btn-group">
-            <span class="btn-group-title">免手机转化（仅登录展示）</span>
-            <button class="btn good" id="btnSyntheticSelected" disabled title="纯本地转化（不跑接码）：仅能让 Codex app 显示已登录；实测无法真实调用 Codex（上游401，Cockpit里表现为429/冷却）。要真实可用请用左侧「Codex授权（真凭证·接码）」">一键转化</button>
-            <button class="btn good" id="btnSyntheticSelectedUpload" disabled title="同上，仅登录展示用途；一键转化并直接上传到 sub2api（需先在配置里填 SUB2API_API_BASE / Key）">转化并传sub2</button>
-          </div>
-          <div class="btn-group">
             <span class="btn-group-title">批量</span>
             <button class="btn good" id="btnNoteSelectedAccounts" disabled title="给选中的账号统一设置备注，留空可清空备注">备注</button>
             <button class="btn good" id="btnExportSelectedSub2" disabled title="导出选中账号为 Sub2API 静态快照；不会自动刷新 Token">导出 Sub2API</button>
@@ -752,10 +747,6 @@
           </div>
         </div>
       </details>
-      <div class="body hidden" id="syntheticResultPanel" style="margin-top:10px;">
-        <h3 style="font-size:13px;margin-bottom:6px;">免手机验证转化结果 <button class="btn" id="btnCloseSyntheticResult" style="float:right;min-height:26px;">关闭</button></h3>
-        <div id="syntheticResultBody" class="hint"></div>
-      </div>
       </div>
       <div class="accounts-stats" id="accountsStats"></div>
       <div class="table-wrap">
@@ -1961,7 +1952,7 @@ function openAccountDrawer(id) {
   const agent = r.codex_agent_status || '未生成';
   const refresh = s.session_renewal_possible ? `<button data-refresh-session="${esc(r.id)}">刷新登录态</button>` : '<button disabled title="未保存可用会话 Cookie">无法续期</button>';
   drawer.innerHTML = `<div class="drawer-head"><div><h2>${esc(r.email || ('账号 #' + r.id))}</h2><div class="sub-cell">${esc(r.user_name || '未保存显示名')} · #${esc(r.id)}</div></div><button class="btn" data-close-account-drawer>关闭</button></div>
-    <section class="drawer-section"><h3>常用操作</h3><div class="drawer-actions drawer-actions-grid"><button data-plan-check="${esc(r.id)}">查套餐 / 资格</button>${_extractLinkAction(r) || '<button disabled title="仅 free(可Plus试用) 账号可提链">提链</button>'}<button data-codex-retry="${esc(r.email)}">补跑 Codex</button><button data-codex-agent="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>生成 Agent</button><button class="primary" data-codex-oauth="${esc(r.id)}">Codex授权(接码)</button><button class="good" data-synthetic-one="${esc(r.id)}">免手机转化(仅登录)</button><button class="primary" data-copy-access-token="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>复制 accessToken</button><button data-copy-email-asset="${esc(r.id)}">复制邮箱资产</button>${refresh}</div></section>
+    <section class="drawer-section"><h3>常用操作</h3><div class="drawer-actions drawer-actions-grid"><button data-plan-check="${esc(r.id)}">查套餐 / 资格</button>${_extractLinkAction(r) || '<button disabled title="仅 free(可Plus试用) 账号可提链">提链</button>'}<button data-codex-retry="${esc(r.email)}">补跑 Codex</button><button data-codex-agent="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>生成 Agent</button><button class="primary" data-codex-oauth="${esc(r.id)}">Codex授权(接码)</button><button class="primary" data-copy-access-token="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>复制 accessToken</button><button data-copy-email-asset="${esc(r.id)}">复制邮箱资产</button>${refresh}</div></section>
     <section class="drawer-section"><h3>账号状态</h3><div class="drawer-grid"><div class="drawer-kv"><b>来源</b>${esc(r.email_source || '-')}</div><div class="drawer-kv"><b>创建时间</b>${esc(r.created_at || '-')}</div><div class="drawer-kv"><b>套餐</b>${esc(plan)}</div><div class="drawer-kv"><b>Codex / Agent</b>${esc(codex)} / ${esc(agent)}</div><div class="drawer-kv"><b>备注</b>${esc(r.note || '—')}</div></div></section>
     <section class="drawer-section"><h3>认证与交付</h3><div class="drawer-grid"><div class="drawer-kv"><b>Token</b>${esc(s.access_token_present ? (s.expired ? '已过期' : '已保存') : '未生成')}</div><div class="drawer-kv"><b>JWT 到期</b>${esc(_fmtPlanTime(s.expires_at) || '未知')}</div><div class="drawer-kv"><b>刷新能力</b>${esc(s.refresh_label || '无可用刷新材料')}</div><div class="drawer-kv"><b>2FA</b>${r.has_totp_secret ? '已启用' : '未启用'}</div></div><p class="hint">邮箱资产按来源原始格式交付；完整账号资产请使用下方 JSON 导出。</p></section>
     <section class="drawer-section"><h3>管理</h3><div class="drawer-actions"><button data-account-note="${esc(r.id)}">备注</button><button class="good" data-export-one-full-assets="${esc(r.id)}">导出完整账号资产 JSON</button><button data-account-archive="${esc(r.id)}" data-archived="${r.archived ? '0' : '1'}">${r.archived ? '恢复账号' : '归档账号'}</button><button class="danger" data-account-delete="${esc(r.id)}" data-email="${esc(r.email)}">删除账号</button></div><p class="hint">导出完整账号资产 JSON 含认证和邮箱敏感资产，仅通过受控下载提供。</p></section>`;
@@ -1981,7 +1972,7 @@ function renderAccounts() {
   $('#accountsBody').innerHTML = rows.map(r => `
     <tr>
       <td><input type="checkbox" class="account-row-check" data-account-id="${esc(r.id)}" ${ACCOUNT_SELECTED.has(Number(r.id)) ? 'checked' : ''}></td>
-      <td><div class="main-cell">${esc(r.email)}${r.archived ? ' <span class="pill status-used" title="该账号已归档">归档</span>' : ''}${r.synthetic_auth_status === 'success' ? ' <span class="pill" style="background:#eef4ff;color:#175cd3;border:1px solid #b2ddff;" title="已做免手机验证 synthetic 转化（仅登录展示，不能真实调用 Codex）">已转化·仅登录</span>' : ''}${r.codex_oauth_status === 'success' ? ' <span class="pill" style="background:#ecfdf3;color:#067647;border:1px solid #abefc6;" title="Codex 真凭证授权成功，auth.json 已落盘，可到 Codex 页下载导入 Cockpit/Sub2API">Codex已授权</span>' : ''}${(r.codex_oauth_status === 'running' || r.codex_oauth_status === 'queued') ? ' <span class="pill" style="background:#fffaeb;color:#b54708;border:1px solid #fedf89;" title="Codex 授权进行中（邮箱OTP/手机接码），请稍候">授权中…</span>' : ''}${r.codex_oauth_status === 'failed' ? ` <span class="pill" style="background:#fef3f2;color:#b42318;border:1px solid #fecdca;" title="Codex 授权失败：${esc(r.codex_oauth_message || '')}">授权失败</span>` : ''}</div><div class="sub-cell">${esc(r.user_name || '-')}</div></td>
+      <td><div class="main-cell">${esc(r.email)}${r.archived ? ' <span class="pill status-used" title="该账号已归档">归档</span>' : ''}${r.codex_oauth_status === 'success' ? ' <span class="pill" style="background:#ecfdf3;color:#067647;border:1px solid #abefc6;" title="Codex 真凭证授权成功，auth.json 已落盘，可到 Codex 页下载导入 Cockpit/Sub2API">Codex已授权</span>' : ''}${(r.codex_oauth_status === 'running' || r.codex_oauth_status === 'queued') ? ' <span class="pill" style="background:#fffaeb;color:#b54708;border:1px solid #fedf89;" title="Codex 授权进行中（邮箱OTP/手机接码），请稍候">授权中…</span>' : ''}${r.codex_oauth_status === 'failed' ? ` <span class="pill" style="background:#fef3f2;color:#b42318;border:1px solid #fecdca;" title="Codex 授权失败：${esc(r.codex_oauth_message || '')}">授权失败</span>` : ''}</div><div class="sub-cell">${esc(r.user_name || '-')}</div></td>
       <td>${esc(r.email_source || '-')}</td>
       <td>${_planCell(r)}</td>
       <td>${_healthCell(r)}</td>
@@ -2028,10 +2019,6 @@ function updateAccountSelectionUi(pageRows = null) {
   if (copyEaBtn) copyEaBtn.disabled = ACCOUNT_SELECTED.size === 0;
   const bindConvBtn = $('#btnBindConversationSelected');
   if (bindConvBtn) bindConvBtn.disabled = ACCOUNT_SELECTED.size === 0;
-  const synBtn = $('#btnSyntheticSelected');
-  const synUpBtn = $('#btnSyntheticSelectedUpload');
-  if (synBtn) synBtn.disabled = ACCOUNT_SELECTED.size === 0;
-  if (synUpBtn) synUpBtn.disabled = ACCOUNT_SELECTED.size === 0;
   const coBtn = $('#btnCodexOauthSelected');
   if (coBtn) coBtn.disabled = ACCOUNT_SELECTED.size === 0;
   const bulkSummary = $('#accountsBulkSummary');
@@ -2238,8 +2225,6 @@ $('#accountDrawer').addEventListener('click', async (e) => {
   if (extractBtn) { await extractOneLink(Number(extractBtn.dataset.extractLink), extractBtn); return; }
   const agentBtn = e.target.closest('[data-codex-agent]');
   if (agentBtn) { await generateOneCodexAgent(Number(agentBtn.dataset.codexAgent), agentBtn); return; }
-  const synOneBtn = e.target.closest('[data-synthetic-one]');
-  if (synOneBtn) { await syntheticConvertOne(Number(synOneBtn.dataset.syntheticOne), synOneBtn); return; }
   const coOneBtn = e.target.closest('[data-codex-oauth]');
   if (coOneBtn) { await codexOauthOne(Number(coOneBtn.dataset.codexOauth), coOneBtn); return; }
   const exportBtn = e.target.closest('[data-export-one-full-assets]');
@@ -2300,60 +2285,6 @@ async function loadRegistrationDriver() {
 $('#btnExportSelectedSub2').addEventListener('click', () => exportSelectedAccounts('sub2api'));
 $('#btnExportSelectedCockpit').addEventListener('click', () => exportSelectedAccounts('cockpit'));
 $('#btnExportSelectedFullAssets').addEventListener('click', () => exportSelectedAccounts('full-assets'));
-
-// ---------- 免手机验证 synthetic 转化 ----------
-function _renderSyntheticResult(html) {
-  const panel = $('#syntheticResultPanel');
-  if (!panel) return;
-  panel.classList.remove('hidden');
-  $('#syntheticResultBody').innerHTML = html;
-}
-function _syntheticDownloadLink(filename, label) {
-  return `<a href="/api/accounts/synthetic-auth/download/${encodeURIComponent(filename)}" download>${esc(label || filename)}</a>`;
-}
-async function syntheticConvertSelected(upload) {
-  const ids = [...ACCOUNT_SELECTED];
-  if (!ids.length) return;
-  const tip = upload ? '转化并上传到 sub2api' : '本地转化';
-  if (!confirm(`将对 ${ids.length} 个账号执行免手机验证${tip}。
-说明：synthetic id_token 无签名（alg=none），refresh_token 为 sessionToken 占位；该方式仅能让 Codex app 显示已登录，实测无法真实调用 Codex（上游401，Cockpit里表现为429/冷却）。要真实可用请用「Codex授权（真凭证·接码）」。继续？`)) return;
-  _renderSyntheticResult('转化中，请稍候…');
-  try {
-    const r = await api('/api/accounts/synthetic-auth-bulk', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({account_ids:ids, upload_sub2api:!!upload})});
-    if (!r.ok) throw new Error(r.error || '转化失败');
-    const lines = [];
-    lines.push(`<b>成功 ${r.converted_count} 个，失败 ${r.failed_count} 个。</b>`);
-    lines.push(`打包文件：${_syntheticDownloadLink(r.sub2api_file, 'Sub2API 导入文件')} ｜ ${_syntheticDownloadLink(r.cockpit_file, 'Cockpit 导入文件')}`);
-    (r.converted || []).forEach(it => {
-      let extra = '';
-      if (it.sub2api_upload) extra = it.sub2api_upload.ok ? ' ｜ sub2api 上传成功' : ` ｜ sub2api 上传失败：${esc(it.sub2api_upload.error || '')}`;
-      lines.push(`✅ ${esc(it.email)}（${esc(it.plan_type)}） ${_syntheticDownloadLink(it.filename, 'auth.json')}${extra}`);
-    });
-    (r.failed || []).forEach(it => lines.push(`❌ ${esc(it.email || ('#' + it.id))}：${esc(it.error || '未知错误')}`));
-    lines.push('<span class="muted">注意：该方式仅用于登录展示，不能真实调用 Codex；refresh_token 为占位值，access token 过期后需重新转化。要真实可用请用「Codex授权（真凭证·接码）」。</span>');
-    _renderSyntheticResult(lines.join('<br>'));
-    toast(`转化完成：成功 ${r.converted_count} 个`, 'ok');
-    loadAccounts();
-  } catch (e) {
-    _renderSyntheticResult(`<span style="color:#b3261e;">转化失败：${esc(e.message || String(e))}</span>`);
-    toast(e.message || String(e), 'err');
-  }
-}
-async function syntheticConvertOne(accId, btn) {
-  const old = btn ? btn.textContent : '';
-  if (btn) { btn.disabled = true; btn.textContent = '转化中…'; }
-  try {
-    const r = await api(`/api/accounts/${accId}/synthetic-auth`, {method:'POST'});
-    if (!r.ok) throw new Error(r.error || '转化失败');
-    toast(`已转化 ${r.email}（${r.plan_type}），开始下载 auth.json`, 'ok');
-    window.location.href = `/api/accounts/synthetic-auth/download/${encodeURIComponent(r.filename)}`;
-    loadAccounts();
-  } catch (e) { toast(e.message || String(e), 'err'); }
-  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
-}
-$('#btnSyntheticSelected').addEventListener('click', () => syntheticConvertSelected(false));
-$('#btnSyntheticSelectedUpload').addEventListener('click', () => syntheticConvertSelected(true));
-$('#btnCloseSyntheticResult').addEventListener('click', () => $('#syntheticResultPanel').classList.add('hidden'));
 
 // ---------- Codex OAuth 真凭证授权（接码） ----------
 async function _codexOauthPreflightNote() {

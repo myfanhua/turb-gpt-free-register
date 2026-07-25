@@ -1522,7 +1522,7 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
         }
         try:
             from config import codex as _codex_cfg
-            if bool(getattr(_codex_cfg, "ENABLE_CODEX_AUTO", False)) and not bool(getattr(_codex_cfg, "CODEX_SYNTHETIC_AUTH_ENABLE", False)):  # synthetic 转化开启时跳过接码 OAuth
+            if bool(getattr(_codex_cfg, "ENABLE_CODEX_AUTO", False)):
                 # 注册流程本身已创建 Roxy 一号一环境。这里不能再新建第二个 Roxy 环境；
                 # 复用当前注册窗口，先清理 Cookie/session/localStorage/cache，再开始 Codex 授权。
                 from core.roxy_codex_oauth import run_roxy_codex_oauth

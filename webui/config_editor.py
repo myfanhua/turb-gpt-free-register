@@ -60,10 +60,6 @@ EDITABLE_FIELDS = [
         "label": "启用 Codex OAuth", "help": "注册成功后自动跑 Codex 授权（全新session+接码），落盘 codex-邮箱.json",
     },
     {
-        "key": "CODEX_SYNTHETIC_AUTH_ENABLE", "file": "codex.py", "type": "bool", "group": "功能开关",
-        "label": "免手机验证转化", "help": "开启后注册成功自动做本地 synthetic 转化（alg=none id_token），跳过需要手机验证的 Codex OAuth；refresh_token 为占位，过期需重新转化",
-    },
-    {
         "key": "REGISTRATION_DRIVER", "file": "roxybrowser.py", "type": "str", "group": "注册方式",
         "label": "注册驱动", "help": "默认 cloak（纯协议风控强，默认走 CloakBrowser）；browser_use 仅在已填写 Browser Use API Key 时允许提交任务。可选 protocol / roxy / cloak / browser_use / skyvern",
     },

@@ -2,7 +2,7 @@
 """Codex OAuth（真凭证·接码）后台队列。
 
 为什么需要这个模块（2026-07-25 实测结论）：
-- 「免手机验证 synthetic 转化」产出的 auth.json 用的是 web session accessToken
+- 已删除的「免手机验证 synthetic 转化」产出的 auth.json 用的是 web session accessToken
   （client_id=app_X8zY6vW2...），调 /backend-api/codex/responses 会被 OpenAI 后端
   返回 401 {"detail":"Unauthorized"}；在 Cockpit(CLIProxyAPI) 里表现为 429/冷却。
 - 只有走真 Codex CLI OAuth 流程（client_id=app_EMoamEEZ...，含真 refresh_token）

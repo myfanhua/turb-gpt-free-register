@@ -107,7 +107,7 @@ def run_cloak_registration(email: str, name: str, birthday: str, proxy: str = No
         }
         try:
             from config import codex as _codex_cfg
-            if bool(getattr(_codex_cfg, "ENABLE_CODEX_AUTO", False)) and not bool(getattr(_codex_cfg, "CODEX_SYNTHETIC_AUTH_ENABLE", False)):  # synthetic 转化开启时跳过接码 OAuth
+            if bool(getattr(_codex_cfg, "ENABLE_CODEX_AUTO", False)):
                 from core.roxy_codex_oauth import run_roxy_codex_oauth
                 logger.info("[Cloak注册][Codex] ENABLE_CODEX_AUTO=True，复用当前 CloakBrowser 窗口执行 Codex 授权")
                 _check_manual_stop()

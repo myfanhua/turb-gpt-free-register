@@ -1863,7 +1863,6 @@ def run_browser_use_registration(
             try:
                 from config import codex as _codex_cfg
                 codex_auto_enabled = bool(getattr(_codex_cfg, "ENABLE_CODEX_AUTO", False))
-                codex_auto_enabled = codex_auto_enabled and not bool(getattr(_codex_cfg, "CODEX_SYNTHETIC_AUTH_ENABLE", False))  # synthetic 转化开启时跳过接码 OAuth
                 oauth_driver = str(getattr(_codex_cfg, "CODEX_OAUTH_DRIVER", "") or "").strip() or "same_as_registration"
                 if codex_auto_enabled:
                     logger.info(
