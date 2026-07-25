@@ -587,6 +587,15 @@
         <div class="row" style="align-items:flex-end;">
           <div style="flex:1;min-width:320px;">
             <label class="fld">账号（可多选；已绑定的自动跳过）</label>
+            <div class="btn-group" style="margin-bottom:6px;">
+              <input id="convAccQ" placeholder="搜索邮箱…" style="min-height:28px;padding:2px 8px;font-size:12px;">
+              <select id="convAccType" style="min-height:28px;font-size:12px;" title="按套餐类型筛选">
+                <option value="">全部类型</option><option value="plus">plus</option><option value="free">free</option><option value="free_trial">free(可试用)</option>
+              </select>
+              <select id="convAccHealth" style="min-height:28px;font-size:12px;" title="按健康状态筛选">
+                <option value="">全部状态</option><option value="normal">正常</option><option value="abnormal">异常</option><option value="unknown">未检测</option>
+              </select>
+            </div>
             <div id="convBindAccounts" class="conv-acc-list"></div>
             <div class="btn-group" style="margin-top:6px;">
               <button class="btn" id="btnConvAccAll" type="button">全选</button>
@@ -733,6 +742,8 @@
             <button class="btn good" id="btnExportSelectedFullAssets" disabled title="导出完整账号资产 JSON；包含敏感认证与邮箱资产，请妥善保管">导出完整账号资产 JSON</button>
             <button class="btn" id="btnArchiveSelectedAccounts" disabled title="归档选中的账号；默认账号列表将不再查询/显示这些账号">归档</button>
             <button class="btn" id="btnCopySelectedTokens" disabled title="逐个读取选中账号的 accessToken 并复制到剪贴板">复制Token</button>
+            <button class="btn" id="btnCopySelectedEmailAssets" disabled title="逐个读取选中账号的邮箱资产（按来源原始格式，每行一个）并复制到剪贴板">获取邮箱资产</button>
+            <button class="btn good" id="btnBindConversationSelected" disabled title="把选中账号一键绑定到默认会话模板；绑定后到「会话池」点击运行开始对话">绑定会话</button>
             <button class="btn" id="btnDeleteSelectedAccounts" disabled title="删除选中的本地账号/token记录">删除</button>
           </div>
         </div>
@@ -1025,6 +1036,7 @@ $$('nav button').forEach(b => b.addEventListener('click', () => activateTab(b.da
 
 // ---------- 会话池 ----------
 let CONV_TEMPLATES = [], CONV_BINDINGS = [], CONV_STATUS = {}, CONV_ACCOUNTS = [], convTimer = null;
+let CONV_ACC_Q = '', CONV_ACC_TYPE = '', CONV_ACC_HEALTH = '';
 const CONV_DEFAULT_MESSAGES = [
   '你好，请用一句话介绍你自己。',
   '请给我三条提高英语学习效率的建议。',
@@ -1130,15 +1142,24 @@ function _convUpdateAccHint() {
 function renderConvBindOptions() {
   const listEl = $('#convBindAccounts'), tplSel = $('#convBindTemplate');
   if (!listEl || !tplSel) return;
-  const accSig = CONV_ACCOUNTS.map(a => a.id).join(',') + '|' + CONV_BINDINGS.length;
+  const accSig = CONV_ACCOUNTS.map(a => a.id).join(',') + '|' + CONV_BINDINGS.length + '|' + CONV_ACC_Q + '|' + CONV_ACC_TYPE + '|' + CONV_ACC_HEALTH;
   if (listEl.dataset.sig !== accSig) {
     const prevSel = new Set(Array.from(listEl.querySelectorAll('.conv-acc-check:checked')).map(x => Number(x.value)));
     const boundAccs = new Set(CONV_BINDINGS.map(b => Number(b.account_id)));
-    listEl.innerHTML = CONV_ACCOUNTS.map(a => {
+    const visible = CONV_ACCOUNTS.filter(a => {
+      if (CONV_ACC_Q && !String(a.email || '').toLowerCase().includes(CONV_ACC_Q)) return false;
+      const plan = String(a.current_plan_type || a.plan_type || '').toLowerCase();
+      if (CONV_ACC_TYPE === 'plus' && plan !== 'plus') return false;
+      if (CONV_ACC_TYPE === 'free' && plan !== 'free') return false;
+      if (CONV_ACC_TYPE === 'free_trial' && !(plan === 'free' && a.plus_trial_eligible)) return false;
+      if (CONV_ACC_HEALTH && String(a.health_status || 'unknown') !== CONV_ACC_HEALTH) return false;
+      return true;
+    });
+    listEl.innerHTML = visible.map(a => {
       const id = Number(a.id);
       const isBound = boundAccs.has(id);
       return `<label class="conv-acc-item ${isBound ? 'is-bound' : ''}"><input type="checkbox" class="conv-acc-check" value="${id}" ${prevSel.has(id) && !isBound ? 'checked' : ''} ${isBound ? 'disabled' : ''}><span>${esc(a.email)}</span>${isBound ? '<span class="pill status-used bound-tag">已绑定</span>' : ''}</label>`;
-    }).join('') || '<div class="muted" style="padding:8px;">（无账号，请先到注册页注册）</div>';
+    }).join('') || '<div class="muted" style="padding:8px;">（当前筛选下无账号）</div>';
     listEl.dataset.sig = accSig;
     _convUpdateAccHint();
   }
@@ -1247,6 +1268,9 @@ $('#btnConvBind').addEventListener('click', convBind);
 $('#btnConvAccAll').addEventListener('click', () => { document.querySelectorAll('.conv-acc-check:not(:disabled)').forEach(c => { c.checked = true; }); _convUpdateAccHint(); });
 $('#btnConvAccNone').addEventListener('click', () => { document.querySelectorAll('.conv-acc-check').forEach(c => { c.checked = false; }); _convUpdateAccHint(); });
 $('#convBindAccounts').addEventListener('change', _convUpdateAccHint);
+$('#convAccQ').addEventListener('input', (e) => { CONV_ACC_Q = e.target.value.trim().toLowerCase(); const l = $('#convBindAccounts'); if (l) l.dataset.sig = ''; renderConvBindOptions(); });
+$('#convAccType').addEventListener('change', (e) => { CONV_ACC_TYPE = e.target.value || ''; const l = $('#convBindAccounts'); if (l) l.dataset.sig = ''; renderConvBindOptions(); });
+$('#convAccHealth').addEventListener('change', (e) => { CONV_ACC_HEALTH = e.target.value || ''; const l = $('#convBindAccounts'); if (l) l.dataset.sig = ''; renderConvBindOptions(); });
 $('#btnConvRunAll').addEventListener('click', convRunAll);
 $('#convTemplatesBody').addEventListener('click', async (e) => {
   const editBtn = e.target.closest('[data-conv-tpl-edit]');
@@ -1996,6 +2020,10 @@ function updateAccountSelectionUi(pageRows = null) {
   if (fullAssetsBtn) fullAssetsBtn.disabled = ACCOUNT_SELECTED.size === 0;
   const copyTokBtn = $('#btnCopySelectedTokens');
   if (copyTokBtn) copyTokBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  const copyEaBtn = $('#btnCopySelectedEmailAssets');
+  if (copyEaBtn) copyEaBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  const bindConvBtn = $('#btnBindConversationSelected');
+  if (bindConvBtn) bindConvBtn.disabled = ACCOUNT_SELECTED.size === 0;
   const synBtn = $('#btnSyntheticSelected');
   const synUpBtn = $('#btnSyntheticSelectedUpload');
   if (synBtn) synBtn.disabled = ACCOUNT_SELECTED.size === 0;
@@ -2571,6 +2599,7 @@ async function generateOneCodexAgent(id, btn) {
     });
     showToast('Codex Agent Token 生成任务已入队');
     await pollAccountPlanStatuses();
+    watchAgentResult([id]);
   } catch(err) {
     showToast('生成失败: ' + err.message);
     btn.disabled = false;
@@ -2598,6 +2627,7 @@ async function generateSelectedCodexAgents() {
     const skipped = (r.skipped_count || 0) + (r.busy_count || 0) + (r.failed_count || 0);
     showToast(skipped ? `已入队 ${r.started_count || 0} 个，跳过/失败 ${skipped} 个` : `已入队 ${r.started_count || 0} 个`);
     await pollAccountPlanStatuses();
+    watchAgentResult(ids);
   } catch(err) {
     showToast('批量生成失败: ' + err.message);
     updateAccountSelectionUi();
@@ -3040,6 +3070,80 @@ async function copySelectedAccountAccessTokens() {
   }
 }
 $('#btnCopySelectedTokens').addEventListener('click', copySelectedAccountAccessTokens);
+
+async function copySelectedEmailAssets() {
+  const btn = $('#btnCopySelectedEmailAssets');
+  const ids = [...ACCOUNT_SELECTED];
+  if (!ids.length) return;
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '读取中…';
+  const lines = []; let fail = 0;
+  try {
+    for (const id of ids) {
+      try {
+        const r = await api(`/api/accounts/${id}/email-asset`, {method:'POST'});
+        if (r.delivery_line) lines.push(r.delivery_line); else fail++;
+      } catch (e) { fail++; }
+    }
+    if (!lines.length) { toast('选中账号都没有可用邮箱资产', 'err'); return; }
+    if (await copyText(lines.join('\n'))) toast(`已复制 ${lines.length} 个邮箱资产${fail ? `，${fail} 个读取失败` : ''}`, fail ? 'err' : 'ok');
+  } finally { btn.disabled = false; btn.textContent = old; }
+}
+$('#btnCopySelectedEmailAssets').addEventListener('click', copySelectedEmailAssets);
+
+async function bindSelectedToConversation() {
+  const btn = $('#btnBindConversationSelected');
+  const ids = [...ACCOUNT_SELECTED];
+  if (!ids.length) return;
+  let tplId = '';
+  try {
+    const [status, templates] = await Promise.all([api('/api/conversation-status'), api('/api/conversation-templates')]);
+    tplId = status.default_template || ((templates.find(t => t.enabled) || templates[0] || {}).id || '');
+  } catch (e) { toast('读取会话模板失败：' + (e.message || e), 'err'); return; }
+  if (!tplId) { toast('还没有会话模板，请先到「会话池」创建', 'err'); return; }
+  if (!confirm(`将选中的 ${ids.length} 个账号绑定到会话模板「${tplId}」？
+
+绑定后请到「会话池」点击运行开始对话。`)) return;
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '绑定中…';
+  let ok = 0, fail = 0;
+  try {
+    for (const id of ids) {
+      try {
+        const r = await api('/api/conversation-bindings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({account_id:id, template_id:tplId})});
+        if (r.ok) ok++; else fail++;
+      } catch (e) { fail++; }
+    }
+    toast(`会话绑定完成：${ok} 个${fail ? `，${fail} 个失败` : ''}。到「会话池」运行即可开始对话`, fail ? 'err' : 'ok');
+  } finally { btn.disabled = false; btn.textContent = old; }
+}
+$('#btnBindConversationSelected').addEventListener('click', bindSelectedToConversation);
+
+async function watchAgentResult(ids) {
+  // 轮询等 Agent 生成落定后给出明确结果（否则用户以为按钮没反应）
+  const pending = new Set(ids.map(Number));
+  for (let i = 0; i < 20 && pending.size; i++) {
+    await new Promise(r => setTimeout(r, 3000));
+    try { await pollAccountPlanStatuses(); } catch (e) {}
+    for (const id of [...pending]) {
+      const acc = ACCOUNTS.find(a => Number(a.id) === Number(id));
+      const s = acc ? (acc.codex_agent_status || '') : '';
+      if (!['queued', 'running'].includes(s)) pending.delete(id);
+    }
+  }
+  const results = ids.map(id => ACCOUNTS.find(a => Number(a.id) === Number(id))).filter(Boolean);
+  const okCount = results.filter(a => a.codex_agent_status === 'success').length;
+  const failed = results.filter(a => a.codex_agent_status === 'failed');
+  if (failed.length) {
+    const raw = String(failed[0].codex_agent_error || '');
+    const friendly = raw.includes('agent_registry_not_enabled')
+      ? '该账号未开通 Agent Registry（OpenAI 侧权限，free 账号通常无此权限）'
+      : (raw || '未知原因').slice(0, 120);
+    toast(`Agent 生成：成功 ${okCount} 个，失败 ${failed.length} 个。首个原因：${friendly}`, 'err');
+  } else if (okCount) {
+    toast(`Agent 生成完成：成功 ${okCount} 个`, 'ok');
+  }
+}
 
 // ---------- 邮箱池 ----------
 function poolKey(r) { return `${r.source || $('#poolSource')?.value || 'outlook'}|${r.email || ''}`; }

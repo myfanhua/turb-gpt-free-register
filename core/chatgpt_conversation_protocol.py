@@ -142,17 +142,23 @@ class ChatGPTConversationProtocol:
         prefix = _BASE + "/backend-api/sentinel/chat-requirements"
         prepare = self._json(self.session.post(prefix + "/prepare", headers=self._headers(sse=False), json={"p": p_token}, timeout=self.timeout), "chat requirements prepare")
         turnstile = prepare.get("turnstile") or {}
+        turnstile_token = ""
         if turnstile.get("required"):
-            raise ConversationProtocolError("chat requirements 需要 Turnstile；当前登录态缺少已验证 token", stage="chat_requirements", http_status=None)
+            dx = str(turnstile.get("dx") or "")
+            if dx:
+                from core.turnstile_solver import solve_turnstile_token
+                turnstile_token = solve_turnstile_token(dx, p_token) or ""
+            if not turnstile_token:
+                raise ConversationProtocolError("chat requirements 需要 Turnstile 且本地求解失败", stage="chat_requirements", http_status=None)
         proof = ""
         pow_data = prepare.get("proofofwork") or {}
         if pow_data.get("required"):
             proof = get_enforcement_token(prepare, "", "", sid, profile=profile)
-        finalized = self._json(self.session.post(prefix + "/finalize", headers=self._headers(sse=False), json={"prepare_token": prepare.get("prepare_token", ""), "proof_token": proof, "turnstile_token": ""}, timeout=self.timeout), "chat requirements finalize")
+        finalized = self._json(self.session.post(prefix + "/finalize", headers=self._headers(sse=False), json={"prepare_token": prepare.get("prepare_token", ""), "proof_token": proof, "turnstile_token": turnstile_token}, timeout=self.timeout), "chat requirements finalize")
         token = str(finalized.get("token") or "")
         if not token:
             raise ConversationProtocolError("chat requirements finalize 缺少 token", stage="chat_requirements_finalize")
-        return {"token": token, "proof_token": proof, "turnstile_token": "", "so_token": finalized.get("so_token", "")}
+        return {"token": token, "proof_token": proof, "turnstile_token": turnstile_token, "so_token": finalized.get("so_token", "")}
 
     def stream_message(self, message: str, *, conversation_id: str = "", model: str = "auto") -> ConversationCompletion:
         requirements = self.chat_requirements()
