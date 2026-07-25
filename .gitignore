@@ -94,3 +94,7 @@ exports/
 are-capture-*.jsonl
 Default-all-domains-*.json
 *.har
+
+# 本地诊断/参考目录
+_ref_*/
+_diag_*.py

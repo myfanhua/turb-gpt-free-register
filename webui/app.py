@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 from flask import Flask, Response, jsonify, render_template, request
 
 from core import codex_retry_service, db, plan_check_service, extract_link_service, codex_agent_service, session_refresh
+from core import codex_oauth_service
 from webui.auth import init_auth, register_auth_routes
 from core import registration_service as svc
 from webui import config_editor
@@ -203,6 +204,9 @@ def create_app(auth_code: str | None = None) -> Flask:
     recovered_codex_agents = db.recover_interrupted_codex_agents()
     if recovered_codex_agents:
         logger.warning("已恢复 %s 个因 WebUI 重启中断的 Codex Agent Token 状态", recovered_codex_agents)
+    recovered_codex_oauth = codex_oauth_service.recover_interrupted()
+    if recovered_codex_oauth:
+        logger.warning("已恢复 %s 个因 WebUI 重启中断的 Codex 授权状态", recovered_codex_oauth)
 
     # ----------------------------------------------------------
     # 页面
@@ -272,8 +276,15 @@ def create_app(auth_code: str | None = None) -> Flask:
                     _extra_syn = _json_syn.loads(_extra_syn) if _extra_syn.strip() else {}
                 _syn = (_extra_syn.get("synthetic_auth") or {}) if isinstance(_extra_syn, dict) else {}
                 item["synthetic_auth_status"] = str(_syn.get("status") or "")
+                _co = (_extra_syn.get("codex_oauth") or {}) if isinstance(_extra_syn, dict) else {}
+                item["codex_oauth_status"] = str(_co.get("status") or "")
+                item["codex_oauth_message"] = str(_co.get("message") or "")[:120]
+                item["codex_oauth_filename"] = str(_co.get("filename") or "")
             except Exception:
                 item["synthetic_auth_status"] = ""
+                item["codex_oauth_status"] = ""
+                item["codex_oauth_message"] = ""
+                item["codex_oauth_filename"] = ""
             for sensitive_key in ("extra_json", "access_token", "refresh_token", "password", "totp_secret", "copy_line", "original_email_line", "client_id", "id_token", "registration_password", "codex_agent_token"):
                 item.pop(sensitive_key, None)
             safe.append(item)
@@ -484,6 +495,37 @@ def create_app(auth_code: str | None = None) -> Flask:
             }})
         except Exception:
             pass
+
+    # ----------------------------------------------------------
+    # Codex OAuth 真凭证授权（接码）。与 synthetic 转化不同，产出的是
+    # 含真 refresh_token 的 CLIProxyAPI 格式 auth.json，可直接导入
+    # Cockpit / Sub2API 并真实调用 Codex。
+    # ----------------------------------------------------------
+    @app.get("/api/codex-oauth/preflight")
+    def api_codex_oauth_preflight():
+        return jsonify({"ok": True, **codex_oauth_service.preflight()})
+
+    @app.post("/api/accounts/<int:acc_id>/codex-oauth")
+    def api_account_codex_oauth(acc_id: int):
+        acc = db.get_account(acc_id)
+        if not acc:
+            return jsonify({"ok": False, "error": "账号不存在"}), 404
+        res = codex_oauth_service.enqueue_accounts([acc_id])
+        if not res["queued"]:
+            reason = res["skipped"][0]["reason"] if res["skipped"] else "未知原因"
+            return jsonify({"ok": False, "error": reason}), 409
+        return jsonify({"ok": True, **res})
+
+    @app.post("/api/accounts/codex-oauth-bulk")
+    def api_accounts_codex_oauth_bulk():
+        data = request.get_json(silent=True) or {}
+        raw_ids = data.get("account_ids") or data.get("ids") or []
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
+        res = codex_oauth_service.enqueue_accounts(raw_ids[:200])
+        if not res["queued"]:
+            return jsonify({"ok": False, "error": "没有可入队的账号", "skipped": res["skipped"]}), 422
+        return jsonify({"ok": True, **res})
 
     @app.post("/api/accounts/<int:acc_id>/synthetic-auth")
     def api_account_synthetic_auth(acc_id: int):
