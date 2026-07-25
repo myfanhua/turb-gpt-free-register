@@ -495,6 +495,12 @@
     .stat-active { outline: 2px solid #4f7cff; outline-offset: 2px; }
     .drawer-actions-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
     .drawer-actions-grid button { width: 100%; }
+    .conv-acc-list { max-height: 168px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 4px; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px; }
+    .conv-acc-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+    .conv-acc-item:hover { background: #f1f5ff; }
+    .conv-acc-item input { width: auto; min-height: auto; }
+    .conv-acc-item.is-bound { opacity: .55; cursor: default; }
+    .conv-acc-item .bound-tag { margin-left: auto; }
     @media (max-width: 650px) { .drawer-actions-grid { grid-template-columns: 1fr; } }
     .account-drawer:not(.hidden) { border-radius: 14px 0 0 14px; }
     .drawer-actions button {
@@ -535,7 +541,6 @@
     <button data-tab="codex">Codex 授权</button>
     <button data-tab="outlook">邮箱池</button>
     <button data-tab="conversation">会话池</button>
-    <button data-tab="export">导出</button>
     <button data-tab="config">配置</button>
   </div>
 
@@ -580,9 +585,17 @@
       </div>
       <div class="body">
         <div class="row" style="align-items:flex-end;">
-          <div><label class="fld">账号<select id="convBindAccount"></select></label></div>
+          <div style="flex:1;min-width:320px;">
+            <label class="fld">账号（可多选；已绑定的自动跳过）</label>
+            <div id="convBindAccounts" class="conv-acc-list"></div>
+            <div class="btn-group" style="margin-top:6px;">
+              <button class="btn" id="btnConvAccAll" type="button">全选</button>
+              <button class="btn" id="btnConvAccNone" type="button">清空</button>
+              <span class="muted" id="convAccSelHint" style="align-self:center;">已选 0</span>
+            </div>
+          </div>
           <div><label class="fld">模板<select id="convBindTemplate"></select></label></div>
-          <div class="action-cell"><button class="btn primary" id="btnConvBind">绑定</button></div>
+          <div class="action-cell"><button class="btn primary" id="btnConvBind">绑定选中账号</button></div>
         </div>
         <div class="table-wrap" style="margin-top:10px;">
           <table class="accounts-table">
@@ -591,14 +604,6 @@
           </table>
         </div>
       </div>
-    </section>
-  </div>
-
-  <!-- ============ 导出 ============ -->
-  <div id="tab-export" class="hidden">
-    <section class="card">
-      <div class="head"><h2>账号资产导出</h2><p>先在“账号资产”选择账号，再导出 Sub2API、Cockpit 或受控完整资产文件。敏感内容不会嵌入页面或接口响应。</p></div>
-      <div class="body"><button class="btn primary" id="btnGoAccountsExport">前往账号资产并选择导出</button></div>
     </section>
   </div>
 
@@ -1004,7 +1009,7 @@ async function api(url, opts) {
 
 // ---------- Tab 切换 ----------
 function activateTab(tab, persist=true) {
-  const allowed = ['register','accounts','codex','outlook','conversation','export','config'];
+  const allowed = ['register','accounts','codex','outlook','conversation','config'];
   if (!allowed.includes(tab)) tab = 'register';
   $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
   allowed.forEach(t => $('#tab-'+t).classList.toggle('hidden', t !== tab));
@@ -1017,7 +1022,6 @@ function activateTab(tab, persist=true) {
   if (tab === 'register') refreshJobs();
 }
 $$('nav button').forEach(b => b.addEventListener('click', () => activateTab(b.dataset.tab)));
-$('#btnGoAccountsExport').addEventListener('click', () => activateTab('accounts'));
 
 // ---------- 会话池 ----------
 let CONV_TEMPLATES = [], CONV_BINDINGS = [], CONV_STATUS = {}, CONV_ACCOUNTS = [], convTimer = null;
@@ -1116,14 +1120,35 @@ function renderConvBindings() {
   }).join('') || '<tr><td colspan="6" class="muted">暂无绑定。选择账号和模板后点击「绑定」。</td></tr>';
 }
 
+function _convSelectedAccounts() {
+  return Array.from(document.querySelectorAll('.conv-acc-check:checked')).map(x => Number(x.value));
+}
+function _convUpdateAccHint() {
+  const h = $('#convAccSelHint');
+  if (h) h.textContent = `已选 ${_convSelectedAccounts().length}`;
+}
 function renderConvBindOptions() {
-  const accSel = $('#convBindAccount'), tplSel = $('#convBindTemplate');
-  if (!accSel || !tplSel) return;
-  const keepAcc = accSel.value, keepTpl = tplSel.value;
-  accSel.innerHTML = CONV_ACCOUNTS.map(a => `<option value="${a.id}">${esc(a.email)}</option>`).join('') || '<option value="">（无账号）</option>';
-  tplSel.innerHTML = CONV_TEMPLATES.map(t => `<option value="${esc(t.id)}">${esc(t.name)}（${t.message_count} 条）</option>`).join('') || '<option value="">（无模板）</option>';
-  if (keepAcc) accSel.value = keepAcc;
-  if (keepTpl) tplSel.value = keepTpl;
+  const listEl = $('#convBindAccounts'), tplSel = $('#convBindTemplate');
+  if (!listEl || !tplSel) return;
+  const accSig = CONV_ACCOUNTS.map(a => a.id).join(',') + '|' + CONV_BINDINGS.length;
+  if (listEl.dataset.sig !== accSig) {
+    const prevSel = new Set(Array.from(listEl.querySelectorAll('.conv-acc-check:checked')).map(x => Number(x.value)));
+    const boundAccs = new Set(CONV_BINDINGS.map(b => Number(b.account_id)));
+    listEl.innerHTML = CONV_ACCOUNTS.map(a => {
+      const id = Number(a.id);
+      const isBound = boundAccs.has(id);
+      return `<label class="conv-acc-item ${isBound ? 'is-bound' : ''}"><input type="checkbox" class="conv-acc-check" value="${id}" ${prevSel.has(id) && !isBound ? 'checked' : ''} ${isBound ? 'disabled' : ''}><span>${esc(a.email)}</span>${isBound ? '<span class="pill status-used bound-tag">已绑定</span>' : ''}</label>`;
+    }).join('') || '<div class="muted" style="padding:8px;">（无账号，请先到注册页注册）</div>';
+    listEl.dataset.sig = accSig;
+    _convUpdateAccHint();
+  }
+  const keepTpl = tplSel.value;
+  const tplSig = CONV_TEMPLATES.map(t => t.id).join(',');
+  if (tplSel.dataset.sig !== tplSig) {
+    tplSel.innerHTML = CONV_TEMPLATES.map(t => `<option value="${esc(t.id)}">${esc(t.name)}（${t.message_count} 条）</option>`).join('') || '<option value="">（无模板）</option>';
+    tplSel.dataset.sig = tplSig;
+    if (keepTpl) tplSel.value = keepTpl;
+  }
 }
 
 async function convSaveTemplate() {
@@ -1167,15 +1192,23 @@ async function convDeleteTemplate(id, btn) {
 }
 
 async function convBind() {
-  const accountId = Number($('#convBindAccount').value);
+  const ids = _convSelectedAccounts();
   const templateId = $('#convBindTemplate').value;
-  if (!accountId || !templateId) { toast('请先选择账号和模板', 'err'); return; }
+  if (!ids.length) { toast('请先勾选至少一个账号', 'err'); return; }
+  if (!templateId) { toast('请先选择模板', 'err'); return; }
+  const btn = $('#btnConvBind');
+  btn.disabled = true;
+  let ok = 0, fail = 0;
   try {
-    const r = await api('/api/conversation-bindings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({account_id:accountId, template_id:templateId})});
-    if (!r.ok) throw new Error(r.error || '绑定失败');
-    toast('绑定成功，可点击「运行」开始对话', 'ok');
+    for (const accountId of ids) {
+      try {
+        const r = await api('/api/conversation-bindings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({account_id:accountId, template_id:templateId})});
+        if (r.ok) ok++; else fail++;
+      } catch (e) { fail++; }
+    }
+    toast(`绑定完成：${ok} 个成功${fail ? `，${fail} 个失败` : ''}，可点「运行」开始对话`, fail ? 'err' : 'ok');
     loadConversation();
-  } catch (e) { toast(e.message || String(e), 'err'); }
+  } finally { btn.disabled = false; }
 }
 
 async function convRun(accountId, templateId, retry) {
@@ -1211,6 +1244,9 @@ $('#btnConvSaveTemplate').addEventListener('click', convSaveTemplate);
 $('#btnConvSeedTemplate').addEventListener('click', convSeedTemplate);
 $('#btnConvRefresh').addEventListener('click', loadConversation);
 $('#btnConvBind').addEventListener('click', convBind);
+$('#btnConvAccAll').addEventListener('click', () => { document.querySelectorAll('.conv-acc-check:not(:disabled)').forEach(c => { c.checked = true; }); _convUpdateAccHint(); });
+$('#btnConvAccNone').addEventListener('click', () => { document.querySelectorAll('.conv-acc-check').forEach(c => { c.checked = false; }); _convUpdateAccHint(); });
+$('#convBindAccounts').addEventListener('change', _convUpdateAccHint);
 $('#btnConvRunAll').addEventListener('click', convRunAll);
 $('#convTemplatesBody').addEventListener('click', async (e) => {
   const editBtn = e.target.closest('[data-conv-tpl-edit]');
