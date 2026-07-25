@@ -16,7 +16,7 @@ from config.env_loader import env_str, apply_env_overrides
 #   "cloak"        = 调用 CloakBrowser + Playwright/Selenium 适配层注册
 #   "browser_use"  = Browser Use Cloud stealth Chromium + Playwright
 #   "skyvern"      = Skyvern Browser Sessions + Playwright
-REGISTRATION_DRIVER: str = "browser_use"
+REGISTRATION_DRIVER: str = "cloak"
 
 # RoxyBrowser 本地 API
 ROXY_API_BASE: str = "http://127.0.0.1:50100"

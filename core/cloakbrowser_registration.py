@@ -8,7 +8,7 @@ from pathlib import Path
 
 from config import cloakbrowser as _cfg
 from config import twofa as _twofa_cfg
-from core.account_export import save_account_data
+from core.account_export import save_account_data, build_auth_artifacts
 from core.cloakbrowser_driver import build_cloak_driver
 from core.email_provider import wait_for_otp, resolve_email_source
 from core.humanize import delay as human_delay
@@ -107,7 +107,7 @@ def run_cloak_registration(email: str, name: str, birthday: str, proxy: str = No
         }
         try:
             from config import codex as _codex_cfg
-            if bool(getattr(_codex_cfg, "ENABLE_CODEX_AUTO", False)):
+            if bool(getattr(_codex_cfg, "ENABLE_CODEX_AUTO", False)) and not bool(getattr(_codex_cfg, "CODEX_SYNTHETIC_AUTH_ENABLE", False)):  # synthetic 转化开启时跳过接码 OAuth
                 from core.roxy_codex_oauth import run_roxy_codex_oauth
                 logger.info("[Cloak注册][Codex] ENABLE_CODEX_AUTO=True，复用当前 CloakBrowser 窗口执行 Codex 授权")
                 _check_manual_stop()
@@ -131,12 +131,14 @@ def run_cloak_registration(email: str, name: str, birthday: str, proxy: str = No
             email_source=resolve_email_source(email),
             proxy_used=((opened.raw or {}).get("proxy") if opened else None) or proxy or None,
             batch_dir=batch_dir,
+            trigger_post_register=True,
             extra={
                 "user": session_info.get("user"),
                 "account": session_info.get("account"),
                 "expires": session_info.get("expires"),
                 "cloakbrowser": {"profile_id": opened.profile_id, "open_result": opened.raw},
                 "registration_password": openai_password,
+                "auth_artifacts": build_auth_artifacts(access_token, registration_password=openai_password, session_data=session_info),
                 "codex": codex_result,
             },
         )

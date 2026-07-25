@@ -694,6 +694,36 @@ def update_account_codex_status(email: str, codex_status: str, codex_error: str 
         return True
 
 
+def merge_account_extra(account_id: int, patch: dict) -> bool:
+    """安全合并账号 extra_json；仅用于非敏感工作流摘要。"""
+    with _LOCK:
+        accounts = _load_accounts()
+        row = next((r for r in accounts if int(r.get("id") or 0) == int(account_id)), None)
+        if row is None: return False
+        try: extra = json.loads(row.get("extra_json") or "{}")
+        except (TypeError, ValueError): extra = {}
+        if not isinstance(extra, dict): extra = {}
+        extra.update(patch)
+        row["extra_json"] = json.dumps(extra, ensure_ascii=False)
+        row["updated_at"] = _now()
+        _save_accounts(accounts)
+        return True
+
+
+def claim_post_register_workflow(account_id: int) -> bool:
+    """原子领取一次注册后工作流；success/skipped/running/partial/failed 均不自动重跑。"""
+    with _LOCK:
+        accounts = _load_accounts(); row = next((r for r in accounts if int(r.get("id") or 0) == int(account_id)), None)
+        if row is None: return False
+        try: extra = json.loads(row.get("extra_json") or "{}")
+        except (TypeError, ValueError): extra = {}
+        prior = (extra.get("post_register_workflow") or {}).get("status") if isinstance(extra, dict) else None
+        if prior in {"success", "skipped", "running", "partial", "failed"}: return False
+        extra["post_register_workflow"] = {"status": "running", "completed_count": 0, "conversation_id": "", "errors": []}
+        row["extra_json"] = json.dumps(extra, ensure_ascii=False); row["updated_at"] = _now(); _save_accounts(accounts)
+        return True
+
+
 def claim_account_codex_agent(acc_id: int, trigger: str = "manual") -> bool:
     """原子占用账号 Codex Agent Token 生成任务；已有未超时任务时返回 False。"""
     with _LOCK:
@@ -1155,6 +1185,43 @@ def update_account_note(acc_id: int, note: str) -> bool:
         return True
 
 
+def update_account_auth_session(
+    acc_id: int,
+    *,
+    access_token: str,
+    session_data: dict,
+    cookies: dict | None = None,
+    token_expires_at: str | None = None,
+) -> bool:
+    """保存通过官方 session endpoint 得到的新登录态；调用方不得记录凭证。"""
+    with _LOCK:
+        rows = _load_accounts()
+        row = next((r for r in rows if int(r.get("id") or 0) == int(acc_id)), None)
+        if row is None:
+            return False
+        try:
+            extra = json.loads(row.get("extra_json") or "{}")
+        except (TypeError, ValueError):
+            extra = {}
+        if not isinstance(extra, dict):
+            extra = {}
+        artifacts = extra.get("auth_artifacts")
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+        artifacts["access_token"] = str(access_token or "")
+        artifacts["session"] = dict(session_data or {})
+        if cookies is not None:
+            artifacts["cookies"] = dict(cookies)
+        extra["auth_artifacts"] = artifacts
+        row["access_token"] = str(access_token or "")
+        row["extra_json"] = json.dumps(extra, ensure_ascii=False)
+        row["expires_at"] = str(session_data.get("expires") or token_expires_at or row.get("expires_at") or "")
+        row["token_expires_at"] = token_expires_at or row.get("token_expires_at")
+        row["updated_at"] = _now()
+        _save_accounts(rows)
+        return True
+
+
 def update_accounts_note(account_ids: list[int] | None, note: str) -> tuple[list[dict], list[dict]]:
     """
     批量更新已注册账号备注。
@@ -1550,10 +1617,21 @@ def import_generic_api_emails(records: list[dict]) -> tuple[int, int]:
     records 元素：{email, code_url}
     返回 (新增数, 跳过数)。
     """
+    # 完整 Assurivo 查询 URL 绝不留在 generic_api：先路由到其独立状态池。
+    from core.assurivo_mail_client import parse_material_line, import_records as import_assurivo_records
+    assurivo_records, generic_records = [], []
+    for raw in records:
+        email = (raw.get("email") or "").strip()
+        code_url = (raw.get("code_url") or raw.get("url") or "").strip()
+        if parse_material_line(f"{email}----{code_url}") is not None:
+            assurivo_records.append(raw)
+        else:
+            generic_records.append(raw)
+    assurivo_inserted, assurivo_skipped = import_assurivo_records(assurivo_records)
     with _LOCK:
         rows = _load_generic_api_emails()
         inserted = skipped = 0
-        for raw in records:
+        for raw in generic_records:
             email = (raw.get("email") or "").strip()
             code_url = (raw.get("code_url") or raw.get("url") or "").strip()
             if not email or not code_url:
@@ -1575,7 +1653,7 @@ def import_generic_api_emails(records: list[dict]) -> tuple[int, int]:
             rows.append(row)
             inserted += 1
         _save_generic_api_emails(rows)
-        return inserted, skipped
+        return inserted + assurivo_inserted, skipped + assurivo_skipped
 
 
 def claim_next_generic_api_email() -> dict | None:
@@ -1914,6 +1992,7 @@ def update_job(
     *,
     status: str | None = None,
     email: str | None = None,
+    email_source: str | None = None,
     error: str | None = None,
     started_at: str | None = None,
     completed_at: str | None = None,
@@ -1928,6 +2007,8 @@ def update_job(
             row["status"] = status
         if email is not None:
             row["email"] = email
+        if email_source is not None:
+            row["email_source"] = email_source
         if error is not None:
             row["error_message"] = error
         if started_at is not None:

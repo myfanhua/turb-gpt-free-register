@@ -7,6 +7,31 @@ import random
 from datetime import date, timedelta
 
 
+_JAPANESE_ROMAJI_GIVEN_NAMES = (
+    "Haruto", "Yuto", "Sota", "Ren", "Yuki", "Kaito", "Takumi", "Daiki",
+    "Hinata", "Riku", "Sakura", "Yui", "Aoi", "Hina", "Mei", "Rin",
+    "Akari", "Mio", "Koharu", "Nanami",
+)
+_JAPANESE_ROMAJI_FAMILY_NAMES = (
+    "Sato", "Suzuki", "Takahashi", "Tanaka", "Watanabe", "Ito", "Yamamoto",
+    "Nakamura", "Kobayashi", "Kato", "Yoshida", "Yamada", "Sasaki", "Yamaguchi",
+    "Matsumoto", "Inoue", "Shimizu", "Hayashi", "Saito", "Ishikawa",
+)
+
+
+def generate_display_name(locale: str = "ja", *, rng: random.Random | None = None) -> str:
+    """生成符合注册接口限制的 ASCII 显示名。
+
+    目前支持 ``ja``：使用日式罗马字名（例如 ``Haruto Sato``），不输出日文汉字或
+    假名。显式传入未知地区会抛错，避免在无提示的情况下变回不确定的名称策略。
+    """
+    normalized = str(locale or "ja").strip().lower().replace("_", "-")
+    if normalized not in {"ja", "ja-jp"}:
+        raise ValueError(f"不支持的 REGISTER_NAME_LOCALE: {locale!r}（当前仅支持 ja）")
+    chooser = rng or random
+    return f"{chooser.choice(_JAPANESE_ROMAJI_GIVEN_NAMES)} {chooser.choice(_JAPANESE_ROMAJI_FAMILY_NAMES)}"
+
+
 def _shift_year_safe(day: date, years: int) -> date:
     """按年偏移日期；遇到 2 月 29 日且目标年非闰年时回退到 2 月 28 日。"""
     try:

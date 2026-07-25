@@ -7,6 +7,8 @@
 用于注册的邮箱.txt
 用于注册的API邮箱.json
 用于注册的API邮箱.txt
+用于注册的Assurivo邮箱.json
+用于注册的Assurivo邮箱.txt
 
 # 注册成功账号（含 accessToken、TOTP secret 等）
 注册成功的邮箱.json
@@ -81,3 +83,14 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+exports/
+
+# Conversation Pool 运行态（模板绑定、conversation_id、执行状态）
+会话池.json
+会话池.json.tmp
+会话池.json.bak
+
+# 抓包/调试导出（可能含 Authorization、会话 ID、设备指纹）
+are-capture-*.jsonl
+Default-all-domains-*.json
+*.har

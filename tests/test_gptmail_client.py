@@ -82,9 +82,8 @@ class GPTMailClientTests(unittest.TestCase):
         self.assertEqual(code, "654321")
 
     @patch("core.gptmail_client.time.monotonic")
-    @patch("core.gptmail_client.time.sleep")
     @patch("core.gptmail_client.requests.get")
-    def test_fetch_latest_otp_does_not_reset_settle_for_same_message(self, get, sleep, monotonic):
+    def test_probe_does_not_reset_settle_for_same_message(self, get, monotonic):
         inbox = Mock(status_code=200)
         inbox.json.return_value = {
             "success": True,
@@ -107,27 +106,27 @@ class GPTMailClientTests(unittest.TestCase):
             },
         }
         get.side_effect = lambda url, **kwargs: inbox if url.endswith("/emails") else detail
-        clock = iter([0, 0, 0, 0, 0, 3, 6])
-        monotonic.side_effect = lambda: next(clock, 6)
-        sleep_calls = []
-
-        def sleep_once(seconds):
-            sleep_calls.append(seconds)
-            if len(sleep_calls) > 1:
-                self.fail("同一封邮件不应重置 OTP settle 计时")
-
-        sleep.side_effect = sleep_once
+        monotonic.side_effect = iter([0, 0, 3, 6])
+        state = gptmail_client.GPTMailProbeState()
         with patch.object(gptmail_client._email_cfg, "GPTMAIL_API_KEY", "key-123", create=True):
-            code = gptmail_client.fetch_latest_otp(
-                "fresh@gptmail.test",
-                after_ts=200,
-                max_wait=10,
-                poll_interval=3,
-                settle_seconds=5,
-            )
+            first = gptmail_client.fetch_otp_once("fresh@gptmail.test", 200, state, settle_seconds=5)
+            second = gptmail_client.fetch_otp_once("fresh@gptmail.test", 200, state, settle_seconds=5)
+            third = gptmail_client.fetch_otp_once("fresh@gptmail.test", 200, state, settle_seconds=5)
 
-        self.assertEqual(code, "654321")
-        self.assertEqual(sleep_calls, [3])
+        self.assertEqual((first.status, second.status, third.status), ("candidate", "candidate", "completed"))
+        self.assertEqual(third.code, "654321")
+
+    @patch("core.gptmail_client.requests.get")
+    def test_probe_pending_and_after_ts_filter(self, get):
+        inbox = Mock(status_code=200)
+        inbox.json.return_value = {"success": True, "data": {"emails": [{
+            "id": "old", "timestamp": 100, "from_address": "noreply@openai.com", "subject": "Code 111111",
+        }]}}
+        get.return_value = inbox
+        with patch.object(gptmail_client._email_cfg, "GPTMAIL_API_KEY", "key-123", create=True):
+            result = gptmail_client.fetch_otp_once("fresh@gptmail.test", 200, gptmail_client.GPTMailProbeState(), settle_seconds=0)
+        self.assertEqual(result.status, "pending")
+        self.assertEqual(get.call_count, 1)
 
     @patch("core.gptmail_client.requests.get")
     def test_pick_account_reports_api_error_message(self, get):

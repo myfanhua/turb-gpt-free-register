@@ -111,6 +111,7 @@ from config.register import (
     REGISTER_EMAIL,
     REGISTER_PASSWORD,
     REGISTER_NAME,
+    REGISTER_NAME_LOCALE,
 )
 
 # ---------- 邮箱服务 ----------
@@ -121,6 +122,8 @@ from config.email import (
     OUTLOOK_API_BASE,
     OTP_POLL_INTERVAL,
     OTP_MAX_WAIT,
+    OTP_WAIT_TIMEOUT,
+    OTP_RETRY_COUNT,
     OTP_SETTLE_SECONDS,
     EMAIL_DOMAIN,
     QQ_IMAP_SERVER,
@@ -149,6 +152,9 @@ from config.email import (
     CLOUDMAIL_DOMAINS,
     CLOUDMAIL_AUTO_ADD_USER,
     CLOUDMAIL_RANDOM_LOCAL_LENGTH,
+    ASSURIVO_ACCOUNTS_FILE,
+    ASSURIVO_REQUEST_TIMEOUT,
+    ASSURIVO_RESULT_LIMIT,
 )
 
 # ---------- 2FA ----------
@@ -163,6 +169,7 @@ from config.twofa import ENABLE_2FA
 import importlib as _importlib
 
 _RELOADABLE_SUBMODULES = (
+    "config.post_register",
     "config.browser",
     "config.openai_protocol",
     "config.proxy",
@@ -207,9 +214,9 @@ def reload_all() -> list[str]:
 def _refresh_top_level_constants() -> None:
     """把刚 reload 的子模块的常量重新拷一份到 config 包顶层。"""
     import config as _self
-    from config import browser, openai_protocol, proxy as _proxy, register, email, twofa, roxybrowser, cloakbrowser, browser_use, skyvern, codex, extract_link, sub2api, humanize, flow_trigger
+    from config import browser, openai_protocol, proxy as _proxy, register, email, twofa, roxybrowser, cloakbrowser, browser_use, skyvern, codex, extract_link, sub2api, humanize, flow_trigger, post_register
     # 简单粗暴：枚举一遍重要常量，覆盖到 _self
-    for src in (browser, openai_protocol, _proxy, register, email, twofa, roxybrowser, cloakbrowser, browser_use, skyvern, codex, extract_link, sub2api, humanize, flow_trigger):
+    for src in (browser, openai_protocol, _proxy, register, email, twofa, roxybrowser, cloakbrowser, browser_use, skyvern, codex, extract_link, sub2api, humanize, flow_trigger, post_register):
         for k in dir(src):
             if k.isupper() or k in ("pick_proxy", "pick_browser_profile", "build_browser_environment", "validate_browser_profile"):
                 setattr(_self, k, getattr(src, k))
@@ -242,11 +249,11 @@ __all__ = [
     "PLAN_CHECK_REGISTRATION_RECHECK_DELAY", "PLAN_CHECK_WORKERS", "PLAN_CHECK_QUEUE_LIMIT",
     "PLAN_CHECK_MIN_INTERVAL", "PLAN_CHECK_JITTER", "pick_proxy", "PROXY",
     # register
-    "REGISTER_EMAIL", "REGISTER_PASSWORD", "REGISTER_NAME",
+    "REGISTER_EMAIL", "REGISTER_PASSWORD", "REGISTER_NAME", "REGISTER_NAME_LOCALE",
     # email
     "USE_EMAIL_SERVICE", "EMAIL_SOURCE",
     "OUTLOOK_ACCOUNTS_FILE", "OUTLOOK_API_BASE",
-    "OTP_POLL_INTERVAL", "OTP_MAX_WAIT", "OTP_SETTLE_SECONDS",
+    "OTP_POLL_INTERVAL", "OTP_MAX_WAIT", "OTP_WAIT_TIMEOUT", "OTP_RETRY_COUNT", "OTP_SETTLE_SECONDS",
     "EMAIL_DOMAIN", "QQ_IMAP_SERVER", "QQ_IMAP_PORT", "QQ_EMAIL", "QQ_IMAP_PASSWORD",
     "GPTMAIL_API_KEY", "MAIL_NEST_API_KEY", "MAIL_NEST_PROJECT_CODE",
     "CLOUDFLARE_API_BASE", "CLOUDFLARE_API_KEY", "CLOUDFLARE_AUTH_MODE", "CLOUDFLARE_CUSTOM_AUTH",
@@ -256,6 +263,7 @@ __all__ = [
     "CLOUDMAIL_API_BASE", "CLOUDMAIL_ADMIN_EMAIL", "CLOUDMAIL_PASSWORD", "CLOUDMAIL_TOKEN_PATH",
     "CLOUDMAIL_AUTH_TOKEN", "CLOUDMAIL_DOMAINS",
     "CLOUDMAIL_AUTO_ADD_USER", "CLOUDMAIL_RANDOM_LOCAL_LENGTH",
+    "ASSURIVO_ACCOUNTS_FILE", "ASSURIVO_REQUEST_TIMEOUT", "ASSURIVO_RESULT_LIMIT",
     # twofa
     "ENABLE_2FA",
 ]

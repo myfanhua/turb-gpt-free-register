@@ -7,6 +7,8 @@ Outlook 邮箱账号池配置。
     2. 每行格式：email====password====clientId====refreshToken
     3. 运行注册时会自动导入新增邮箱
 """
+import os
+
 from config.env_loader import env_str, apply_env_overrides
 
 
@@ -22,6 +24,7 @@ USE_EMAIL_SERVICE = False
 #   "gptmail"           — GPTMail 临时邮箱 API（运行时随机生成邮箱并自动收码）
 #   "mailnest"          — MailNest/迈巢临时邮箱 API（运行时购买邮箱并自动收码）
 #   "cloudmail"         — CloudMail/Cloud Mail API（自动从平台获取域名并随机生成邮箱）
+#   "assurivo"          — 本地 Assurivo 素材池（email----完整 Assurivo 查询 URL）
 EMAIL_SOURCE = "outlook,generic_api,mailnest"
 
 
@@ -45,8 +48,18 @@ OUTLOOK_API_BASE = "https://mail.chatai.codes"
 # OTP 轮询参数
 # ============================================================
 
-OTP_POLL_INTERVAL = 3
+OTP_POLL_INTERVAL = 20
 OTP_MAX_WAIT = 90
+
+# 新统一 OTP 策略预留：尚未接入现有驱动。新部署默认 120 秒；已有部署若只在
+# .env 设置 OTP_MAX_WAIT，则该旧值作为回退别名，接入后 OTP_RETRY_COUNT 表示额外重发次数。
+OTP_WAIT_TIMEOUT = 120
+OTP_RETRY_COUNT = 3
+# 首次观察到验证码后最多再观察多久；窗口内有新码则切换，静默后才提交。
+OTP_POST_DETECT_SETTLE = 60
+# Assurivo 触发前快照可用时，允许邮件时间与本机/服务端时钟最多偏差多少秒；
+# 同时仍必须排除快照中的旧验证码。快照不可用时改为严格 after_ts。
+OTP_FRESHNESS_WINDOW_SECONDS = 180
 
 # Outlook 双协议取件：抓到一封 OTP 后再多等多少秒看是否有更晚到达的邮件。
 OTP_SETTLE_SECONDS = 5
@@ -147,5 +160,17 @@ CLOUDMAIL_AUTO_ADD_USER = True
 # 随机邮箱 local-part 长度。
 CLOUDMAIL_RANDOM_LOCAL_LENGTH = 12
 
+# ============================================================
+# Assurivo 本地素材池
+# ============================================================
+ASSURIVO_ACCOUNTS_FILE = "用于注册的Assurivo邮箱.txt"
+ASSURIVO_REQUEST_TIMEOUT = 20
+ASSURIVO_RESULT_LIMIT = 20
+ASSURIVO_TIMEZONE = "Asia/Shanghai"
+
 # ---- .env overrides for WebUI editable fields ----
-apply_env_overrides(globals(), {'USE_EMAIL_SERVICE': 'bool', 'OTP_MAX_WAIT': 'int', 'OTP_POLL_INTERVAL': 'int', 'EMAIL_SOURCE': 'str', 'EMAIL_DOMAIN': 'str', 'QQ_EMAIL': 'str', 'QQ_IMAP_PASSWORD': 'str', 'GPTMAIL_API_KEY': 'str', 'OUTLOOK_FETCH_MODE': 'str', 'MAIL_NEST_API_KEY': 'str', 'MAIL_NEST_PROJECT_CODE': 'str', 'CLOUDFLARE_API_BASE': 'str', 'CLOUDFLARE_API_KEY': 'str', 'CLOUDFLARE_AUTH_MODE': 'str', 'CLOUDFLARE_CUSTOM_AUTH': 'str', 'CLOUDFLARE_PATH_DOMAINS': 'str', 'CLOUDFLARE_PATH_ACCOUNTS': 'str', 'CLOUDFLARE_PATH_TOKEN': 'str', 'CLOUDFLARE_PATH_MESSAGES': 'str', 'CLOUDFLARE_DEFAULT_DOMAINS': 'list_str_multiline', 'CLOUDFLARE_REQUEST_TIMEOUT': 'int', 'CLOUDFLARE_NAME_LENGTH': 'int', 'CLOUDMAIL_API_BASE': 'str', 'CLOUDMAIL_ADMIN_EMAIL': 'str', 'CLOUDMAIL_PASSWORD': 'str', 'CLOUDMAIL_TOKEN_PATH': 'str', 'CLOUDMAIL_AUTH_TOKEN': 'str', 'CLOUDMAIL_DOMAINS': 'list_str_multiline', 'CLOUDMAIL_AUTO_ADD_USER': 'bool', 'CLOUDMAIL_RANDOM_LOCAL_LENGTH': 'int'})
+apply_env_overrides(globals(), {'USE_EMAIL_SERVICE': 'bool', 'OTP_MAX_WAIT': 'int', 'OTP_POLL_INTERVAL': 'int', 'OTP_WAIT_TIMEOUT': 'int', 'OTP_RETRY_COUNT': 'int', 'OTP_POST_DETECT_SETTLE': 'int', 'OTP_FRESHNESS_WINDOW_SECONDS': 'int', 'EMAIL_SOURCE': 'str', 'EMAIL_DOMAIN': 'str', 'QQ_EMAIL': 'str', 'QQ_IMAP_PASSWORD': 'str', 'GPTMAIL_API_KEY': 'str', 'OUTLOOK_FETCH_MODE': 'str', 'MAIL_NEST_API_KEY': 'str', 'GPTMAIL_API_KEY': 'str', 'OUTLOOK_FETCH_MODE': 'str', 'MAIL_NEST_API_KEY': 'str', 'MAIL_NEST_PROJECT_CODE': 'str', 'CLOUDFLARE_API_BASE': 'str', 'CLOUDFLARE_API_KEY': 'str', 'CLOUDFLARE_AUTH_MODE': 'str', 'CLOUDFLARE_CUSTOM_AUTH': 'str', 'CLOUDFLARE_PATH_DOMAINS': 'str', 'CLOUDFLARE_PATH_ACCOUNTS': 'str', 'CLOUDFLARE_PATH_TOKEN': 'str', 'CLOUDFLARE_PATH_MESSAGES': 'str', 'CLOUDFLARE_DEFAULT_DOMAINS': 'list_str_multiline', 'CLOUDFLARE_REQUEST_TIMEOUT': 'int', 'CLOUDFLARE_NAME_LENGTH': 'int', 'CLOUDMAIL_API_BASE': 'str', 'CLOUDMAIL_ADMIN_EMAIL': 'str', 'CLOUDMAIL_PASSWORD': 'str', 'CLOUDMAIL_TOKEN_PATH': 'str', 'CLOUDMAIL_AUTH_TOKEN': 'str', 'CLOUDMAIL_DOMAINS': 'list_str_multiline', 'CLOUDMAIL_AUTO_ADD_USER': 'bool', 'CLOUDMAIL_RANDOM_LOCAL_LENGTH': 'int', 'ASSURIVO_ACCOUNTS_FILE': 'str', 'ASSURIVO_REQUEST_TIMEOUT': 'int', 'ASSURIVO_RESULT_LIMIT': 'int'})
+
+# 兼容已有 .env：只设置 OTP_MAX_WAIT 而未设置新键时，沿用旧值。
+if os.getenv("OTP_WAIT_TIMEOUT") is None and os.getenv("OTP_MAX_WAIT") is not None:
+    OTP_WAIT_TIMEOUT = OTP_MAX_WAIT

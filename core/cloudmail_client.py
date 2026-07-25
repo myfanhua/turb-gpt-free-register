@@ -15,6 +15,7 @@ import requests
 
 from config import email as _email_cfg
 from core.otp_utils import extract_otp, looks_like_openai_email
+from core.otp_wait_policy import OTPProbeResult, resolve_wait_timeout, wait_for_otp_with_policy
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,13 @@ class CloudMailError(RuntimeError):
 class CloudMailAccount:
     email: str
     domain: str
+
+
+@dataclass
+class CloudMailProbeState:
+    best_otp: str | None = None
+    best_timestamp: float = float("-inf")
+    settle_until: float | None = None
 
 
 _CONTEXT_CACHE: dict[str, CloudMailAccount] = {}
@@ -344,74 +352,49 @@ def _otp_item(mail: dict) -> dict:
     }
 
 
-def fetch_latest_otp(
+def fetch_otp_once(
     email: str,
-    after_ts: float | None = None,
-    max_wait: int | None = None,
-    poll_interval: int | None = None,
+    after_ts: float | None,
+    state: CloudMailProbeState,
     settle_seconds: int | None = None,
-) -> str:
+) -> OTPProbeResult:
+    """单次 CloudMail 取码 probe；不 sleep、不维护总 deadline。"""
     target = str(email or "").strip()
     if not target:
         raise CloudMailError("CloudMail 取码缺少邮箱地址")
 
-    wait_seconds = int(max_wait if max_wait is not None else _email_cfg.OTP_MAX_WAIT)
-    interval = max(1, int(poll_interval if poll_interval is not None else _email_cfg.OTP_POLL_INTERVAL))
     settle = max(0, int(settle_seconds if settle_seconds is not None else _email_cfg.OTP_SETTLE_SECONDS))
-    deadline = time.monotonic() + max(0, wait_seconds)
-    best_otp: str | None = None
-    best_timestamp = float("-inf")
-    settle_until: float | None = None
-    last_error = "收件箱为空或尚未出现新的 OpenAI 验证码"
+    mails = _request("/api/public/emailList", {"toEmail": target, "timeSort": "desc", "type": 0, "isDel": 0, "num": 1, "size": 20})
+    if not isinstance(mails, list):
+        raise CloudMailError("CloudMail 邮件查询响应 data 不是数组")
+    for mail in sorted(mails, key=lambda item: _parse_time((item or {}).get("createTime")) or float("-inf"), reverse=True):
+        if not isinstance(mail, dict):
+            continue
+        ts = _parse_time(mail.get("createTime"))
+        if after_ts is not None and ts is not None and ts < after_ts - 30:
+            continue
+        item = _otp_item(mail)
+        if not looks_like_openai_email(item):
+            continue
+        otp = extract_otp(item)
+        if not otp:
+            continue
+        candidate_time = float("-inf") if ts is None else ts
+        if state.best_otp is None or candidate_time > state.best_timestamp or (candidate_time == state.best_timestamp and otp != state.best_otp):
+            state.best_otp = otp
+            state.best_timestamp = candidate_time
+            state.settle_until = time.monotonic() + settle
+            logger.info("[CloudMail] 锁定 OTP 候选，等待 %ss 确认", settle)
+    now = time.monotonic()
+    if state.best_otp and state.settle_until is not None and now >= state.settle_until:
+        return OTPProbeResult.completed(state.best_otp, state)
+    return OTPProbeResult.candidate(state, state.settle_until) if state.best_otp else OTPProbeResult.pending(state)
 
-    logger.info("[CloudMail] 开始轮询邮箱 %s，最长 %ss", target, wait_seconds)
-    while time.monotonic() <= deadline:
-        try:
-            mails = _request(
-                "/api/public/emailList",
-                {
-                    "toEmail": target,
-                    "timeSort": "desc",
-                    "type": 0,
-                    "isDel": 0,
-                    "num": 1,
-                    "size": 20,
-                },
-            )
-            if not isinstance(mails, list):
-                raise CloudMailError("CloudMail 邮件查询响应 data 不是数组")
-            for mail in sorted(mails, key=lambda item: _parse_time((item or {}).get("createTime")) or float("-inf"), reverse=True):
-                if not isinstance(mail, dict):
-                    continue
-                ts = _parse_time(mail.get("createTime"))
-                if after_ts is not None and ts is not None and ts < after_ts - 30:
-                    continue
-                item = _otp_item(mail)
-                if not looks_like_openai_email(item):
-                    continue
-                otp = extract_otp(item)
-                if not otp:
-                    continue
-                candidate_time = float("-inf") if ts is None else ts
-                if best_otp is None or candidate_time > best_timestamp or (candidate_time == best_timestamp and otp != best_otp):
-                    best_otp = otp
-                    best_timestamp = candidate_time
-                    settle_until = time.monotonic() + settle
-                    logger.info("[CloudMail] 锁定 OTP 候选，等待 %ss 确认", settle)
 
-            now = time.monotonic()
-            if best_otp and settle_until is not None and now >= settle_until:
-                return best_otp
-        except CloudMailError as exc:
-            last_error = str(exc)
-        except Exception as exc:
-            last_error = f"{type(exc).__name__}: {exc}"
-
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        time.sleep(min(interval, remaining))
-
-    if best_otp:
-        return best_otp
-    raise CloudMailError(f"等待 CloudMail 验证码超时: {target}; {last_error}")
+def fetch_latest_otp(email: str, after_ts: float | None = None, max_wait: int | None = None, poll_interval: int | None = None, settle_seconds: int | None = None) -> str:
+    target = str(email or "").strip()
+    if not target:
+        raise CloudMailError("CloudMail 取码缺少邮箱地址")
+    state = CloudMailProbeState()
+    timeout = resolve_wait_timeout(max_wait if max_wait is not None else getattr(_email_cfg, "OTP_WAIT_TIMEOUT", None), _email_cfg.OTP_MAX_WAIT)
+    return wait_for_otp_with_policy(provider="cloudmail", email=target, initial_after_ts=after_ts if after_ts is not None else time.time(), fetch=lambda stamp: fetch_otp_once(target, stamp, state, settle_seconds), retrigger=lambda: time.time(), wait_timeout=timeout, poll_interval=poll_interval or _email_cfg.OTP_POLL_INTERVAL, retry_count=0)

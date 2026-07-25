@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import time
+from urllib.parse import parse_qs, unquote, urlparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +20,7 @@ import requests
 
 from config import email as _email_cfg
 from core.otp_utils import extract_otp
+from core.otp_wait_policy import OTPProbeResult, resolve_wait_timeout, wait_for_otp_with_policy
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,32 @@ class GenericApiMailError(RuntimeError):
 class GenericApiEmailAccount:
     email: str
     code_url: str
+
+
+def validate_code_url(email: str, code_url: str) -> str:
+    """保留原 URL；Assurivo open.php 的 mail 参数必须和素材邮箱一致。"""
+    url = str(code_url or "").strip(); parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc: raise GenericApiMailError("取码地址必须是完整 http(s) URL")
+    if is_assurivo_open_url(url):
+        mail = unquote((parse_qs(parsed.query).get("mail") or [""])[0]).strip().lower()
+        if mail and mail != str(email).strip().lower(): raise GenericApiMailError("Assurivo 查询地址的 mail 参数与邮箱不一致")
+    return url
+
+
+def is_assurivo_open_url(code_url: str) -> bool:
+    """仅识别 Assurivo 的查询路由，不记录或重写其中的凭证参数。"""
+    parsed = urlparse(str(code_url or "").strip())
+    return bool(
+        parsed.hostname
+        and parsed.hostname.lower() == "assurivo.com"
+        and parsed.path.rstrip("/").lower() == "/console/open.php"
+    )
+
+
+@dataclass
+class GenericApiProbeState:
+    best_otp: str | None = None
+    ready_at_monotonic: float | None = None
 
 
 def _flatten_json(obj) -> str:
@@ -88,8 +116,10 @@ def _extract_code(text: str) -> str | None:
 
 def pick_account() -> GenericApiEmailAccount:
     """领取一个可用通用 API 邮箱。"""
+    from core.assurivo_mail_client import migrate_legacy_generic_api_records
     from core.db import claim_next_generic_api_email, generic_api_email_pool_summary
 
+    migrate_legacy_generic_api_records()
     inserted, skipped = import_from_file()
     if inserted:
         logger.info(f"[GenericAPI] 已自动从 {_ACCOUNTS_FILE.name} 导入 {inserted} 个邮箱（跳过 {skipped} 个）")
@@ -123,7 +153,7 @@ def import_from_file(path: str | Path | None = None) -> tuple[int, int]:
         parts = [x.strip() for x in parts]
         if len(parts) < 2:
             continue
-        records.append({"email": parts[0], "code_url": parts[1]})
+        records.append({"email": parts[0], "code_url": validate_code_url(parts[0], parts[1])})
     return import_generic_api_emails(records)
 
 
@@ -145,6 +175,27 @@ def release_account(email: str, status: str = "available", note: str | None = No
     _CONTEXT_CACHE.pop(email, None)
 
 
+def fetch_otp_once(email: str, after_ts: float | None, state: GenericApiProbeState, settle_seconds: int | None = None) -> OTPProbeResult:
+    """单次取码 probe；不 sleep、不维护总 deadline。"""
+    account = get_account_context(email)
+    if account is None: raise GenericApiMailError(f"通用 API 邮箱不存在或未导入: {email}")
+    resp = requests.get(account.code_url, headers={"Accept":"application/json,text/plain,*/*","User-Agent":"Mozilla/5.0 (compatible; gpt-register/1.0)"}, timeout=20, verify=False)
+    if resp.status_code != 200: raise GenericApiMailError(f"通用 API HTTP {resp.status_code}")
+    parsed = urlparse(account.code_url); code = None
+    if is_assurivo_open_url(account.code_url):
+        try: payload = resp.json()
+        except ValueError: payload = {"html": resp.text or ""}
+        from core.assurivo_mail_client import extract_new_openai_otp
+        code = extract_new_openai_otp(payload, float(after_ts or 0))
+    else: code = _extract_code(resp.text or "")
+    now = time.monotonic(); settle = _email_cfg.OTP_SETTLE_SECONDS if settle_seconds is None else settle_seconds
+    if code and code != state.best_otp:
+        state.best_otp, state.ready_at_monotonic = code, now + max(0, settle)
+    if state.best_otp and state.ready_at_monotonic is not None and now >= state.ready_at_monotonic:
+        return OTPProbeResult.completed(state.best_otp, state)
+    return OTPProbeResult.candidate(state, state.ready_at_monotonic) if state.best_otp else OTPProbeResult.pending(state)
+
+
 def fetch_latest_otp(
     email: str,
     after_ts: float | None = None,
@@ -152,89 +203,6 @@ def fetch_latest_otp(
     poll_interval: int | None = None,
     settle_seconds: int | None = None,
 ) -> str:
-    """
-    轮询该邮箱配置的 code_url，直到提取到 6 位验证码或超时。
-
-    settle 机制：首次拿到验证码后不立刻返回，而是继续等 OTP_SETTLE_SECONDS 秒。
-    如果期间取码地址返回了不同验证码，则替换候选并重置 settle 倒计时；
-    连续 settle 秒没有变化后才返回，避免取到接口缓存中的旧码。
-    """
-    account = get_account_context(email)
-    if account is None:
-        raise GenericApiMailError(f"通用 API 邮箱不存在或未导入: {email}")
-
-    deadline = time.time() + (max_wait or _email_cfg.OTP_MAX_WAIT)
-    interval = poll_interval or _email_cfg.OTP_POLL_INTERVAL
-    settle = settle_seconds if settle_seconds is not None else _email_cfg.OTP_SETTLE_SECONDS
-    headers = {
-        "Accept": "application/json,text/plain,*/*",
-        "User-Agent": "Mozilla/5.0 (compatible; gpt-register/1.0)",
-    }
-    last_error = ""
-    best_otp: str | None = None
-    best_seen_at: float = 0.0
-    settle_until: float | None = None
-    logger.info(
-        f"[GenericAPI] 开始轮询取码地址: {email}，"
-        f"最长 {max_wait or _email_cfg.OTP_MAX_WAIT}s, settle={settle}s"
-    )
-
-    while time.time() < deadline:
-        try:
-            resp = requests.get(account.code_url, headers=headers, timeout=20, verify=False)
-            text = resp.text or ""
-            if resp.status_code == 200:
-                code = _extract_code(text)
-                if code:
-                    now_seen = time.time()
-                    if not best_otp:
-                        best_otp = code
-                        best_seen_at = now_seen
-                        settle_until = now_seen + settle
-                        logger.info(
-                            f"[GenericAPI] 首次锁定 OTP={code}, "
-                            f"等 {settle}s 看取码接口是否出现更新验证码..."
-                        )
-                    elif code != best_otp:
-                        logger.info(
-                            f"[GenericAPI] 发现更新 OTP={code}，"
-                            f"替换之前的 {best_otp}, 重置 settle 计时"
-                        )
-                        best_otp = code
-                        best_seen_at = now_seen
-                        settle_until = now_seen + settle
-                    else:
-                        logger.debug(f"[GenericAPI] 取码接口仍返回候选 OTP={best_otp}")
-                else:
-                    last_error = f"HTTP 200 但未提取到 6 位验证码，响应预览: {text[:160]}"
-            else:
-                last_error = f"HTTP {resp.status_code}: {text[:160]}"
-        except Exception as exc:
-            last_error = f"{type(exc).__name__}: {exc}"
-
-        now = time.time()
-        if best_otp and settle_until is not None and now >= settle_until:
-            logger.info(
-                f"[GenericAPI] settle 完成，返回 OTP={best_otp}, "
-                f"候选锁定时间={time.strftime('%H:%M:%S', time.localtime(best_seen_at))}"
-            )
-            return best_otp
-
-        remaining = int(deadline - now)
-        if best_otp and settle_until is not None:
-            logger.info(
-                f"[GenericAPI] 已锁定候选 OTP={best_otp}，等 settle 中"
-                f"（剩余 settle ~{max(0, int(settle_until - now))}s, 总剩余 {remaining}s）..."
-            )
-        else:
-            logger.info(
-                f"[GenericAPI] 暂未从取码接口拿到验证码，"
-                f"{interval}s 后重试（剩余 {remaining}s）..."
-            )
-        time.sleep(interval)
-
-    if best_otp:
-        logger.warning(f"[GenericAPI] 总超时但已有候选，返回 OTP={best_otp}")
-        return best_otp
-
-    raise GenericApiMailError(f"等待通用 API 验证码超时: {email}; {last_error}")
+    state = GenericApiProbeState()
+    timeout = resolve_wait_timeout(max_wait if max_wait is not None else getattr(_email_cfg, "OTP_WAIT_TIMEOUT", None), _email_cfg.OTP_MAX_WAIT)
+    return wait_for_otp_with_policy(provider="generic_api", email=email, initial_after_ts=after_ts or time.time(), fetch=lambda stamp: fetch_otp_once(email, stamp, state, settle_seconds), retrigger=lambda: time.time(), wait_timeout=timeout, poll_interval=poll_interval or _email_cfg.OTP_POLL_INTERVAL, retry_count=0)

@@ -17,5 +17,13 @@ REGISTER_PASSWORD = ""
 # OpenAI 限制：name_invalid_chars —— 只允许字母和空格
 REGISTER_NAME = ""
 
+# 自动显示名称的罗马字地区。默认 ja 生成日式罗马字姓名（如 "Haruto Sato"）；
+# 姓名始终只含 ASCII 字母和空格，兼容 create_account 的 name_invalid_chars 限制。
+REGISTER_NAME_LOCALE = "ja"
+
 # ---- .env overrides for WebUI editable fields ----
-apply_env_overrides(globals(), {'REGISTER_EMAIL': 'str', 'REGISTER_NAME': 'str'})
+apply_env_overrides(globals(), {
+    'REGISTER_EMAIL': 'str',
+    'REGISTER_NAME': 'str',
+    'REGISTER_NAME_LOCALE': 'str',
+})

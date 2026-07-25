@@ -21,7 +21,7 @@ from typing import Any
 
 from config import browser_use as _cfg
 from config import twofa as _twofa_cfg
-from core.account_export import save_account_data
+from core.account_export import save_account_data, build_auth_artifacts
 from core.browser_use_client import BrowserUseClient
 from core.email_provider import resolve_email_source, wait_for_otp
 from core.humanize import delay as human_delay
@@ -1863,6 +1863,7 @@ def run_browser_use_registration(
             try:
                 from config import codex as _codex_cfg
                 codex_auto_enabled = bool(getattr(_codex_cfg, "ENABLE_CODEX_AUTO", False))
+                codex_auto_enabled = codex_auto_enabled and not bool(getattr(_codex_cfg, "CODEX_SYNTHETIC_AUTH_ENABLE", False))  # synthetic 转化开启时跳过接码 OAuth
                 oauth_driver = str(getattr(_codex_cfg, "CODEX_OAUTH_DRIVER", "") or "").strip() or "same_as_registration"
                 if codex_auto_enabled:
                     logger.info(
@@ -1900,6 +1901,7 @@ def run_browser_use_registration(
                 email_source=resolve_email_source(email),
                 proxy_used=proxy or f"{provider_prefix}:{session_info_open.proxy_country_code or 'default'}",
                 batch_dir=batch_dir,
+                trigger_post_register=True,
                 extra={
                     "user": session_info.get("user"),
                     "account": session_info.get("account"),
@@ -1911,6 +1913,7 @@ def run_browser_use_registration(
                         "connect": session_info_open.raw,
                     },
                     "registration_password": openai_password,
+                    "auth_artifacts": build_auth_artifacts(access_token, registration_password=openai_password, session_data=session_info),
                     "codex": codex_result,
                 },
             )

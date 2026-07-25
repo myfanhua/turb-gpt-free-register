@@ -115,6 +115,33 @@ class CFTempMailClientTests(unittest.TestCase):
         self.assertTrue(args[1].endswith("/api/mails"))
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer jwt-xyz")
 
+    @patch("core.cf_temp_mail_client.time.monotonic", side_effect=[0, 0, 3, 6])
+    @patch("core.cf_temp_mail_client.list_messages")
+    def test_probe_candidate_settles_without_internal_sleep(self, list_messages, monotonic):
+        account = client.CFTempMailAccount(email="fresh@mail.example.com", jwt="jwt-xyz")
+        client._CONTEXT_CACHE[account.email] = account
+        list_messages.return_value = [{
+            "id": "new", "timestamp": 250, "address": account.email,
+            "from": "noreply@openai.com", "subject": "Code 654321", "text": "Your code is 654321",
+        }]
+        state = client.CFTempMailProbeState()
+        first = client.fetch_otp_once(account.email, 200, state, settle_seconds=5)
+        second = client.fetch_otp_once(account.email, 200, state, settle_seconds=5)
+        third = client.fetch_otp_once(account.email, 200, state, settle_seconds=5)
+        self.assertEqual((first.status, second.status, third.status), ("candidate", "candidate", "completed"))
+        self.assertEqual(third.code, "654321")
+
+    @patch("core.cf_temp_mail_client.list_messages")
+    def test_probe_pending_filters_old_messages(self, list_messages):
+        account = client.CFTempMailAccount(email="fresh@mail.example.com", jwt="jwt-xyz")
+        client._CONTEXT_CACHE[account.email] = account
+        list_messages.return_value = [{
+            "id": "old", "timestamp": 100, "address": account.email,
+            "from": "noreply@openai.com", "subject": "Code 111111", "text": "Your code is 111111",
+        }]
+        result = client.fetch_otp_once(account.email, 200, client.CFTempMailProbeState(), settle_seconds=0)
+        self.assertEqual(result.status, "pending")
+
     def test_release_clears_context(self):
         client._CONTEXT_CACHE["a@b.com"] = client.CFTempMailAccount(email="a@b.com", jwt="t")
         client.release_account("a@b.com", status="used")

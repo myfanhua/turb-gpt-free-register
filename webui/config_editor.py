@@ -29,6 +29,20 @@ EXPLICIT_EMPTY_LIST_KEYS = {"PROXY_POOL"}
 # ============================================================
 
 EDITABLE_FIELDS = [
+    {"key": "POST_REGISTER_ENABLE", "file": "post_register.py", "type": "bool", "group": "注册后工作流", "label": "启用注册后工作流", "help": "默认关闭；默认 transport 不会发送任何请求"},
+    {"key": "MESSAGE_COUNT", "file": "post_register.py", "type": "int", "group": "注册后工作流", "label": "消息条数", "help": "0 表示不执行；不得超过消息 JSON 数组长度"},
+    {"key": "MESSAGE_LIST", "file": "post_register.py", "type": "str", "group": "注册后工作流", "label": "消息 JSON 数组", "help": "例如 [\"第一条\", \"第二条\"]；消息正文不会显示在账号摘要"},
+    {"key": "POST_REGISTER_CONVERSATION_ID", "file": "post_register.py", "type": "str", "group": "注册后工作流", "label": "续会话 ID", "help": "可选"},
+    {"key": "POST_REGISTER_TIMEOUT", "file": "post_register.py", "type": "int", "group": "注册后工作流", "label": "SSE 超时秒数", "help": "每条消息的硬上限"},
+    # ---- 会话池 ----
+    {"key": "CONVERSATION_POOL_ENABLE", "file": "conversation_pool.py", "type": "bool", "group": "会话池", "label": "启用会话池", "help": "开启后注册成功账号自动绑定默认模板；配合下方协议开关才会真实发送"},
+    {"key": "PROTOCOL_CONVERSATION_ENABLE", "file": "conversation_pool.py", "type": "bool", "group": "会话池", "label": "真实对话发送", "help": "总开关：开启后绑定才会真正向 ChatGPT 网页端发消息（五轮对话）；关闭时只排队不发送"},
+    {"key": "CONVERSATION_POOL_TIMEOUT", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "单条消息超时秒数", "help": "每条消息等待 SSE 完成的硬上限"},
+    {"key": "CONVERSATION_POOL_DEFAULT_TEMPLATE", "file": "conversation_pool.py", "type": "str", "group": "会话池", "label": "注册后默认模板 ID", "help": "注册成功后自动绑定并开跑的模板 ID；留空则不自动绑定"},
+    {"key": "CONVERSATION_POOL_MESSAGE_DELAY_MIN", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "消息间隔下限(秒)", "help": "两条消息之间的随机等待下限；拟人化节奏可显著降低风控"},
+    {"key": "CONVERSATION_POOL_MESSAGE_DELAY_MAX", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "消息间隔上限(秒)", "help": "两条消息之间的随机等待上限；建议 15-40"},
+    {"key": "CONVERSATION_POOL_START_DELAY_MIN", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "注册后启动延迟下限(秒)", "help": "注册成功后自动开跑前的随机等待下限；避免注册完立刻连发消息的机器特征"},
+    {"key": "CONVERSATION_POOL_START_DELAY_MAX", "file": "conversation_pool.py", "type": "int", "group": "会话池", "label": "注册后启动延迟上限(秒)", "help": "建议 120-600；调低更快但风控更高"},
     # ---- WebUI 授权 ----
     {
         "key": "WEBUI_AUTH_CODE", "file": "codex.py", "type": "str", "group": "WebUI 授权",
@@ -46,8 +60,12 @@ EDITABLE_FIELDS = [
         "label": "启用 Codex OAuth", "help": "注册成功后自动跑 Codex 授权（全新session+接码），落盘 codex-邮箱.json",
     },
     {
+        "key": "CODEX_SYNTHETIC_AUTH_ENABLE", "file": "codex.py", "type": "bool", "group": "功能开关",
+        "label": "免手机验证转化", "help": "开启后注册成功自动做本地 synthetic 转化（alg=none id_token），跳过需要手机验证的 Codex OAuth；refresh_token 为占位，过期需重新转化",
+    },
+    {
         "key": "REGISTRATION_DRIVER", "file": "roxybrowser.py", "type": "str", "group": "注册方式",
-        "label": "注册驱动", "help": "protocol=纯协议；roxy=RoxyBrowser；cloak=CloakBrowser；browser_use=Browser Use Cloud+Playwright；skyvern=Skyvern Browser Sessions+Playwright",
+        "label": "注册驱动", "help": "默认 cloak（纯协议风控强，默认走 CloakBrowser）；browser_use 仅在已填写 Browser Use API Key 时允许提交任务。可选 protocol / roxy / cloak / browser_use / skyvern",
     },
 
     # ---- CloakBrowser ----
@@ -281,19 +299,47 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "REGISTER_NAME", "file": "register.py", "type": "str", "group": "邮箱 / OTP",
-        "label": "显示名称", "help": "留空则自动生成英文名",
+        "label": "显示名称", "help": "留空则按名称地区自动生成；提交值只能含 ASCII 字母和空格",
+    },
+    {
+        "key": "REGISTER_NAME_LOCALE", "file": "register.py", "type": "str", "group": "邮箱 / OTP",
+        "label": "自动名称地区", "help": "默认 ja，生成 Haruto Sato 形式的日式罗马字姓名；当前仅支持 ja",
     },
     {
         "key": "OTP_MAX_WAIT", "file": "email.py", "type": "int", "group": "邮箱 / OTP",
-        "label": "OTP 最长等待(秒)", "help": "等待验证码邮件的最长秒数，超时判失败",
+        "label": "旧版 OTP 等待(秒)", "help": "兼容旧配置；未显式设置 OTP_WAIT_TIMEOUT 时作为其回退值",
+    },
+    {
+        "key": "OTP_WAIT_TIMEOUT", "file": "email.py", "type": "int", "group": "邮箱 / OTP",
+        "label": "OTP 单轮等待(秒)", "help": "统一策略每轮等待上限；优先于旧 OTP_MAX_WAIT，默认 120",
     },
     {
         "key": "OTP_POLL_INTERVAL", "file": "email.py", "type": "int", "group": "邮箱 / OTP",
         "label": "OTP 轮询间隔(秒)", "help": "每隔多少秒查一次新邮件",
     },
     {
+        "key": "OTP_RETRY_COUNT", "file": "email.py", "type": "int", "group": "邮箱 / OTP",
+        "label": "OTP 额外重发次数", "help": "统一策略接入后生效；总轮数=1+该值，不由 provider 自行重发",
+    },
+    {
+        "key": "OTP_FRESHNESS_WINDOW_SECONDS", "file": "email.py", "type": "int", "group": "邮箱 / OTP",
+        "label": "OTP 新鲜度窗口(秒)", "help": "Assurivo 触发前快照可用时允许的时钟偏差，默认 180；快照中的旧码仍会拒绝",
+    },
+    {
         "key": "EMAIL_SOURCE", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
-        "label": "邮箱来源", "help": "可填单个或多个，逗号分隔并按顺序兜底：outlook,generic_api,cloudflare_domain,cloudflare,gptmail,mailnest,cloudmail",
+        "label": "邮箱来源", "help": "可填单个或多个，逗号分隔并按顺序兜底：outlook,generic_api,cloudflare_domain,cloudflare,gptmail,mailnest,cloudmail,assurivo",
+    },
+    {
+        "key": "ASSURIVO_ACCOUNTS_FILE", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
+        "label": "Assurivo 素材文件", "help": "每行 email----查询码；状态写入同名 .json，请勿把查询码填入 Outlook 素材",
+    },
+    {
+        "key": "ASSURIVO_REQUEST_TIMEOUT", "file": "email.py", "type": "int", "group": "邮箱 / OTP",
+        "label": "Assurivo 请求超时(秒)", "help": "单次 Assurivo 控制台查询的网络超时，默认 20",
+    },
+    {
+        "key": "ASSURIVO_RESULT_LIMIT", "file": "email.py", "type": "int", "group": "邮箱 / OTP",
+        "label": "Assurivo 查询条数", "help": "每次向 Assurivo 请求的邮件条数，默认 20",
     },
     {
         "key": "GPTMAIL_API_KEY", "file": "email.py", "type": "str", "group": "邮箱 / OTP",

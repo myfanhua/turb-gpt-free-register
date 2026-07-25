@@ -1,6 +1,20 @@
-# Turb GPT Free Register
+# ChatGPT 账号资产与会话运营控制台
 
-ChatGPT / OpenAI 账号自动注册与 Codex OAuth 授权工具。当前项目支持三套注册驱动：
+本地控制台用于管理 ChatGPT 账号资产的注册、邮箱取码、账号池、受控导出与 Conversation Pool。默认主线是 protocol 注册：复用 `BrowserSession/curl_cffi` 的 TLS 指纹、登录态与 access token；Roxy、Cloak、Browser Use、Skyvern 是可选注册驱动。
+
+Conversation Pool 默认关闭。启用前必须先用脱敏 HAR 验证网页 conversation 协议与 SSE；当前不会自动发送会话消息。
+
+启用时协议 adapter 复用项目的 `BrowserSession/curl_cffi`、保存的 access token/cookies 与 Sentinel prepare/finalize，再向普通 ChatGPT conversation SSE 路由发送文本。应先以用户授权的测试账号发送一条非破坏性消息，验证登录态、反滥用挑战和 SSE；不要在源码或 `.env` 中保存真实凭证。
+
+若 `chat-requirements` 明确要求 Turnstile，程序会保存脱敏的 `stage`、`http_status` 与 `reason` 后停止，绝不会伪造或绕过挑战。只能在同一账号、同一已验证的浏览器上下文中由用户完成一次真实验证，再恢复协议会话。
+
+文本 conversation adapter 的协议字段参考已跟踪的 `chatgpt2api` 协议代码；本项目不依赖其运行时、账号池、图片能力或 Web 服务。
+
+## 注册与资产能力
+
+### 显示名称
+
+`REGISTER_NAME` 留空时，CLI 和 WebUI 使用相同的名称生成器。`REGISTER_NAME_LOCALE=ja`（默认）生成 `Haruto Sato` 一类日式罗马字姓名；不会提交日文汉字或假名，且始终满足注册接口仅接受 ASCII 字母和空格的限制。当前仅支持 `ja`。
 
 - **protocol**：原纯协议注册，基于 `curl_cffi` + Sentinel/PoW。
 - **roxy**：RoxyBrowser 指纹浏览器 + Selenium 自动化注册，兼容新版页面流，例如 `create-account/password`、`about-you` 年龄/生日表单、地区本地化页面等。
@@ -8,17 +22,32 @@ ChatGPT / OpenAI 账号自动注册与 Codex OAuth 授权工具。当前项目�
 - **browser_use**：Browser Use Cloud stealth Chromium + Playwright（可选住宅代理，无需本机安装 Roxy）。
 - **skyvern**：Skyvern Browser Sessions 云端浏览器 + Playwright CDP。
 
-项目提供 **CLI** 和 **本地 WebUI** 两种使用方式。日常推荐使用 WebUI。
+项目提供 **CLI** 和 **本地 WebUI** 两种使用方式。
 
 > 项目说明：本项目基于 [xiaoguzuiniu/gpt-free-register](https://github.com/xiaoguzuiniu/gpt-free-register) 进行改造与扩展。
-
-- TG 交流群：[https://t.me/+gu_cvEKq_vcyZWRl](https://t.me/+gu_cvEKq_vcyZWRl)
 
 > 开源版说明：仓库只保留源码、配置模板和文档；运行时账号、Token、邮箱池、Codex 凭证、日志等真实数据均已通过 `.gitignore` 排除。
 
 ---
 
 ## 功能概览
+
+### 免手机验证 Synthetic 转化（新）
+
+- 学习自 [zhishile/codex-auth-helper](https://github.com/zhishile/codex-auth-helper) 的原理：注册拿到的 ChatGPT 网页 session accessToken 本身就是凭证，本地构造 `alg=none` 的 synthetic id_token（header 带 `cpa_synthetic: true`），即可组装标准 Codex `auth.json`（`auth_mode: "chatgpt"`），**跳过需要接码的 Codex OAuth 手机验证**。
+- 纯本地转化，零网络请求、零风控增量；一键产出单账号 auth.json、Sub2API 导入文件、Cockpit 导入文件，可选直传 sub2api（codex-session 导入接口）。
+- 开关：`CODEX_SYNTHETIC_AUTH_ENABLE`（WebUI「配置 → 功能开关 → 免手机验证转化」）。开启后注册成功自动转化并跳过 Codex OAuth；关闭则走原接码流程。
+- WebUI 账号资产页支持单个/批量「一键转化」「转化并传sub2」，带结果面板与下载链接。
+- 固有限制：synthetic id_token 无签名，仅适用于不验签的下游（Codex CLI chatgpt 模式 / sub2api session 导入 / Cockpit）；refresh_token 为 sessionToken 或占位值，access token 过期后需重新转化。
+
+### 会话池五轮对话（新）
+
+- 账号绑定消息模板后逐条对话（发一条、等 SSE 答完、再发下一条），后台线程池执行，checkpoint 持久化，支持断点续跑与显式重试。
+- 开关：`CONVERSATION_POOL_ENABLE`（注册后自动绑定默认模板）+ `PROTOCOL_CONVERSATION_ENABLE`（真实发送总开关），WebUI「配置 → 会话池」可视化配置。
+- 风控抑制：注册后随机延迟 45-180 秒启动（手动运行 2-8 秒抖动），消息间随机间隔 8-25 秒（均可配置）；复用注册时的代理/浏览器画像/cookies，最多 2 个绑定并发。
+- WebUI 会话池页提供模板 CRUD、账号绑定、运行/重试/解绑/全部排队、进度与脱敏错误实时轮询；内置一键生成默认五轮中文模板。
+- 遇到 Turnstile 时绝不伪造或绕过，标记 `needs_browser_verification` 并保存脱敏诊断，需在已验证浏览器上下文完成真实验证后显式重试。
+
 
 ### 注册
 
@@ -56,6 +85,8 @@ EMAIL_SOURCE = "outlook,generic_api"
 ```
 
 - MailNest-迈巢：Outlook 临时邮箱
+- Assurivo 本地素材池：`email----查询码`，通过 Assurivo 控制台查询验证码
+- 通用 API 邮箱也支持直接导入 `email----https://assurivo.com/console/open.php?mail=...&pwd=...&limit=5`。URL 原样受控保存，`mail` 与左侧邮箱不一致会拒绝导入；它属于敏感资产，仅能经明确复制或完整资产导出操作取得。
 
 ### Codex OAuth
 
@@ -127,6 +158,19 @@ cp .env.example .env
 - `H_ADMIN_AUTH_CODE`
 
 WebUI 配置页保存这些字段时会写入 `.env`（不是 config 源码）。
+
+### 账号导出：Sub2API / Cockpit
+
+账号页选中账号后可点击“导出 Sub2API”或“导出 Cockpit”。文件写入项目根目录 `exports/`，并通过受控下载接口下载；该目录已被 Git 忽略，请按凭证文件妥善保管，勿上传或分享。
+
+- Sub2API 始终导出一个 `{ exported_at, proxies: [], accounts: [] }` 文档。
+- Cockpit 选中一个账号时导出单对象；选中多个账号时导出对象数组。
+- 导出只转换已保存账号，不会发起登录、刷新或修改账号状态。
+- 导出是静态快照，不代表 Token 会永久可用。Sub2API/Cockpit 保留 `expires_at`、`missing_credentials`、`refreshable` 与 `snapshot_only` 元数据；`refreshable=true` 仅表示明确保存了 OpenAI OAuth `refresh_token`，绝不把 Outlook 邮箱 OAuth 资产误认成 ChatGPT 刷新凭证。
+- 已保存 ChatGPT Web session/Cookie 的账号会显示“可尝试会话续期”。该操作必须由用户在 WebUI 中逐账号显式触发，只请求官方 `/api/auth/session`；遇到 401、Cloudflare 或 Turnstile 会停止并报告，绝不绕过验证。它不是 OAuth 自动刷新，也不会由导出器自动执行。
+- ChatGPT Web session 通常没有真实 OAuth `refresh_token` 或 `id_token`。缺失时会保留空字符串并在 `missing_credentials` 中提示；程序绝不会合成 JWT 或伪造认证材料。
+- 注册流程仅在当前会话实际可取得时保存 `extra_json.auth_artifacts`（注册密码、access token、session、cookies）。旧账号缺字段仍可导出，但会有缺失提示；Outlook 素材密码不会被当作 OpenAI 注册密码。
+- “完整账号资产 JSON”导出会额外包含 `email_asset`（实际可得的邮箱 provider、凭证与 Assurivo 查询入口）及 `missing_fields`。这是敏感凭证文件：API 响应不回显内容，只能通过受控下载取得；请妥善保管，勿上传或分享。
 
 ---
 
@@ -203,6 +247,25 @@ GPTMAIL_API_KEY=你的_GPTMail_API_Key
 ```
 
 服务地址固定为 `https://mail.chatgpt.org.uk`。未填写 Key 时，任务会提示填写 `GPTMail API Key`，不会使用公共测试 Key。
+
+#### Assurivo 邮箱池（`assurivo`）
+
+在项目根目录创建 `用于注册的Assurivo邮箱.txt`，每行严格为：
+
+```text
+email----查询码
+```
+
+启用方式：
+
+```dotenv
+EMAIL_SOURCE=assurivo
+# 或按顺序兜底：EMAIL_SOURCE=outlook,assurivo
+```
+
+程序会在同目录维护 `用于注册的Assurivo邮箱.json` 的领取状态；该状态与 Outlook、通用 API 邮箱池完全独立。查询码只作为 Assurivo 请求的 `pwd` 参数，不能当作邮箱密码，也不要粘贴进日志、截图或公开资料。
+
+客户端只接受带 OpenAI/ChatGPT 身份和验证语义的六位验证码邮件，并依据邮件来源时间过滤早于本轮 `after_ts` 的内容。Assurivo 返回中缺少可靠时间字段的 HTML/文本会被保守拒绝，宁可等待超时也不会冒险使用缓存旧码；真实接口字段变化时请提供脱敏样本以完善兼容。
 
 #### Cloudflare Worker 临时邮箱（`cloudflare`）
 
@@ -764,10 +827,8 @@ ROXY_OPEN_HEADLESS = False
 
 ---
 
-## 🙏 致谢
+## 技术依赖
 
-- [LINUX DO](https://linux.do) — 社区交流与用户反馈
-- [RoxyBrowser](https://roxybrowser.cn/invite/NvH4Jx) — 免费提供 5 个窗口
 - [CloakBrowser](https://github.com/CloakHQ/CloakBrowser) — Stealth Chromium / Playwright 自动化指纹浏览器支持
 - [browser-use](https://github.com/browser-use/browser-use) — Browser Use Cloud / Playwright CDP 云端浏览器能力支持
 - [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) — Codex OAuth 凭证格式参考

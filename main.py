@@ -6,8 +6,7 @@ ChatGPT 协议注册全流程入口
 import sys
 import argparse
 import logging
-import random
-import string
+import re
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
@@ -17,6 +16,7 @@ from config import twofa as _twofa_cfg
 from config import email as _email_cfg
 from config import roxybrowser as _roxy_cfg
 from config import openai_protocol as _protocol_cfg
+from config import register as _register_cfg
 from core.session import BrowserSession
 from core.chatgpt_auth import get_providers, get_csrf_token, signin_openai
 from core.openai_auth import (
@@ -36,10 +36,12 @@ from core.account_export import (
     setup_2fa,
     save_account_data,
     create_batch_archive_dir,
+    build_auth_artifacts,
+    collect_session_cookies,
 )
 from core.email_provider import acquire_email, wait_for_otp
 from core.humanize import delay as human_delay
-from core.profile_utils import generate_random_birthday
+from core.profile_utils import generate_display_name, generate_random_birthday
 
 # 配置日志
 logging.basicConfig(
@@ -121,17 +123,6 @@ def _finalize_registration_session(
     ) from last_exc
 
 
-def generate_display_name() -> str:
-    """生成只包含英文字母和空格的显示名，符合注册接口限制。"""
-    first = random.choice(string.ascii_uppercase) + "".join(
-        random.choices(string.ascii_lowercase, k=random.randint(3, 6))
-    )
-    last = random.choice(string.ascii_uppercase) + "".join(
-        random.choices(string.ascii_lowercase, k=random.randint(3, 6))
-    )
-    return f"{first} {last}"
-
-
 def prepare_registration_inputs() -> tuple[str, str, str]:
     """按 CLI 规则准备一次注册所需的邮箱、显示名和生日。"""
     email = REGISTER_EMAIL
@@ -150,7 +141,7 @@ def prepare_registration_inputs() -> tuple[str, str, str]:
     # OpenAI 限制：name_invalid_chars —— 只允许字母和空格，不能含数字/标点
     if not name:
         if _email_cfg.USE_EMAIL_SERVICE:
-            name = generate_display_name()
+            name = generate_display_name(_register_cfg.REGISTER_NAME_LOCALE)
             logger.debug(f"自动生成显示名称: {name}")
         else:
             name = input("请输入显示名称: ").strip()
@@ -189,7 +180,7 @@ def run_registration(
     #   cloak        = CloakBrowser + Playwright/Selenium 适配层
     #   browser_use  = Browser Use Cloud stealth Chromium + Playwright
     #   skyvern      = Skyvern Browser Sessions + Playwright
-    driver_mode = str(getattr(_roxy_cfg, "REGISTRATION_DRIVER", "protocol") or "protocol").strip().lower()
+    driver_mode = str(getattr(_roxy_cfg, "REGISTRATION_DRIVER", "cloak") or "cloak").strip().lower()
     if driver_mode in ("roxy", "roxybrowser", "fingerprint", "browser"):
         from core.roxy_registration import run_roxy_registration
         return run_roxy_registration(
@@ -259,6 +250,7 @@ def run_registration(
     logger.debug(f"[注册] 设备ID={session.device_id}，会话日志ID={session.auth_session_logging_id}")
 
     create_acknowledged = False
+    registration_stage = "preflight"
     try:
         # 网络预检必须在 signin/follow_authorize 之前完成；预检不带邮箱，不会触发 OTP。
         network_preflight(session)
@@ -275,27 +267,29 @@ def run_registration(
 
         # ==================== 阶段1: ChatGPT 认证 ====================
         # 步骤1: 获取 providers
-        providers = get_providers(session)
+        registration_stage = "providers"; providers = get_providers(session)
         human_delay("api")
 
         # 步骤2: 获取 CSRF token
-        csrf_token = get_csrf_token(session)
+        registration_stage = "csrf"; csrf_token = get_csrf_token(session)
         human_delay("api")
 
         # 步骤3: 发起 OAuth signin
-        authorize_url = signin_openai(session, csrf_token, email)
+        registration_stage = "signin"; authorize_url = signin_openai(session, csrf_token, email)
         human_delay("api")
 
         # 记录"OTP 触发"前的时间戳，自动取信箱时只看此后的邮件，
         # 避免取到上次注册留下的旧 OTP。
         otp_after_ts = time.time()
+        from core.assurivo_mail_client import capture_known_otp_fingerprints
+        known_otp_fingerprints = capture_known_otp_fingerprints(email)
 
         # ==================== 阶段2: OpenAI Auth ====================
         # 步骤4: 跟随 authorize URL（建立 auth.openai.com 的 cookies）
         # 由于步骤3已携带 login_hint + screen_hint=login_or_signup，
         # 重定向链会直接走到 /email-verification 并自动触发 OTP 发送，
         # 不需要 /create-account/password、register_user、单独 send_email_otp 调用。
-        follow_authorize(session, authorize_url)
+        registration_stage = "authorize"; follow_authorize(session, authorize_url)
         human_delay("navigate")
 
         # ==================== 阶段3: 验证码验证 ====================
@@ -311,7 +305,7 @@ def run_registration(
             if current_otp is None:
                 if _email_cfg.USE_EMAIL_SERVICE:
                     logger.info(f"[OTP] 等待验证码：{email}（第 {otp_attempt}/{max_otp_attempts} 次）")
-                    current_otp = wait_for_otp(email, after_ts=otp_after_ts)
+                    registration_stage = "otp_wait"; current_otp = wait_for_otp(email, after_ts=otp_after_ts, known_otp_fingerprints=known_otp_fingerprints)
                 else:
                     logger.info("")
                     logger.info(f"[OTP] 请检查邮箱，输入收到的 6 位验证码（第 {otp_attempt}/{max_otp_attempts} 次）:")
@@ -329,7 +323,7 @@ def run_registration(
                     human_delay("challenge")
 
                 # 步骤10: 提交验证码
-                validate_result = validate_email_otp(session, current_otp, sentinel_header_9, so_header_9)
+                registration_stage = "otp_validate"; validate_result = validate_email_otp(session, current_otp, sentinel_header_9, so_header_9)
                 break
             except EmailOtpInvalidError as exc:
                 if otp_attempt >= max_otp_attempts:
@@ -419,7 +413,7 @@ def run_registration(
             human_delay("form")
 
             # 步骤12: 提交用户信息，完成注册
-            create_result = create_account(session, name, birthday, sentinel_header_11, so_header_11)
+            registration_stage = "create_account"; create_result = create_account(session, name, birthday, sentinel_header_11, so_header_11)
             create_acknowledged = True
 
             logger.info(f"[注册] 创建接口已通过：{email}，继续完成 OAuth 回调")
@@ -494,6 +488,7 @@ def run_registration(
             email_source=resolve_email_source(email),
             proxy_used=session.proxy or None,
             batch_dir=batch_dir,
+            trigger_post_register=True,
             extra={
                 "user": session_info.get("user"),
                 "account": session_info.get("account"),
@@ -501,6 +496,7 @@ def run_registration(
                 "device_id": session.device_id,
                 "sentinel_sid": getattr(session, "sentinel_sid", None),
                 "browser_profile": getattr(session, "browser_profile", None),
+                "auth_artifacts": build_auth_artifacts(access_token, session_data=session_info, cookies=collect_session_cookies(session)),
                 "codex": codex_result,
             },
         )
@@ -576,7 +572,8 @@ def run_registration(
                     logger.info(f"[邮箱:{src}] {email} 已恢复 available")
         except Exception:
             pass
-        return {"success": False, "email": email, "error": str(e)}
+        match = re.search(r"(?:HTTP|status=)\s*(\d{3})", str(e), re.I)
+        return {"success": False, "email": email, "error": f"{type(e).__name__}", "diagnostic": {"stage": registration_stage, "http_status": int(match.group(1)) if match else None, "reason": type(e).__name__}}
 
 
 def main():

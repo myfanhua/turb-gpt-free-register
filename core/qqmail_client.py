@@ -14,12 +14,14 @@ import logging
 import random
 import string
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.header import decode_header
 from pathlib import Path
 
 from config import email as _email_cfg
 from core.otp_utils import looks_like_openai_email, extract_otp
+from core.otp_wait_policy import OTPProbeResult, resolve_wait_timeout, wait_for_otp_with_policy
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,14 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 class QQMailClientError(RuntimeError):
     """QQ 邮箱服务相关异常。"""
+
+
+@dataclass
+class QQMailProbeState:
+    best_otp: str | None = None
+    best_ts: float = 0.0
+    best_subject: str = ""
+    settle_until: float | None = None
 
 
 # ============================================================
@@ -239,13 +249,12 @@ def release_domain_email(email: str, status: str = "available", note: str | None
     _release(email, status=status, note=note)
 
 
-def fetch_latest_otp(
+def fetch_otp_once(
     email: str,
-    after_ts: float | None = None,
-    max_wait: int | None = None,
-    poll_interval: int | None = None,
+    after_ts: float | None,
+    state: QQMailProbeState,
     settle_seconds: int | None = None,
-) -> str:
+) -> OTPProbeResult:
     """
     通过 QQ 邮箱 IMAP 轮询取 OTP。
 
@@ -261,119 +270,77 @@ def fetch_latest_otp(
         after_ts: UTC 时间戳，只看比这个时间新的邮件
         max_wait / poll_interval: 默认走 config 里的值
     """
-    if not after_ts:
+    if after_ts is None:
         after_ts = time.time()
-    deadline = time.time() + (max_wait or _email_cfg.OTP_MAX_WAIT)
-    interval = poll_interval or _email_cfg.OTP_POLL_INTERVAL
     settle = settle_seconds if settle_seconds is not None else _email_cfg.OTP_SETTLE_SECONDS
     # 30s 时钟偏差容忍
     after_dt = datetime.fromtimestamp(after_ts - 30, tz=timezone.utc)
 
-    logger.info(
-        f"[QQMail] 开始轮询 QQ 邮箱收件箱（域名: {email}），"
-        f"最长 {max_wait or _email_cfg.OTP_MAX_WAIT}s, settle={settle}s..."
-    )
-
     target_lower = email.lower()
+    mail = None
+    try:
+        mail = _connect_imap()
+        messages = _search_messages(mail, after_dt=after_dt)
+    finally:
+        if mail:
+            try:
+                mail.logout()
+            except Exception:
+                pass
 
-    best_otp: str | None = None
-    best_ts: float = 0.0
-    best_subject: str = ""
-    settle_until: float | None = None
+    # 按时间降序排列
+    messages.sort(key=lambda m: m.get("date") or "", reverse=True)
 
-    while time.time() < deadline:
-        mail = None
-        try:
-            mail = _connect_imap()
-            messages = _search_messages(mail, after_dt=after_dt)
-        except QQMailClientError as exc:
-            logger.warning(f"[QQMail] IMAP 连接失败: {exc}")
-            messages = []
-        finally:
-            if mail:
-                try:
-                    mail.logout()
-                except Exception:
-                    pass
+    # 查找最新 OpenAI 邮件
+    for item in messages:
+        if not looks_like_openai_email(item):
+            continue
 
-        # 按时间降序排列
-        messages.sort(key=lambda m: m.get("date") or "", reverse=True)
+        # 必须匹配收件地址（避免捡到其他域名地址的旧验证码）
+        to_field = (item.get("to") or "").lower()
+        if target_lower not in to_field:
+            continue
 
-        # 查找最新 OpenAI 邮件
-        for item in messages:
-            if not looks_like_openai_email(item):
-                continue
+        subject = item.get("subject") or ""
+        otp = extract_otp(item)
+        if not otp:
+            continue
 
-            # 必须匹配收件地址（避免捡到其他域名地址的旧验证码）
-            to_field = (item.get("to") or "").lower()
-            if target_lower not in to_field:
-                continue
+        # 解析时间戳
+        ts = 0.0
+        raw_ts = item.get("date") or item.get("receivedDateTime") or ""
+        if raw_ts:
+            try:
+                ts = datetime.fromisoformat(raw_ts.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                ts = 0.0
 
-            subject = item.get("subject") or ""
-            otp = extract_otp(item)
-            if not otp:
-                continue
+        if after_ts and ts < after_ts - 30:
+            continue
 
-            # 解析时间戳
-            ts = 0.0
-            raw_ts = item.get("date") or item.get("receivedDateTime") or ""
-            if raw_ts:
-                try:
-                    ts = (
-                        datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
-                        .timestamp()
-                    )
-                except Exception:
-                    ts = 0.0
+        if ts > state.best_ts:
+            if state.best_otp:
+                logger.info(f"[QQMail] 发现更晚的 OTP={otp} (ts={raw_ts}), 替换之前的 {state.best_otp}, 重置 settle 计时")
+            else:
+                logger.info(f"[QQMail] 首次锁定 OTP={otp}, ts={raw_ts}, subject={subject!r}, 等 {settle}s 看是否有更晚邮件...")
+            state.best_otp = otp
+            state.best_ts = ts
+            state.best_subject = subject
+            state.settle_until = time.monotonic() + max(0, settle)
+        break  # 只关心最新那一封
 
-            if after_ts and ts < after_ts - 30:
-                continue
+    now = time.monotonic()
+    if state.best_otp and state.settle_until is not None and now >= state.settle_until:
+        logger.info(f"[QQMail] settle 完成，返回 OTP={state.best_otp}, subject={state.best_subject!r}")
+        return OTPProbeResult.completed(state.best_otp, state)
+    return OTPProbeResult.candidate(state, state.settle_until) if state.best_otp else OTPProbeResult.pending(state)
 
-            if ts > best_ts:
-                if best_otp:
-                    logger.info(
-                        f"[QQMail] 发现更晚的 OTP={otp} (ts={raw_ts}), "
-                        f"替换之前的 {best_otp}, 重置 settle 计时"
-                    )
-                else:
-                    logger.info(
-                        f"[QQMail] 首次锁定 OTP={otp}, ts={raw_ts}, "
-                        f"subject={subject!r}, 等 {settle}s 看是否有更晚邮件..."
-                    )
-                best_otp = otp
-                best_ts = ts
-                best_subject = subject
-                settle_until = time.time() + settle
-            break  # 只关心最新那一封
 
-        # settle 判断
-        now = time.time()
-        if best_otp and settle_until is not None and now >= settle_until:
-            logger.info(
-                f"[QQMail] settle 完成，返回 OTP={best_otp}, subject={best_subject!r}"
-            )
-            return best_otp
-
-        remaining = int(deadline - now)
-        if best_otp:
-            logger.info(
-                f"[QQMail] 已锁定候选 OTP={best_otp}，等 settle 中"
-                f"（剩余 settle ~{int(settle_until - now)}s, 总剩余 {remaining}s）..."
-            )
-        else:
-            logger.info(
-                f"[QQMail] 暂未收到 OpenAI 邮件，{interval}s 后重试（剩余 {remaining}s）..."
-            )
-        time.sleep(interval)
-
-    # 超时但有候选
-    if best_otp:
-        logger.warning(
-            f"[QQMail] 总超时但已有候选，返回 OTP={best_otp} (subject={best_subject!r})"
-        )
-        return best_otp
-
-    raise QQMailClientError(
-        f"等待 {email} 的 OTP 超时（>{max_wait or _email_cfg.OTP_MAX_WAIT}s）。"
-        f"可能：QQ 邮箱 IMAP 配置有误 / Cloudflare 转发未生效 / OpenAI 邮件未到达。"
-    )
+def fetch_latest_otp(email: str, after_ts: float | None = None, max_wait: int | None = None, poll_interval: int | None = None, settle_seconds: int | None = None) -> str:
+    """按统一策略轮询 QQ IMAP 域名邮箱，返回最新 OpenAI OTP。"""
+    target = str(email or "").strip()
+    if not target:
+        raise QQMailClientError("QQMail 取码缺少邮箱地址")
+    state = QQMailProbeState()
+    timeout = resolve_wait_timeout(max_wait if max_wait is not None else getattr(_email_cfg, "OTP_WAIT_TIMEOUT", None), _email_cfg.OTP_MAX_WAIT)
+    return wait_for_otp_with_policy(provider="cloudflare_domain", email=target, initial_after_ts=after_ts if after_ts is not None else time.time(), fetch=lambda stamp: fetch_otp_once(target, stamp, state, settle_seconds), retrigger=lambda: time.time(), wait_timeout=timeout, poll_interval=poll_interval or _email_cfg.OTP_POLL_INTERVAL, retry_count=0)

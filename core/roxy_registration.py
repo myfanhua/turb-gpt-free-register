@@ -10,7 +10,7 @@ from pathlib import Path
 
 from config import roxybrowser as _cfg
 from config import twofa as _twofa_cfg
-from core.account_export import save_account_data
+from core.account_export import save_account_data, build_auth_artifacts
 from core.email_provider import wait_for_otp, resolve_email_source
 from core.humanize import delay as human_delay
 from core.roxybrowser_client import RoxyBrowserClient, RoxyOpenResult
@@ -1522,7 +1522,7 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
         }
         try:
             from config import codex as _codex_cfg
-            if bool(getattr(_codex_cfg, "ENABLE_CODEX_AUTO", False)):
+            if bool(getattr(_codex_cfg, "ENABLE_CODEX_AUTO", False)) and not bool(getattr(_codex_cfg, "CODEX_SYNTHETIC_AUTH_ENABLE", False)):  # synthetic 转化开启时跳过接码 OAuth
                 # 注册流程本身已创建 Roxy 一号一环境。这里不能再新建第二个 Roxy 环境；
                 # 复用当前注册窗口，先清理 Cookie/session/localStorage/cache，再开始 Codex 授权。
                 from core.roxy_codex_oauth import run_roxy_codex_oauth
@@ -1548,12 +1548,14 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
             email_source=resolve_email_source(email),
             proxy_used=proxy or None,
             batch_dir=batch_dir,
+            trigger_post_register=True,
             extra={
                 "user": session_info.get("user"),
                 "account": session_info.get("account"),
                 "expires": session_info.get("expires"),
                 "roxybrowser": {"profile_id": opened.profile_id, "open_result": opened.raw},
                 "registration_password": openai_password,
+                "auth_artifacts": build_auth_artifacts(access_token, registration_password=openai_password, session_data=session_info),
                 "codex": codex_result,
             },
         )

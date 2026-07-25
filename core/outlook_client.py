@@ -47,6 +47,7 @@ from config import (
 # OTP_POLL_INTERVAL / OTP_MAX_WAIT 是 WebUI 可热改的，从模块读
 from config import email as _email_cfg
 from core.otp_utils import looks_like_openai_email, extract_otp
+from core.otp_wait_policy import OTPProbeResult, resolve_wait_timeout, wait_for_otp_with_policy
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,16 @@ class OutlookAccount:
     refresh_token: str
     recovery_email: str = ""  # 可选：恢复邮箱
     recovery_code: str = ""   # 可选：恢复码
+
+
+@dataclass
+class OutlookProbeState:
+    best_otp: str | None = None
+    best_ts: float = 0.0
+    best_subject: str = ""
+    best_protocol: str = ""
+    best_source: str = ""
+    settle_until: float | None = None
 
 
 class OutlookClientError(RuntimeError):
@@ -931,15 +942,14 @@ def fetch_otp_with_account(
     )
 
 
-def fetch_latest_otp(
+def fetch_otp_once(
     email: str,
-    after_ts: float | None = None,
-    max_wait: int | None = None,
-    poll_interval: int | None = None,
+    after_ts: float | None,
+    state: OutlookProbeState,
     subject_includes: list[str] | None = None,
     subject_excludes: list[str] | None = None,
     settle_seconds: int | None = None,
-) -> str:
+) -> OTPProbeResult:
     """
     双协议轮询取 OTP，规则：
         - 先试 Graph，失败/为空时回退 IMAP
@@ -959,26 +969,9 @@ def fetch_latest_otp(
     if account is None:
         raise OutlookClientError(f"未找到 {email} 的账号上下文，无法取 OTP")
 
-    deadline = time.time() + (max_wait or _email_cfg.OTP_MAX_WAIT)
-    interval = poll_interval or _email_cfg.OTP_POLL_INTERVAL
     settle = settle_seconds if settle_seconds is not None else OTP_SETTLE_SECONDS
     session = _http_session()
-
-    logger.info(
-        f"[Outlook] 开始轮询 {email} 的收件箱（mode={_outlook_fetch_mode()}, Graph + IMAP 本地直连，REST 兜底），"
-        f"最长 {max_wait or _email_cfg.OTP_MAX_WAIT}s, settle={settle}s..."
-    )
-
-    # settle 状态机
-    best_otp: str | None = None       # 当前看到的最新 OTP
-    best_ts: float = 0.0              # 它的邮件时间戳
-    best_subject: str = ""
-    best_protocol: str = ""
-    best_source: str = ""
-    settle_until: float | None = None # 抓到第一封后，等到这个时刻才返回
-    last_diag_log = 0.0
-
-    while time.time() < deadline:
+    try:
         # 每轮都重新拉，因为可能有新邮件，也可能旧邮件因延迟才出现
         all_candidates: list[tuple[str, dict, float, str]] = []
         for protocol in ("graph", "imap"):
@@ -991,7 +984,7 @@ def fetch_latest_otp(
         # 按时间降序，最新的在前
         all_candidates.sort(key=lambda x: x[2], reverse=True)
 
-        if all_candidates and not best_otp and time.time() - last_diag_log > 12:
+        if all_candidates and not state.best_otp:
             diag = []
             for protocol, item, ts, source in all_candidates[:5]:
                 subject = str(item.get("subject") or "")[:90]
@@ -1008,7 +1001,6 @@ def fetch_latest_otp(
                     "subject": subject,
                 })
             logger.info("[Outlook] 邮件诊断 top=%s", diag)
-            last_diag_log = time.time()
 
         # 找出本轮"最新一封通过过滤的 OpenAI 邮件"
         for protocol, item, ts, source in all_candidates:
@@ -1029,57 +1021,41 @@ def fetch_latest_otp(
                 continue
 
             # 已锁定一个候选；如果新看到的更晚，则替换并重置 settle 倒计时
-            if ts > best_ts:
-                if best_otp:
+            if ts > state.best_ts:
+                if state.best_otp:
                     logger.info(
                         f"[Outlook] 发现更晚的 OTP={otp} (ts={item.get('date') or item.get('receivedDateTime')}, source={source}), "
-                        f"替换之前的 {best_otp}, 重置 settle 计时"
+                        f"替换之前的 {state.best_otp}, 重置 settle 计时"
                     )
                 else:
                     logger.info(
                         f"[Outlook] 首次锁定 OTP={otp}, source={source}, ts={item.get('date') or item.get('receivedDateTime')}, "
                         f"subject={subject!r}, 等 {settle}s 看是否有更晚邮件..."
                     )
-                best_otp = otp
-                best_ts = ts
-                best_subject = subject
-                best_protocol = protocol
-                best_source = source
-                settle_until = time.time() + settle
+                state.best_otp = otp
+                state.best_ts = ts
+                state.best_subject = subject
+                state.best_protocol = protocol
+                state.best_source = source
+                state.settle_until = time.monotonic() + max(0, settle)
             break  # 只关心本轮最新那一封
+    finally:
+        session.close()
+    now = time.monotonic()
+    if state.best_otp and state.settle_until is not None and now >= state.settle_until:
+        logger.info(f"[Outlook] settle 完成，返回 OTP={state.best_otp}, source={state.best_source or state.best_protocol}")
+        return OTPProbeResult.completed(state.best_otp, state)
+    return OTPProbeResult.candidate(state, state.settle_until) if state.best_otp else OTPProbeResult.pending(state)
 
-        # 判断是否可以返回
-        now = time.time()
-        if best_otp and settle_until is not None and now >= settle_until:
-            logger.info(
-                f"[Outlook] settle 完成，返回 OTP={best_otp}, source={best_source or best_protocol}, protocol={best_protocol}, "
-                f"subject={best_subject!r}"
-            )
-            return best_otp
 
-        remaining = int(deadline - now)
-        if best_otp:
-            logger.info(
-                f"[Outlook] 已锁定候选 OTP={best_otp}，等 settle 中"
-                f"（剩余 settle ~{int(settle_until - now)}s, 总剩余 {remaining}s）..."
-            )
-        else:
-            logger.info(
-                f"[Outlook] 暂未收到符合条件的 OpenAI 邮件，{interval}s 后重试（剩余 {remaining}s）..."
-            )
-        time.sleep(interval)
-
-    # 超时但已经锁定过候选（settle 没等到结束就到 deadline 了）
-    if best_otp:
-        logger.warning(
-            f"[Outlook] 总超时但已有候选，返回 OTP={best_otp}, source={best_source or best_protocol} (subject={best_subject!r})"
-        )
-        return best_otp
-
-    raise OutlookClientError(
-        f"等待 {email} 的 OTP 超时（>{max_wait or _email_cfg.OTP_MAX_WAIT}s）。"
-        f"可能：refresh_token 失效 / 邮箱被 OpenAI 黑名单 / IP 风控未通过。"
-    )
+def fetch_latest_otp(email: str, after_ts: float | None = None, max_wait: int | None = None, poll_interval: int | None = None, subject_includes: list[str] | None = None, subject_excludes: list[str] | None = None, settle_seconds: int | None = None) -> str:
+    """按统一策略轮询 Outlook 双协议收件箱，返回最新 OpenAI OTP。"""
+    account = get_account_context(email)
+    if account is None:
+        raise OutlookClientError(f"未找到 {email} 的账号上下文，无法取 OTP")
+    state = OutlookProbeState()
+    timeout = resolve_wait_timeout(max_wait if max_wait is not None else getattr(_email_cfg, "OTP_WAIT_TIMEOUT", None), _email_cfg.OTP_MAX_WAIT)
+    return wait_for_otp_with_policy(provider="outlook", email=email, initial_after_ts=after_ts if after_ts is not None else time.time(), fetch=lambda stamp: fetch_otp_once(email, stamp, state, subject_includes, subject_excludes, settle_seconds), retrigger=lambda: time.time(), wait_timeout=timeout, poll_interval=poll_interval or _email_cfg.OTP_POLL_INTERVAL, retry_count=0)
 
 
 # 时差容忍：仅 30 秒（足以吸收客户端/邮件服务器 NTP 偏差）。

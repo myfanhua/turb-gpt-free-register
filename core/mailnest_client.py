@@ -11,6 +11,7 @@ import requests
 
 from config import email as _email_cfg
 from core.otp_utils import extract_otp, looks_like_openai_email
+from core.otp_wait_policy import OTPProbeResult, resolve_wait_timeout, wait_for_otp_with_policy
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,13 @@ class MailNestClientError(RuntimeError):
 class MailNestAccount:
     email: str
     project_code: str = ""
+
+
+@dataclass
+class MailNestProbeState:
+    best_otp: str | None = None
+    best_timestamp: float = float("-inf")
+    settle_until: float | None = None
 
 
 _CONTEXT_CACHE: dict[str, MailNestAccount] = {}
@@ -139,69 +147,52 @@ def _otp_item(item: dict) -> dict:
     }
 
 
-def fetch_latest_otp(
+def fetch_otp_once(
     email: str,
-    after_ts: float | None = None,
-    max_wait: int | None = None,
-    poll_interval: int | None = None,
+    after_ts: float | None,
+    state: MailNestProbeState,
     settle_seconds: int | None = None,
-) -> str:
-    """轮询 MailNest，返回领取时间后最新的 OpenAI 六位验证码。"""
+) -> OTPProbeResult:
+    """单次 MailNest 取码 probe；不 sleep、不维护总 deadline。"""
     target = str(email or "").strip()
     if not target:
         raise MailNestClientError("MailNest 取码缺少邮箱地址")
 
-    wait_seconds = int(max_wait if max_wait is not None else _email_cfg.OTP_MAX_WAIT)
-    interval = max(1, int(poll_interval if poll_interval is not None else _email_cfg.OTP_POLL_INTERVAL))
     settle = max(0, int(settle_seconds if settle_seconds is not None else _email_cfg.OTP_SETTLE_SECONDS))
-    deadline = time.monotonic() + max(0, wait_seconds)
-    best_otp: str | None = None
-    best_timestamp = float("-inf")
-    settle_until: float | None = None
-    last_error = "收件箱为空或尚未出现新的 OpenAI 验证码"
+    mails = _get_mails(target)
+    if not isinstance(mails, list):
+        raise MailNestClientError("MailNest 收件箱响应不是数组")
+    for mail in sorted(mails, key=lambda item: _timestamp(item) or float("-inf"), reverse=True):
+        if not isinstance(mail, dict):
+            continue
+        message_time = _timestamp(mail)
+        if after_ts is not None and message_time is not None and message_time < after_ts - 30:
+            continue
+        otp = str(mail.get("code_match") or "").strip()
+        item = _otp_item(mail)
+        if not otp:
+            if not looks_like_openai_email(item):
+                continue
+            otp = extract_otp(item) or ""
+        if not otp:
+            continue
+        candidate_time = float("-inf") if message_time is None else message_time
+        if state.best_otp is None or candidate_time > state.best_timestamp or (candidate_time == state.best_timestamp and otp != state.best_otp):
+            state.best_otp = otp
+            state.best_timestamp = candidate_time
+            state.settle_until = time.monotonic() + settle
+            logger.info("[MailNest] 锁定 OTP 候选，等待 %ss 确认", settle)
+    now = time.monotonic()
+    if state.best_otp and state.settle_until is not None and now >= state.settle_until:
+        return OTPProbeResult.completed(state.best_otp, state)
+    return OTPProbeResult.candidate(state, state.settle_until) if state.best_otp else OTPProbeResult.pending(state)
 
-    logger.info("[MailNest] 开始轮询邮箱 %s，最长 %ss", target, wait_seconds)
-    while time.monotonic() <= deadline:
-        try:
-            mails = _get_mails(target)
-            if not isinstance(mails, list):
-                raise MailNestClientError("MailNest 收件箱响应不是数组")
-            for mail in sorted(mails, key=lambda item: _timestamp(item) or float("-inf"), reverse=True):
-                if not isinstance(mail, dict):
-                    continue
-                message_time = _timestamp(mail)
-                if after_ts is not None and message_time is not None and message_time < after_ts - 30:
-                    continue
 
-                otp = str(mail.get("code_match") or "").strip()
-                item = _otp_item(mail)
-                if not otp:
-                    if not looks_like_openai_email(item):
-                        continue
-                    otp = extract_otp(item) or ""
-                if not otp:
-                    continue
-
-                candidate_time = float("-inf") if message_time is None else message_time
-                if best_otp is None or candidate_time > best_timestamp or (candidate_time == best_timestamp and otp != best_otp):
-                    best_otp = otp
-                    best_timestamp = candidate_time
-                    settle_until = time.monotonic() + settle
-                    logger.info("[MailNest] 锁定 OTP 候选，等待 %ss 确认", settle)
-
-            now = time.monotonic()
-            if best_otp and settle_until is not None and now >= settle_until:
-                return best_otp
-        except MailNestClientError as exc:
-            last_error = str(exc)
-        except Exception as exc:
-            last_error = f"{type(exc).__name__}: {exc}"
-
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        time.sleep(min(interval, remaining))
-
-    if best_otp:
-        return best_otp
-    raise MailNestClientError(f"等待 MailNest 验证码超时: {target}; {last_error}")
+def fetch_latest_otp(email: str, after_ts: float | None = None, max_wait: int | None = None, poll_interval: int | None = None, settle_seconds: int | None = None) -> str:
+    """按统一策略轮询 MailNest，返回领取时间后最新的 OpenAI 六位验证码。"""
+    target = str(email or "").strip()
+    if not target:
+        raise MailNestClientError("MailNest 取码缺少邮箱地址")
+    state = MailNestProbeState()
+    timeout = resolve_wait_timeout(max_wait if max_wait is not None else getattr(_email_cfg, "OTP_WAIT_TIMEOUT", None), _email_cfg.OTP_MAX_WAIT)
+    return wait_for_otp_with_policy(provider="mailnest", email=target, initial_after_ts=after_ts if after_ts is not None else time.time(), fetch=lambda stamp: fetch_otp_once(target, stamp, state, settle_seconds), retrigger=lambda: time.time(), wait_timeout=timeout, poll_interval=poll_interval or _email_cfg.OTP_POLL_INTERVAL, retry_count=0)

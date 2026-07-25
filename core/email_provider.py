@@ -18,7 +18,7 @@ from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
-_VALID_SOURCES = ("outlook", "generic_api", "cloudflare_domain", "cloudflare", "gptmail", "mailnest", "cloudmail")
+_VALID_SOURCES = ("outlook", "generic_api", "cloudflare_domain", "cloudflare", "gptmail", "mailnest", "cloudmail", "assurivo")
 
 
 def parse_email_sources(value=None) -> list[str]:
@@ -65,6 +65,9 @@ def _pick_from_source(source: str) -> str:
     if source == "cloudmail":
         from core.cloudmail_client import pick_account
         return pick_account().email
+    if source == "assurivo":
+        from core.assurivo_mail_client import pick_account
+        return pick_account().email
     from core.outlook_client import pick_account
     return pick_account().email
 
@@ -87,6 +90,10 @@ def acquire_email() -> str:
 
 def resolve_email_source(email: str) -> str:
     """根据邮箱在各池中的归属判断实际来源。"""
+    # 旧版本曾把 Assurivo 查询 URL 放进 generic_api；每次解析前离线迁移，保证 OTP
+    # 路由使用 Assurivo 的 HTML/时间语义，而不是通用 JSON 解析器。
+    from core.assurivo_mail_client import migrate_legacy_generic_api_records
+    migrate_legacy_generic_api_records()
     from core.gptmail_client import get_account_context as get_gptmail_context
     if get_gptmail_context(email):
         return "gptmail"
@@ -99,6 +106,9 @@ def resolve_email_source(email: str) -> str:
     from core.cloudmail_client import get_account_context as get_cloudmail_context
     if get_cloudmail_context(email):
         return "cloudmail"
+    from core.assurivo_mail_client import get_account_context as get_assurivo_context
+    if get_assurivo_context(email):
+        return "assurivo"
 
     from core import db
     if db.get_generic_api_email_by_email(email):
@@ -118,12 +128,38 @@ def resolve_email_source(email: str) -> str:
     return parse_email_sources()[0]
 
 
+def get_email_asset_context(email: str) -> dict:
+    """返回仅实际可得的邮箱资产；调用方负责受控保存，普通列表不可回显凭证。"""
+    source = resolve_email_source(email)
+    asset = {"provider": source, "email_address": email, "exportable": False}
+    if source == "assurivo":
+        from core.assurivo_mail_client import get_account_context
+        account = get_account_context(email)
+        if account:
+            # 完整查询 URL 是不可拆分的受控资产：禁止从中拆 pwd 或重新编码拼接。
+            asset.update({"query_url": account.query_url, "exportable": True})
+    elif source == "generic_api":
+        from core.generic_api_mail_client import get_account_context
+        account = get_account_context(email)
+        if account:
+            # code_url 是受控资产；普通列表/API 必须继续隐藏它。
+            asset.update({"query_url": account.code_url, "exportable": True})
+    elif source == "outlook":
+        from core.outlook_client import get_account_context
+        account = get_account_context(email)
+        if account:
+            asset.update({"material_reference": "outlook_pool", "exportable": True,
+                          "email_credential": {"password": account.password, "client_id": account.client_id, "refresh_token": account.refresh_token}})
+    return asset
+
+
 def wait_for_otp(
     email: str,
     after_ts: float,
     max_wait: int | None = None,
     poll_interval: int | None = None,
     settle_seconds: int | None = None,
+    known_otp_fingerprints: set[str] | None = None,
 ) -> str:
     """等待并返回该邮箱最新的 ChatGPT OTP（6 位数字字符串）。
 
@@ -175,6 +211,11 @@ def wait_for_otp(
     if source == "cloudmail":
         from core.cloudmail_client import fetch_latest_otp
         return fetch_latest_otp(email, after_ts=after_ts, **extra_kwargs)
+    if source == "assurivo":
+        from core.assurivo_mail_client import fetch_latest_otp
+        if known_otp_fingerprints is not None:
+            extra_kwargs["known_otp_fingerprints"] = known_otp_fingerprints
+        return fetch_latest_otp(email, after_ts=after_ts, **extra_kwargs)
     from core.outlook_client import fetch_latest_otp
     return fetch_latest_otp(email, after_ts=after_ts, **extra_kwargs)
 
@@ -200,6 +241,9 @@ def release_email(email: str, status: str = "available", note: str | None = None
     elif source == "cloudmail":
         from core.cloudmail_client import release_account
         release_account(email, status=status, note=note)
+    elif source == "assurivo":
+        from core.assurivo_mail_client import release_account
+        release_account(email, status=status, note=note)
     else:
         from core.outlook_client import release_account
         release_account(email, status=status, note=note)
@@ -218,6 +262,9 @@ def release_email_if_unconsumed(email: str, note: str | None = None) -> bool:
         changed = db.release_unconsumed_outlook(email, note=note)
     elif source == "generic_api":
         changed = db.release_unconsumed_generic_api_email(email, note=note)
+    elif source == "assurivo":
+        from core.assurivo_mail_client import release_unconsumed_account
+        changed = release_unconsumed_account(email, note=note)
     elif source == "cloudflare_domain":
         changed = db.release_unconsumed_domain_email(email, note=note)
     else:

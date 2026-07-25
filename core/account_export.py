@@ -29,6 +29,25 @@ _ACCOUNTS_DIR = _PROJECT_ROOT / "accounts"
 _BATCH_ARCHIVE_LOCK = threading.RLock()
 
 
+def build_auth_artifacts(access_token: str, *, registration_password: str | None = None, session_data: dict | None = None, cookies=None) -> dict:
+    """只保存当前流程实际已经得到的认证材料；不发起新认证请求。"""
+    from core.account_exporters import build_auth_artifacts as _build
+    return _build(access_token, registration_password=registration_password, session_data=session_data, cookies=cookies)
+
+
+def collect_session_cookies(session) -> object | None:
+    """尽力读取已存在的 requests/curl_cffi cookie jar；失败时安全省略。"""
+    jar = getattr(getattr(session, "session", session), "cookies", None)
+    try:
+        if hasattr(jar, "get_dict"):
+            data = jar.get_dict()
+        else:
+            data = dict(jar or {})
+        return data or None
+    except Exception:
+        return None
+
+
 def _account_material_line(email: str, row: dict | None = None) -> str:
     """优先输出 Outlook 原始素材；没有素材时退回邮箱地址。"""
     if row:
@@ -388,6 +407,7 @@ def save_account_data(
     email_source: str | None = None,
     proxy_used: str | None = None,
     batch_dir: Path | None = None,
+    trigger_post_register: bool = False,
 ) -> int:
     """
     将账号信息保存到本地 JSON/TXT 文件存储。
@@ -395,6 +415,13 @@ def save_account_data(
     """
     from core.db import insert_account
     extra = extra or {}
+    # 仅保存当前来源实际存在的邮箱资产；不把 Outlook 密码混为 ChatGPT 注册密码。
+    if email_source:
+        try:
+            from core.email_provider import get_email_asset_context
+            extra.setdefault("email_asset", get_email_asset_context(email))
+        except Exception:
+            extra.setdefault("email_asset", {"provider": email_source, "email_address": email, "exportable": False})
     user = extra.get("user") or {}
     account = extra.get("account") or {}
     # 从 extra.codex 抽出顶层 codex 状态/错误，方便 WebUI 直接读账号字段
@@ -431,6 +458,46 @@ def save_account_data(
     )
     logger.info(f"[Save] 账号已写入 DB, id={row_id}, email={email}")
     logger.info(f"[Save] 批次归档目录: {batch_folder}")
+    if trigger_post_register:
+        try:
+            from core.post_register_workflow import run_workflow
+            from core.db import merge_account_extra, claim_post_register_workflow
+            if claim_post_register_workflow(row_id):
+                result = run_workflow()
+                merge_account_extra(row_id, {"post_register_workflow": result.summary()})
+        except Exception as exc:
+            logger.warning("[PostRegister] 工作流异常但不回滚账号: %s", type(exc).__name__)
+        try:
+            from config import conversation_pool as pool
+            if pool.CONVERSATION_POOL_ENABLE and pool.CONVERSATION_POOL_DEFAULT_TEMPLATE:
+                from core.conversation_manager import bind
+                bind(row_id, pool.CONVERSATION_POOL_DEFAULT_TEMPLATE)
+                if pool.PROTOCOL_CONVERSATION_ENABLE:
+                    from core import conversation_service
+                    conversation_service.run_binding_async(row_id, pool.CONVERSATION_POOL_DEFAULT_TEMPLATE, auto=True)
+                    logger.info("[ConversationPool] 注册后自动开跑五轮对话: id=%s", row_id)
+        except Exception as exc:
+            logger.warning("[ConversationPool] 入队失败但不回滚账号: %s", type(exc).__name__)
+        try:
+            from core import synthetic_auth
+            if synthetic_auth.synthetic_enabled():
+                from core.db import get_account, merge_account_extra
+                row = get_account(row_id)
+                if row:
+                    converted = synthetic_auth.convert_account_row(row)
+                    out_path = synthetic_auth.write_auth_file(converted)
+                    merge_account_extra(row_id, {"synthetic_auth": {
+                        "status": "success",
+                        "converted_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+                        "account_id": converted["account_id"],
+                        "plan_type": converted["plan_type"],
+                        "expires_at": converted["expires_at"],
+                        "filename": out_path.name,
+                        "auto": True,
+                    }})
+                    logger.info("[SyntheticAuth] 注册后自动转化成功: id=%s, email=%s", row_id, email)
+        except Exception as exc:
+            logger.warning("[SyntheticAuth] 自动转化失败但不回滚账号: %s, %s", email, type(exc).__name__)
     # session 中的 account.planType 不能说明 Plus 试用资格。账号落库后只负责
     # 入队，由专用线程池异步查询并回写，避免占用注册工作线程。
     try:

@@ -11,6 +11,7 @@ Flask 本地控制台。
 默认绑定 127.0.0.1，仅本地访问。
 """
 import logging
+import re
 import threading
 import time
 import uuid
@@ -18,19 +19,55 @@ from urllib.parse import urlparse
 
 from flask import Flask, Response, jsonify, render_template, request
 
-from core import codex_retry_service, db, plan_check_service, extract_link_service, codex_agent_service
+from core import codex_retry_service, db, plan_check_service, extract_link_service, codex_agent_service, session_refresh
 from webui.auth import init_auth, register_auth_routes
 from core import registration_service as svc
 from webui import config_editor
 
 logger = logging.getLogger(__name__)
 
+# 认证失效类错误特征：命中即判定账号异常（对标 chatgpt2api 的"异常账号"语义）
+_AUTH_FAIL_PATTERNS = ("401", "unauthorized", "invalid", "token 已过期", "deactivated", "account_disabled", "登录已失效")
+
+
+def _account_health(row: dict, token_status: dict | None) -> tuple[str, str]:
+    """计算账号健康状态。返回 (status, reason)。
+
+    status: normal=正常 / abnormal=异常（可一键删除）/ unknown=未检测或检测失败但非认证问题。
+    异常判定：缺 access_token、JWT 已过期、或最近一次套餐/资格查询命中认证失效（401 等）。
+    """
+    if not str(row.get("access_token") or "").strip():
+        return ("abnormal", "缺少 access_token")
+    ts = token_status or {}
+    if ts.get("expired"):
+        return ("abnormal", "Token 已过期")
+    if row.get("plan_check_ok") is False:
+        err = str(row.get("plan_check_error") or "").strip()
+        low = err.lower()
+        if any(p in low for p in _AUTH_FAIL_PATTERNS) or "token 已过期" in err:
+            return ("abnormal", err[:80] or "认证失效")
+        # 查询失败但属于网络/限流等可重试问题，不算账号异常
+        return ("unknown", err[:80] or "检测未完成")
+    if row.get("plan_checked_at"):
+        return ("normal", "")
+    return ("unknown", "未检测")
+
+
+def _account_matches_plan(row: dict, plan_filter: str) -> bool:
+    """与 db._account_matches_plan_filter 同规则的本地副本，避免引用私有函数。"""
+    plan = str(row.get("current_plan_type") or row.get("plan_type") or "").strip().lower()
+    if plan_filter == "plus":
+        return "plus" in plan and "free" not in plan
+    if plan_filter == "free":
+        return plan == "free"
+    return plan == plan_filter
+
 def _pool_source_arg(default: str = "outlook") -> str:
     src = (request.args.get("source") or "").strip()
     if not src and request.method == "POST":
         data = request.get_json(silent=True) or {}
         src = (data.get("source") or data.get("type") or "").strip()
-    return src if src in ("all", "outlook", "generic_api", "cloudflare_domain") else default
+    return src if src in ("all", "outlook", "generic_api", "assurivo", "cloudflare_domain") else default
 
 
 def _with_pool_source(rows: list[dict], source: str) -> list[dict]:
@@ -42,6 +79,77 @@ def _with_pool_source(rows: list[dict], source: str) -> list[dict]:
             x["copy_line"] = x.get("email") or ""
         out.append(x)
     return out
+
+
+def _safe_pool_rows(rows: list[dict]) -> list[dict]:
+    """邮箱池普通列表只返回状态与可交付性，不返回任意凭据或账号 Token。"""
+    safe = []
+    hidden = {"password", "client_id", "refresh_token", "access_token", "totp_secret", "copy_line", "account_copy_line", "code_url", "query_url", "original_email_line", "codex_agent_token"}
+    for row in rows:
+        item = dict(row)
+        source = str(item.get("source") or "").lower()
+        item["has_delivery_material"] = bool(
+            (source == "outlook" and item.get("password") and item.get("client_id") and item.get("refresh_token"))
+            or (source in {"assurivo", "generic_api"} and (item.get("query_url") or item.get("code_url")))
+        )
+        item["has_registered_token"] = bool(item.get("access_token"))
+        for key in hidden:
+            item.pop(key, None)
+        safe.append(item)
+    return safe
+
+
+def _pool_material(source: str, email: str) -> tuple[dict | None, str | None]:
+    """仅供已授权的显式单条交付操作使用。"""
+    source = str(source or "").lower()
+    email = str(email or "").strip()
+    if source == "outlook":
+        row = db.get_outlook_by_email(email)
+        if not row or not all(row.get(k) for k in ("password", "client_id", "refresh_token")):
+            return None, "该 Outlook 邮箱未保存完整接码凭据"
+        return {"provider": source, "format": "email----password----clientId----refreshToken", "delivery_line": "----".join((email, row["password"], row["client_id"], row["refresh_token"]))}, None
+    if source == "generic_api":
+        row = db.get_generic_api_email_by_email(email)
+        url = row.get("code_url") if row else ""
+        if not url: return None, "该通用 API 邮箱未保存取码地址"
+        return {"provider": source, "format": "email----取码地址", "delivery_line": f"{email}----{url}"}, None
+    if source == "assurivo":
+        from core.assurivo_mail_client import get_account_context
+        row = get_account_context(email)
+        if not row or not row.query_url: return None, "该 Assurivo 邮箱未保存完整查询 URL"
+        return {"provider": source, "format": "email----完整查询URL", "delivery_line": f"{email}----{row.query_url}"}, None
+    return None, "该 Provider 没有可导出的接码凭据"
+
+
+def _email_asset_delivery(account: dict) -> tuple[dict | None, str | None]:
+    """构造单账号邮箱资产的原始交付行；调用方必须处于显式授权接口中。"""
+    import json
+    try:
+        extra = json.loads(account.get("extra_json") or "{}") if isinstance(account.get("extra_json"), str) else (account.get("extra_json") or {})
+    except (TypeError, ValueError):
+        extra = {}
+    asset = extra.get("email_asset") if isinstance(extra, dict) else {}
+    asset = asset if isinstance(asset, dict) else {}
+    provider = str(asset.get("provider") or account.get("email_source") or "").strip().lower()
+    email = str(asset.get("email_address") or account.get("email") or "").strip()
+    if provider in {"assurivo", "generic_api"}:
+        query_url = str(asset.get("query_url") or "").strip()
+        if not email or not query_url:
+            return None, "该账号未保存完整查询 URL，无法交付邮箱资产"
+        label = "Assurivo 查询素材" if provider == "assurivo" else "通用 API 查询素材"
+        return {"provider": provider, "format": "email----完整查询URL", "label": label, "delivery_line": f"{email}----{query_url}"}, None
+    if provider == "outlook":
+        original = str(account.get("original_email_line") or "").strip()
+        if original:
+            return {"provider": "outlook", "format": "email----password----clientId----refreshToken", "label": "Outlook 原始邮箱资产", "delivery_line": original}, None
+        credential = asset.get("email_credential") if isinstance(asset.get("email_credential"), dict) else {}
+        password = str(credential.get("password") or account.get("password") or "").strip()
+        client_id = str(credential.get("client_id") or account.get("client_id") or "").strip()
+        refresh_token = str(credential.get("refresh_token") or account.get("refresh_token") or "").strip()
+        if not (email and password and client_id and refresh_token):
+            return None, "该账号未保存完整 Outlook 邮箱资产"
+        return {"provider": "outlook", "format": "email----password----clientId----refreshToken", "label": "Outlook 原始邮箱资产", "delivery_line": "----".join((email, password, client_id, refresh_token))}, None
+    return None, "该邮箱来源不支持原始资产交付，或资产尚未保存"
 
 
 def create_app(auth_code: str | None = None) -> Flask:
@@ -110,6 +218,8 @@ def create_app(auth_code: str | None = None) -> Flask:
     def api_summary():
         from config import email as _email_cfg
         from core.email_provider import parse_email_sources
+        from core.assurivo_mail_client import migrate_legacy_generic_api_records, pool_summary as assurivo_pool_summary
+        migrate_legacy_generic_api_records()
         pool = {"total": 0, "available": 0, "used": 0, "failed": 0}
         for src in parse_email_sources(_email_cfg.EMAIL_SOURCE):
             # GPTMail/MailNest/CloudMail 地址按需生成，不属于本地邮箱池。
@@ -117,6 +227,7 @@ def create_app(auth_code: str | None = None) -> Flask:
                 continue
             one = (
                 db.generic_api_email_pool_summary() if src == "generic_api"
+                else assurivo_pool_summary() if src == "assurivo"
                 else db.domain_email_pool_summary() if src == "cloudflare_domain"
                 else db.outlook_pool_summary()
             )
@@ -143,7 +254,324 @@ def create_app(auth_code: str | None = None) -> Flask:
         limit = request.args.get("limit", default=500, type=int)
         archived = str(request.args.get("archived", default="0") or "0").lower()
         plan_filter = str(request.args.get("plan", default="") or "").lower()
-        return jsonify(db.list_accounts(limit=limit, archived=archived, plan_filter=plan_filter))
+        rows = db.list_accounts(limit=limit, archived=archived, plan_filter=plan_filter)
+        safe=[]
+        for row in rows:
+            item=dict(row)
+            # 列表只暴露认证资产是否存在，绝不把 access_token 下发到浏览器。
+            item["has_access_token"] = bool(str(item.get("access_token") or "").strip())
+            item["has_totp_secret"] = bool(str(item.get("totp_secret") or "").strip())
+            item["token_status"] = session_refresh.token_status(row)
+            health, health_reason = _account_health(row, item["token_status"])
+            item["health_status"] = health
+            item["health_reason"] = health_reason
+            try:
+                import json as _json_syn
+                _extra_syn = row.get("extra_json") or {}
+                if isinstance(_extra_syn, str):
+                    _extra_syn = _json_syn.loads(_extra_syn) if _extra_syn.strip() else {}
+                _syn = (_extra_syn.get("synthetic_auth") or {}) if isinstance(_extra_syn, dict) else {}
+                item["synthetic_auth_status"] = str(_syn.get("status") or "")
+            except Exception:
+                item["synthetic_auth_status"] = ""
+            for sensitive_key in ("extra_json", "access_token", "refresh_token", "password", "totp_secret", "copy_line", "original_email_line", "client_id", "id_token", "registration_password", "codex_agent_token"):
+                item.pop(sensitive_key, None)
+            safe.append(item)
+        return jsonify(safe)
+
+    @app.post("/api/accounts/<int:acc_id>/access-token")
+    def api_account_access_token(acc_id: int):
+        """在已授权 WebUI 会话内按需读取单个账号的 access token。"""
+        account = db.get_account(acc_id)
+        if not account:
+            return jsonify({"ok": False, "error": "账号不存在"}), 404
+        token = str(account.get("access_token") or "").strip()
+        if not token:
+            return jsonify({"ok": False, "error": "该账号没有 access_token"}), 404
+        # 此处是唯一按需回显 token 的 WebUI API；不要记录、缓存或混入账号列表。
+        return jsonify({"ok": True, "access_token": token})
+
+    @app.post("/api/accounts/<int:acc_id>/email-asset")
+    def api_account_email_asset(acc_id: int):
+        """仅在已授权的单账号显式操作中返回原始邮箱交付格式。"""
+        account = db.get_account(acc_id)
+        if not account:
+            return jsonify({"ok": False, "error": "账号不存在"}), 404
+        delivery, error = _email_asset_delivery(account)
+        if error:
+            return jsonify({"ok": False, "error": error}), 404
+        return jsonify({"ok": True, **delivery})
+
+    @app.post("/api/accounts/<int:acc_id>/refresh-session")
+    def api_account_refresh_session(acc_id: int):
+        """显式尝试通过本地 Cookie 调用官方会话端点；绝不绕过浏览器验证。"""
+        result = session_refresh.refresh_account_session(acc_id)
+        if result.get("reason") == "account_not_found":
+            return jsonify(result), 404
+        # 验证挑战、会话失效与网络错误均返回脱敏结构化诊断，供 UI 清晰展示。
+        return jsonify(result)
+
+    @app.post("/api/accounts/<int:acc_id>/email-asset-query")
+    def api_account_email_asset_query(acc_id):
+        account=db.get_account(acc_id)
+        if not account: return jsonify({"ok":False,"error":"账号不存在"}),404
+        import json
+        try: extra=json.loads(account.get("extra_json") or "{}")
+        except Exception: extra={}
+        asset=extra.get("email_asset") or {}
+        # 独立 Assurivo 素材和 generic_api 中保存的完整查询 URL 都只能
+        # 通过这个显式复制接口读取，绝不混入普通账号列表。
+        if asset.get("provider") not in {"assurivo", "generic_api"} or not asset.get("query_url"):
+            return jsonify({"ok":False,"error":"无可复制查询入口"}),404
+        return jsonify({"ok":True,"query_url":asset["query_url"]})
+
+    # Conversation Pool：只返回模板元数据和绑定摘要，绝不回显消息正文/凭证。
+    @app.get("/api/conversation-templates")
+    def api_conversation_templates():
+        from core import conversation_manager as cm
+        data = cm._load()
+        return jsonify([{"id": x["id"], "name": x["name"], "enabled": x.get("enabled", True), "message_count": len(x.get("messages") or [])} for x in data["templates"].values()])
+
+    @app.post("/api/conversation-templates")
+    def api_conversation_template_put():
+        from core import conversation_manager as cm
+        data=request.get_json(silent=True) or {}
+        try:
+            cm.put_template(str(data["id"]), str(data["name"]), data["messages"], bool(data.get("enabled", True)), data.get("retry"))
+        except (KeyError, ValueError) as exc: return jsonify({"ok":False,"error":str(exc)}),400
+        return jsonify({"ok":True})
+
+    @app.post("/api/conversation-bindings")
+    def api_conversation_bind():
+        from core import conversation_manager as cm
+        data=request.get_json(silent=True) or {}
+        try: row=cm.bind(int(data["account_id"]), str(data["template_id"]))
+        except (KeyError, ValueError) as exc: return jsonify({"ok":False,"error":str(exc)}),400
+        return jsonify({"ok":True,"binding":{k:row.get(k) for k in ("account_id","template_id","conversation_id","status","current_index","attempt","last_error","stage","http_status","reason")}})
+
+    @app.get("/api/conversation-bindings")
+    def api_conversation_bindings():
+        from core import conversation_manager as cm
+        aid=request.args.get("account_id", type=int)
+        return jsonify(cm.list_bindings(aid))
+
+    @app.post("/api/conversation-bindings/<int:account_id>/<template_id>/retry")
+    def api_conversation_retry(account_id, template_id):
+        from core import conversation_manager as cm
+        row=cm.retry(account_id,template_id)
+        if row is None: return jsonify({"ok":False,"error":"仅 partial/failed/needs_browser_verification 状态可显式重试"}),409
+        return jsonify({"ok":True,"binding":{k:row.get(k) for k in ("account_id","template_id","conversation_id","status","current_index","attempt","last_error","stage","http_status","reason")}})
+
+    @app.get("/api/conversation-templates/<template_id>")
+    def api_conversation_template_get(template_id):
+        """返回完整模板（含消息正文）；消息是用户自填的问题，不含凭证。"""
+        from core import conversation_manager as cm
+        tpl = cm.get_template(template_id)
+        if not tpl: return jsonify({"ok": False, "error": "模板不存在"}), 404
+        return jsonify(tpl)
+
+    @app.delete("/api/conversation-templates/<template_id>")
+    def api_conversation_template_delete(template_id):
+        from core import conversation_manager as cm
+        if not cm.get_template(template_id): return jsonify({"ok": False, "error": "模板不存在"}), 404
+        cm.delete_template(template_id)
+        return jsonify({"ok": True})
+
+    @app.delete("/api/conversation-bindings/<int:account_id>/<template_id>")
+    def api_conversation_unbind(account_id, template_id):
+        from core import conversation_manager as cm
+        from core import conversation_service as cs
+        if cs.is_running(account_id, template_id):
+            return jsonify({"ok": False, "error": "该绑定正在运行，不能解绑"}), 409
+        if not cm.unbind(account_id, template_id):
+            return jsonify({"ok": False, "error": "绑定不存在"}), 404
+        return jsonify({"ok": True})
+
+    @app.post("/api/conversation-run")
+    def api_conversation_run():
+        """后台执行一个绑定（逐条发消息并等待 SSE 完成）。"""
+        from core import conversation_service as cs
+        data = request.get_json(silent=True) or {}
+        try:
+            account_id = int(data["account_id"]); template_id = str(data["template_id"])
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"ok": False, "error": "account_id/template_id 必填"}), 400
+        result = cs.run_binding_async(account_id, template_id, retry=bool(data.get("retry")))
+        status = 200 if result.get("accepted") else 409
+        return jsonify({"ok": bool(result.get("accepted")), **result}), status
+
+    @app.post("/api/conversation-run-all")
+    def api_conversation_run_all():
+        """拾起全部 queued 绑定后台执行；可选连带重试失败项。"""
+        from core import conversation_service as cs
+        data = request.get_json(silent=True) or {}
+        result = cs.run_pending_async(template_id=data.get("template_id") or None, retry_failed=bool(data.get("retry_failed")))
+        return jsonify({"ok": True, **result})
+
+    @app.get("/api/conversation-status")
+    def api_conversation_status():
+        from config import conversation_pool as cfg
+        from core import conversation_service as cs
+        return jsonify({
+            "pool_enabled": bool(cfg.CONVERSATION_POOL_ENABLE),
+            "protocol_enabled": bool(cfg.PROTOCOL_CONVERSATION_ENABLE),
+            "timeout": int(cfg.CONVERSATION_POOL_TIMEOUT or 30),
+            "default_template": str(cfg.CONVERSATION_POOL_DEFAULT_TEMPLATE or ""),
+            "message_delay": [int(getattr(cfg, "CONVERSATION_POOL_MESSAGE_DELAY_MIN", 0) or 0), int(getattr(cfg, "CONVERSATION_POOL_MESSAGE_DELAY_MAX", 0) or 0)],
+            "start_delay": [int(getattr(cfg, "CONVERSATION_POOL_START_DELAY_MIN", 0) or 0), int(getattr(cfg, "CONVERSATION_POOL_START_DELAY_MAX", 0) or 0)],
+            "running": cs.running_keys(),
+        })
+
+    @app.post("/api/accounts/export/<format_name>")
+    def api_accounts_export(format_name: str):
+        """导出已保存账号；JSON 响应仅返回文件名和非敏感摘要。"""
+        from core.account_exporters import Sub2APIExporter, CockpitExporter, FullAccountAssetExporter
+        data = request.get_json(silent=True) or {}
+        raw_ids = data.get("account_ids") or data.get("ids") or []
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
+        rows = []
+        for raw_id in raw_ids[:5000]:
+            try: row = db.get_account(int(raw_id))
+            except (TypeError, ValueError): row = None
+            if row: rows.append(row)
+        if not rows: return jsonify({"ok": False, "error": "未找到可导出账号"}), 404
+        exporter = Sub2APIExporter() if format_name == "sub2api" else CockpitExporter() if format_name == "cockpit" else FullAccountAssetExporter() if format_name == "full-assets" else None
+        if exporter is None: return jsonify({"ok": False, "error": "不支持的导出格式"}), 404
+        path, summary = exporter.export(rows)
+        statuses = [session_refresh.token_status(row) for row in rows]
+        token_summary = {
+            "total": len(statuses),
+            "expired": sum(bool(x.get("expired")) for x in statuses),
+            "oauth_refreshable": sum(bool(x.get("oauth_refreshable")) for x in statuses),
+            "session_renewal_possible": sum(bool(x.get("session_renewal_possible")) for x in statuses),
+            "snapshot_only": sum(bool(x.get("snapshot_only")) for x in statuses),
+        }
+        return jsonify({"ok": True, "format": format_name, "filename": path.name, "accounts": summary["accounts"], "missing": summary["missing"], "token_summary": token_summary})
+
+    @app.get("/api/accounts/export/download/<filename>")
+    def api_accounts_export_download(filename: str):
+        if not re.fullmatch(r"(?:sub2api|cockpit|full-assets)-\d{8}-\d{6}-\d+\.json", filename):
+            return jsonify({"ok": False, "error": "导出文件名非法"}), 404
+        from core.account_exporters import _EXPORT_DIR
+        path = _EXPORT_DIR / filename
+        if not path.is_file(): return jsonify({"ok": False, "error": "导出文件不存在"}), 404
+        return Response(path.read_text(encoding="utf-8"), mimetype="application/json", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+    # ----------------------------------------------------------
+    # 免手机验证 synthetic 转化（codex-auth-helper 原理，纯本地）
+    # ----------------------------------------------------------
+    def _synthetic_convert_row(acc):
+        from core import synthetic_auth
+        converted = synthetic_auth.convert_account_row(acc)
+        path = synthetic_auth.write_auth_file(converted)
+        db.merge_account_extra(int(acc["id"]), {"synthetic_auth": {
+            "status": "success",
+            "converted_at": db._now(),
+            "account_id": converted["account_id"],
+            "plan_type": converted["plan_type"],
+            "expires_at": converted["expires_at"],
+            "filename": path.name,
+        }})
+        return converted, path
+
+    def _synthetic_mark_failed(acc_id, exc):
+        try:
+            db.merge_account_extra(int(acc_id), {"synthetic_auth": {
+                "status": "failed",
+                "converted_at": db._now(),
+                "error": f"{type(exc).__name__}: {str(exc)[:160]}",
+            }})
+        except Exception:
+            pass
+
+    @app.post("/api/accounts/<int:acc_id>/synthetic-auth")
+    def api_account_synthetic_auth(acc_id: int):
+        """单个账号一键转化为 synthetic Codex auth.json（纯本地零网络）。"""
+        acc = db.get_account(acc_id)
+        if not acc:
+            return jsonify({"ok": False, "error": "账号不存在"}), 404
+        try:
+            converted, path = _synthetic_convert_row(acc)
+        except Exception as exc:
+            _synthetic_mark_failed(acc_id, exc)
+            return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 422
+        return jsonify({
+            "ok": True,
+            "email": converted["email"],
+            "account_id": converted["account_id"],
+            "plan_type": converted["plan_type"],
+            "expires_at": converted["expires_at"],
+            "filename": path.name,
+            "refreshable": bool(converted.get("session_token")),
+        })
+
+    @app.post("/api/accounts/synthetic-auth-bulk")
+    def api_accounts_synthetic_auth_bulk():
+        """批量转化选中账号，产出 auth.json/sub2api/cockpit 文件，可选直传 sub2api。"""
+        from core import synthetic_auth
+        data = request.get_json(silent=True) or {}
+        raw_ids = data.get("account_ids") or data.get("ids") or []
+        if not isinstance(raw_ids, list) or not raw_ids:
+            return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
+        upload = bool(data.get("upload_sub2api"))
+        converted_ok, failed = [], []
+        sub2_entries, cockpit_entries = [], []
+        for raw in raw_ids[:1000]:
+            try:
+                acc_id = int(raw)
+            except (TypeError, ValueError):
+                failed.append({"id": raw, "error": "ID 非法"})
+                continue
+            acc = db.get_account(acc_id)
+            if not acc:
+                failed.append({"id": acc_id, "error": "账号不存在"})
+                continue
+            try:
+                converted, path = _synthetic_convert_row(acc)
+                sub2_entries.append(synthetic_auth.build_sub2api_session_entry(converted))
+                cockpit_entries.append(synthetic_auth.build_cockpit_entry(converted))
+                item = {
+                    "id": acc_id,
+                    "email": converted["email"],
+                    "account_id": converted["account_id"],
+                    "plan_type": converted["plan_type"],
+                    "expires_at": converted["expires_at"],
+                    "filename": path.name,
+                }
+                if upload:
+                    try:
+                        up = synthetic_auth.upload_to_sub2api(converted)
+                        item["sub2api_upload"] = {"ok": True, "status_code": up.get("status_code")}
+                    except Exception as exc:
+                        item["sub2api_upload"] = {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+                converted_ok.append(item)
+            except Exception as exc:
+                _synthetic_mark_failed(acc_id, exc)
+                failed.append({"id": acc_id, "email": acc.get("email"), "error": f"{type(exc).__name__}: {str(exc)[:160]}"})
+        if not converted_ok:
+            return jsonify({"ok": False, "error": "没有可转化的账号", "failed": failed}), 422
+        sub2_path = synthetic_auth.write_sub2api_file(sub2_entries)
+        cockpit_path = synthetic_auth.write_cockpit_file(cockpit_entries)
+        return jsonify({
+            "ok": True,
+            "converted": converted_ok,
+            "converted_count": len(converted_ok),
+            "failed": failed,
+            "failed_count": len(failed),
+            "sub2api_file": sub2_path.name,
+            "cockpit_file": cockpit_path.name,
+        })
+
+    @app.get("/api/accounts/synthetic-auth/download/<filename>")
+    def api_synthetic_auth_download(filename: str):
+        if not re.fullmatch(r"synthetic-(?:auth|sub2api|cockpit)-[\w.@\-]+\.json", filename):
+            return jsonify({"ok": False, "error": "文件名非法"}), 404
+        from core.synthetic_auth import _EXPORT_DIR
+        path = _EXPORT_DIR / filename
+        if not path.is_file():
+            return jsonify({"ok": False, "error": "文件不存在"}), 404
+        return Response(path.read_text(encoding="utf-8"), mimetype="application/json", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
     @app.get("/api/accounts/plan-check-status")
     def api_account_plan_check_status():
@@ -230,6 +658,52 @@ def create_app(auth_code: str | None = None) -> Flask:
             "deleted_count": len(deleted),
             "skipped": skipped,
         })
+
+    @app.post("/api/accounts/delete-abnormal")
+    def api_accounts_delete_abnormal():
+        """一键删除全部异常账号（缺 token / Token 过期 / 认证失效）。
+
+        Body 可选 {archived: "0"|"1"}，与账号列表的归档视图保持一致，默认未归档视图。
+        返回被删账号的 id/email 摘要，不回传任何凭据。
+        """
+        data = request.get_json(silent=True) or {}
+        archived = str(data.get("archived", "0") or "0").lower()
+        rows = db.list_accounts(limit=100000, archived=archived)
+        abnormal_ids = []
+        preview = []
+        for row in rows:
+            health, reason = _account_health(row, session_refresh.token_status(row))
+            if health == "abnormal":
+                abnormal_ids.append(int(row.get("id")))
+                preview.append({"id": row.get("id"), "email": row.get("email"), "reason": reason})
+        if not abnormal_ids:
+            return jsonify({"ok": True, "deleted": [], "deleted_count": 0, "skipped": []})
+        deleted, skipped = db.delete_accounts(account_ids=abnormal_ids)
+        return jsonify({
+            "ok": True,
+            "deleted": [{"id": d.get("id"), "email": d.get("email")} for d in deleted],
+            "deleted_count": len(deleted),
+            "skipped": skipped,
+            "preview": preview,
+        })
+
+    @app.get("/api/accounts/health-summary")
+    def api_accounts_health_summary():
+        """账号健康统计（总数/正常/异常/未检测/plus/free），供号池面板卡片展示。"""
+        archived = str(request.args.get("archived", default="0") or "0").lower()
+        rows = db.list_accounts(limit=100000, archived=archived)
+        summary = {"total": 0, "normal": 0, "abnormal": 0, "unknown": 0, "plus": 0, "free": 0, "free_trial": 0}
+        for row in rows:
+            health, _ = _account_health(row, session_refresh.token_status(row))
+            summary["total"] += 1
+            summary[health] = summary.get(health, 0) + 1
+            if _account_matches_plan(row, "plus"):
+                summary["plus"] += 1
+            elif _account_matches_plan(row, "free"):
+                summary["free"] += 1
+                if row.get("plus_trial_eligible"):
+                    summary["free_trial"] += 1
+        return jsonify(summary)
 
     @app.post("/api/accounts/<int:acc_id>/note")
     def api_account_note(acc_id: int):
@@ -998,31 +1472,46 @@ def create_app(auth_code: str | None = None) -> Flask:
         status = request.args.get("status") or None
         limit = request.args.get("limit", default=500, type=int)
         source = _pool_source_arg()
+        from core.assurivo_mail_client import list_pool as list_assurivo_pool, migrate_legacy_generic_api_records
+        migrate_legacy_generic_api_records()
         if source == "all":
             rows = []
             rows += _with_pool_source(db.list_outlook_pool(status=status, limit=limit), "outlook")
             rows += _with_pool_source(db.list_generic_api_email_pool(status=status, limit=limit), "generic_api")
+            rows += _with_pool_source(list_assurivo_pool(status=status, limit=limit), "assurivo")
             rows += _with_pool_source(db.list_domain_email_pool(status=status, limit=limit), "cloudflare_domain")
             rows = sorted(rows, key=lambda x: str(x.get("created_at") or x.get("imported_at") or x.get("used_at") or ""), reverse=True)
-            return jsonify(rows[:limit])
+            return jsonify(_safe_pool_rows(rows[:limit]))
         if source == "generic_api":
-            return jsonify(_with_pool_source(db.list_generic_api_email_pool(status=status, limit=limit), "generic_api"))
+            return jsonify(_safe_pool_rows(_with_pool_source(db.list_generic_api_email_pool(status=status, limit=limit), "generic_api")))
+        if source == "assurivo":
+            return jsonify(_safe_pool_rows(_with_pool_source(list_assurivo_pool(status=status, limit=limit), "assurivo")))
         if source == "cloudflare_domain":
-            return jsonify(_with_pool_source(db.list_domain_email_pool(status=status, limit=limit), "cloudflare_domain"))
-        return jsonify(_with_pool_source(db.list_outlook_pool(status=status, limit=limit), "outlook"))
+            return jsonify(_safe_pool_rows(_with_pool_source(db.list_domain_email_pool(status=status, limit=limit), "cloudflare_domain")))
+        return jsonify(_safe_pool_rows(_with_pool_source(db.list_outlook_pool(status=status, limit=limit), "outlook")))
+
+    @app.post("/api/outlook/material")
+    def api_outlook_material():
+        """按需返回单个邮箱的原始接码交付格式；普通列表绝不下发。"""
+        data = request.get_json(silent=True) or {}
+        material, error = _pool_material(data.get("source"), data.get("email"))
+        if error:
+            return jsonify({"ok": False, "error": error}), 404
+        return jsonify({"ok": True, **material})
 
     @app.post("/api/outlook/import")
     def api_outlook_import():
         """
         粘贴文本导入邮箱素材。
         Outlook：email----password----clientId----refreshToken
-        通用 API：email----code_url
+        通用 API：email----code_url（Assurivo URL 会自动归入 Assurivo 池）
+        Assurivo：email----完整查询 URL
         分隔符兼容 ---- 与 ====。
         """
         data = request.get_json(silent=True) or {}
         source = (data.get("source") or data.get("type") or "").strip()
-        if source not in ("outlook", "generic_api"):
-            return jsonify({"ok": False, "error": "导入时请选择具体类型：Outlook 或 通用 API"}), 400
+        if source not in ("outlook", "generic_api", "assurivo"):
+            return jsonify({"ok": False, "error": "导入时请选择具体类型：Outlook、通用 API 或 Assurivo"}), 400
         text = data.get("text") or ""
         as_registered = bool(data.get("as_registered", False))
         records = []
@@ -1032,12 +1521,24 @@ def create_app(auth_code: str | None = None) -> Flask:
                 continue
             parts = line.split("----") if "----" in line else line.split("====")
             parts = [p.strip() for p in parts]
-            if source == "generic_api":
+            if source in ("generic_api", "assurivo"):
                 if len(parts) < 2:
+                    continue
+                try:
+                    if source == "assurivo":
+                        from core.assurivo_mail_client import parse_material_line
+                        material = parse_material_line(f"{parts[0]}----{parts[1]}")
+                        if material is None:
+                            continue
+                        code_url = material.query_url
+                    else:
+                        from core.generic_api_mail_client import validate_code_url
+                        code_url = validate_code_url(parts[0], parts[1])
+                except Exception:
                     continue
                 records.append({
                     "email": parts[0],
-                    "code_url": parts[1],
+                    "code_url": code_url,
                     "access_token": parts[2] if len(parts) > 2 else "",
                     "totp_secret": parts[3] if len(parts) > 3 else "",
                 })
@@ -1053,12 +1554,28 @@ def create_app(auth_code: str | None = None) -> Flask:
                 "totp_secret": parts[5] if len(parts) > 5 else "",
             })
         if not records:
-            need = "2 段：邮箱----取码地址" if source == "generic_api" else "4 段：email----password----clientId----refreshToken"
+            need = "2 段：邮箱----取码地址" if source in ("generic_api", "assurivo") else "4 段：email----password----clientId----refreshToken"
             return jsonify({"ok": False, "error": f"未解析到有效邮箱行（需 {need}，---- 或 ==== 分隔）"}), 400
-        if as_registered:
+        if as_registered and source == "assurivo":
+            return jsonify({"ok": False, "error": "Assurivo 查询素材只能导入 Assurivo 邮箱池，不能标记为已注册账号。"}), 400
+        if as_registered and source == "generic_api":
+            from core.assurivo_mail_client import import_records, parse_material_line
+            assurivo_records = [
+                record for record in records
+                if parse_material_line(f"{record.get('email') or ''}----{record.get('code_url') or ''}") is not None
+            ]
+            generic_records = [record for record in records if record not in assurivo_records]
+            assurivo_inserted, assurivo_skipped = import_records(assurivo_records)
+            inserted, skipped = db.import_registered_email_accounts(generic_records, source=source) if generic_records else (0, 0)
+            inserted += assurivo_inserted
+            skipped += assurivo_skipped
+        elif as_registered:
             inserted, skipped = db.import_registered_email_accounts(records, source=source)
         elif source == "generic_api":
             inserted, skipped = db.import_generic_api_emails(records)
+        elif source == "assurivo":
+            from core.assurivo_mail_client import import_records
+            inserted, skipped = import_records(records)
         else:
             inserted, skipped = db.import_outlook_accounts(records)
         return jsonify({
@@ -1082,6 +1599,9 @@ def create_app(auth_code: str | None = None) -> Flask:
             source = "outlook"
         if source == "generic_api":
             db.release_generic_api_email(email, status=status, note=data.get("note"))
+        elif source == "assurivo":
+            from core.assurivo_mail_client import release_account
+            release_account(email, status=status, note=data.get("note"))
         elif source == "cloudflare_domain":
             db.release_domain_email(email, status=status, note=data.get("note"))
         else:
@@ -1125,6 +1645,9 @@ def create_app(auth_code: str | None = None) -> Flask:
             try:
                 if item_source == "generic_api":
                     db.release_generic_api_email(email, status=status, note=note)
+                elif item_source == "assurivo":
+                    from core.assurivo_mail_client import release_account
+                    release_account(email, status=status, note=note)
                 elif item_source == "cloudflare_domain":
                     db.release_domain_email(email, status=status, note=note)
                 else:
@@ -1142,6 +1665,7 @@ def create_app(auth_code: str | None = None) -> Flask:
     @app.post("/api/outlook/delete")
     def api_outlook_delete():
         """从邮箱池彻底删除一个邮箱：body {email}。"""
+        from core.assurivo_mail_client import delete_account as delete_assurivo_account
         data = request.get_json(silent=True) or {}
         email = (data.get("email") or "").strip()
         if not email:
@@ -1152,6 +1676,8 @@ def create_app(auth_code: str | None = None) -> Flask:
         deleted = (
             db.delete_generic_api_email(email)
             if source == "generic_api"
+            else delete_assurivo_account(email)
+            if source == "assurivo"
             else db.delete_domain_email(email)
             if source == "cloudflare_domain"
             else db.delete_outlook(email)
@@ -1161,6 +1687,7 @@ def create_app(auth_code: str | None = None) -> Flask:
     @app.post("/api/outlook/delete-bulk")
     def api_outlook_delete_bulk():
         """从邮箱池批量彻底删除邮箱：body {emails: [...]}。"""
+        from core.assurivo_mail_client import delete_account as delete_assurivo_account
         data = request.get_json(silent=True) or {}
         source = _pool_source_arg()
         emails = data.get("items") or data.get("emails") or []
@@ -1191,6 +1718,8 @@ def create_app(auth_code: str | None = None) -> Flask:
             deleted_ok = (
                 db.delete_generic_api_email(email)
                 if item_source == "generic_api"
+                else delete_assurivo_account(email)
+                if item_source == "assurivo"
                 else db.delete_domain_email(email)
                 if item_source == "cloudflare_domain"
                 else db.delete_outlook(email)
@@ -1717,6 +2246,11 @@ def create_app(auth_code: str | None = None) -> Flask:
             row.update(svc.get_retry_info(row))
         return jsonify(rows)
 
+    @app.get("/api/registration-preflight")
+    def api_registration_preflight():
+        """只读返回当前注册驱动及其提交前置条件；不创建任何任务。"""
+        return jsonify(svc.registration_driver_preflight())
+
     @app.post("/api/jobs")
     def api_jobs_create():
         """启动批量注册：body {count, workers}。"""
@@ -1727,6 +2261,10 @@ def create_app(auth_code: str | None = None) -> Flask:
             return jsonify({"ok": False, "error": "count 非法"}), 400
         if count < 1 or count > 200:
             return jsonify({"ok": False, "error": "count 需在 1~200 之间"}), 400
+
+        driver_status = svc.registration_driver_preflight()
+        if not driver_status["can_submit"]:
+            return jsonify({"ok": False, "error": driver_status["message"], "driver": driver_status}), 400
 
         # workers 控制本次新提交任务使用的线程池；若和上次不同，服务层会为新任务切换到新池。
         try:

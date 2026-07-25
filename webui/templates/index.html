@@ -123,11 +123,11 @@
     .col-error { width: 320px; }
     .col-actions { width: 220px; }
     .jobs-table .col-actions { width: 330px; }
-    .accounts-table .col-token { width: 92px; }
-    .accounts-table .col-plan { width: 340px; }
+    .accounts-table .col-token { width: 148px; }
+    .accounts-table .col-plan { width: 168px; }
     .accounts-table .col-note { width: 180px; }
     .accounts-table .col-agent { width: 220px; }
-    .accounts-table .col-actions { width: 360px; }
+    .accounts-table .col-actions { width: 104px; }
     .accounts-table td:nth-child(6), .accounts-table th:nth-child(6) { overflow: visible; text-overflow: clip; }
     .accounts-table td:nth-child(10), .accounts-table th:nth-child(10) { overflow: visible; text-overflow: clip; }
 
@@ -215,16 +215,16 @@
     .accounts-table th, .accounts-table td { padding: 7px 8px; }
     .accounts-table .col-check { width: 34px; }
     .accounts-table .col-id { width: 52px; }
-    .accounts-table .col-email { width: 250px; }
+    .accounts-table .col-email { width: auto; }
     .accounts-table .col-source { width: 80px; }
-    .accounts-table .col-token { width: 92px; }
-    .accounts-table .col-plan { width: 300px; }
+    .accounts-table .col-token { width: 148px; }
+    .accounts-table .col-plan { width: 168px; }
     .accounts-table .col-note { width: 150px; }
     .accounts-table .col-small { width: 76px; }
     .accounts-table .col-status { width: 88px; }
     .accounts-table .col-agent { width: 220px; }
-    .accounts-table .col-time { width: 170px; }
-    .accounts-table .col-actions { width: 330px; }
+    .accounts-table .col-time { width: 148px; }
+    .accounts-table .col-actions { width: 104px; }
     .accounts-table .main-cell { font-size: 12px; }
     .accounts-table .sub-cell { margin-top: 1px; font-size: 11px; }
     .accounts-table .mono { font-size: 11px; }
@@ -242,6 +242,48 @@
     .account-action-group button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(15,23,42,.08); }
     .account-action-group .primary { background: #2563eb; border-color: #2563eb; color: #fff; }
     .account-action-group .good { background: #edf8f1; border-color: #b9dfc9; color: #166534; }
+    .accounts-bulk-actions { margin: 0 16px 12px; border: 1px solid #e6edf5; border-radius: 10px; background: #fbfdff; }
+    .accounts-bulk-actions summary { padding: 10px 12px; cursor: pointer; color: #344054; font-size: 13px; font-weight: 800; }
+    .accounts-bulk-actions summary span { color: var(--muted); font-weight: 400; }
+    .accounts-bulk-actions .accounts-actionbar { padding: 0 12px 12px; }
+    .accounts-table .col-email { width: auto; }
+    .accounts-table .col-source { width: 76px; }
+    .accounts-table .col-plan { width: 168px; }
+    .accounts-table .col-health { width: 92px; }
+    .accounts-table .col-token { width: 148px; }
+    .accounts-table .col-time { width: 148px; }
+    .accounts-table .col-actions { width: 104px; }
+    .outlook-table .col-check { width: 34px; }
+    .outlook-table .col-email { width: auto; }
+    .outlook-table .col-source { width: 110px; }
+    .outlook-table .col-status { width: 90px; }
+    .outlook-table .col-token { width: 130px; }
+    .outlook-table .col-time { width: 170px; }
+    .outlook-table .col-actions { width: 110px; }
+    .accounts-stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(118px, 1fr)); gap:10px; padding:12px 16px 0; }
+    .stat-card { border:1px solid #e6edf5; border-radius:10px; background:linear-gradient(180deg,#fbfdff,#f7faff); padding:9px 12px; }
+    .stat-card .stat-label { color:var(--muted); font-size:12px; font-weight:700; }
+    .stat-card .stat-value { margin-top:2px; font-size:22px; font-weight:900; }
+    .stat-card.stat-good .stat-value { color:#166534; }
+    .stat-card.stat-danger .stat-value { color:#b3261e; }
+    .stat-card.stat-plus .stat-value { color:#7c3aed; }
+    .stat-card.stat-muted .stat-value { color:#667085; }
+    .accounts-toolbar select { min-height:32px; padding:0 8px; border:1px solid #e5edf6; border-radius:8px; background:#fff; font-size:12px; font-weight:700; color:#344054; }
+    .account-drawer:not(.hidden) { position: fixed; top: 0; right: 0; z-index: 1001; display: block; width: min(560px, 100vw); height: 100dvh; overflow-y: auto; padding: 20px; background: var(--surface); box-shadow: -12px 0 36px rgba(15,23,42,.26); }
+    .account-drawer::before { content: ''; position: fixed; inset: 0; z-index: -1; background: rgba(15,23,42,.42); }
+    .drawer-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding-bottom:14px; border-bottom:1px solid var(--line); }
+    .drawer-section { padding:14px 0; border-bottom:1px solid #edf1f5; }
+    .drawer-section h3 { font-size:13px; margin-bottom:8px; }
+    .drawer-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+    .drawer-kv { padding:8px; border:1px solid #edf1f5; border-radius:7px; background:#fbfcfe; font-size:12px; overflow-wrap:anywhere; }
+    .drawer-kv b { display:block; margin-bottom:3px; color:var(--muted); font-size:11px; }
+    .drawer-actions { display:flex; flex-wrap:wrap; gap:8px; }
+    .drawer-actions button { min-height:32px; border:1px solid var(--line); border-radius:7px; background:#fff; padding:0 10px; font-weight:800; cursor:pointer; font-size:12px; }
+    .drawer-actions button.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
+    .drawer-actions button.good { background:#edf8f1; border-color:#b9dfc9; color:#166534; }
+    .drawer-actions button.danger { background:#fffafa; border-color:#e7a3a0; color:#b3261e; }
+    .drawer-actions button:disabled { color:#98a2b3; cursor:not-allowed; background:#f2f4f7; }
+    @media (max-width: 650px) { .accounts-table .col-source, .accounts-table .col-time { display:none; } .accounts-table th:nth-child(3), .accounts-table td:nth-child(3), .accounts-table th:nth-child(7), .accounts-table td:nth-child(7) { display:none; } .accounts-table .col-email { width:42%; } .accounts-table .col-token { width:30%; } .drawer-grid { grid-template-columns:1fr; } }
     .accounts-table .extract-link-cell { gap: 4px; margin-top: 3px; }
     .accounts-table .extract-link-btn, .accounts-table .agent-token-cell button { min-height: 22px; padding: 0 7px; font-size: 11px; }
     .accounts-table .agent-token-cell { gap: 4px; margin-top: 2px; }
@@ -351,12 +393,111 @@
       border-radius: 8px; padding: 12px; display: grid; gap: 10px;
     }
     .roxy-workspace-box .row { align-items: flex-end; }
-    .roxy-invite-link {
-      display: inline-flex; align-items: center; justify-content: center; width: fit-content;
-      min-height: 30px; padding: 0 10px; border-radius: 999px; border: 1px solid #9bbcff;
-      background: #fff; color: var(--blue); text-decoration: none; font-size: 12px; font-weight: 800;
+
+    /* ============ 全局视觉升级 v2（极光主题，覆盖层） ============ */
+    :root {
+      --bg: #f1f4fa; --surface: #ffffff; --soft: #f6f8fc; --text: #101828;
+      --muted: #667085; --line: #e3e9f2; --blue: #4f46e5; --green: #15803d;
+      --red: #d92d20; --amber: #b54708;
+      --shadow-sm: 0 1px 2px rgba(16,24,40,.05);
+      --shadow-md: 0 6px 18px -4px rgba(16,24,40,.10);
+      --shadow-lg: 0 18px 44px -12px rgba(16,24,40,.16);
     }
-    .roxy-invite-link:hover { background: #e0ebff; }
+    body {
+      background:
+        radial-gradient(1100px 480px at 88% -8%, rgba(99,102,241,.10), transparent 62%),
+        radial-gradient(880px 400px at -8% 0%, rgba(14,165,233,.08), transparent 56%),
+        var(--bg);
+    }
+    header {
+      padding: 22px 0;
+      background: linear-gradient(118deg, #0a1128 0%, #121b3a 52%, #1c2450 100%);
+      border-bottom: 1px solid rgba(255,255,255,.06);
+    }
+    header h1 {
+      font-size: 22px; letter-spacing: .5px;
+      background: linear-gradient(90deg, #ffffff, #c7d2fe);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    header .meta { color: #8ea0c2; }
+    .header-links a, .header-links button { transition: all .16s ease; }
+    .stat {
+      border-radius: 12px; background: rgba(255,255,255,.07);
+      border: 1px solid rgba(255,255,255,.12);
+      transition: transform .18s ease, background .18s ease;
+    }
+    .stat:hover { transform: translateY(-2px); background: rgba(255,255,255,.12); }
+    .stat strong { font-size: 20px; }
+    nav {
+      background: rgba(10,17,40,.94); backdrop-filter: blur(10px);
+      position: sticky; top: 0; z-index: 900;
+    }
+    .nav-inner { gap: 6px; padding: 8px 0; }
+    nav button {
+      border-radius: 999px; padding: 8px 18px; border-bottom: none;
+      color: #9fb0cf; transition: all .18s ease;
+    }
+    nav button:hover { color: #fff; background: rgba(255,255,255,.08); }
+    nav button.active {
+      color: #fff; background: linear-gradient(135deg, #4f46e5, #7c3aed);
+      box-shadow: 0 4px 14px -4px rgba(99,102,241,.55);
+    }
+    main { margin: 20px auto 48px; gap: 20px; }
+    main > div:not(.hidden) { gap: 20px; }
+    section.card {
+      border-radius: 14px; border: 1px solid rgba(227,233,242,.9);
+      box-shadow: var(--shadow-md); transition: box-shadow .2s ease;
+    }
+    section.card:hover { box-shadow: var(--shadow-lg); }
+    .head {
+      background: linear-gradient(180deg, #fbfcff, #f5f7fc);
+      border-bottom: 1px solid var(--line); border-radius: 14px 14px 0 0;
+    }
+    .head h2 { font-size: 15px; letter-spacing: .2px; }
+    button.btn {
+      border-radius: 9px; min-height: 36px; font-weight: 700;
+      transition: all .16s ease; box-shadow: var(--shadow-sm);
+    }
+    button.btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    button.btn:active:not(:disabled) { transform: translateY(0); box-shadow: var(--shadow-sm); }
+    button.btn.primary {
+      background: linear-gradient(135deg, #4f46e5, #6d28d9); border-color: transparent;
+    }
+    button.btn.primary:hover:not(:disabled) {
+      background: linear-gradient(135deg, #4338ca, #5b21b6);
+    }
+    button.btn.good { border-color: #bbf7d0; background: #f0fdf4; color: var(--green); }
+    button.btn.good:hover:not(:disabled) { background: #dcfce7; }
+    button.btn.danger { border-color: #fecaca; color: var(--red); background: #fff; }
+    button.btn.danger:hover:not(:disabled) { background: #fef2f2; }
+    button.btn:disabled { box-shadow: none; }
+    input, textarea, select {
+      border-radius: 8px; border: 1px solid var(--line);
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none; border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(79,70,229,.14);
+    }
+    th { background: #f8fafd; color: #667085; font-weight: 700; letter-spacing: .3px; }
+    td, th { border-bottom: 1px solid #eef2f7; }
+    tr:hover td { background: #f6f9ff; }
+    .banner { border-radius: 10px; border-left-width: 4px; padding: 11px 14px; }
+    .banner.warn { background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; color: #92400e; }
+    .banner.info { background: #eef2ff; border: 1px solid #c7d2fe; border-left: 4px solid #4f46e5; color: #3730a3; }
+    .pill { letter-spacing: .2px; box-shadow: inset 0 0 0 1px rgba(16,24,40,.04); }
+    .log { border-radius: 10px; background: #0b1226; }
+    #toast { border-radius: 10px; background: rgba(10,17,40,.96); backdrop-filter: blur(6px); }
+    .account-drawer:not(.hidden) { border-radius: 14px 0 0 14px; }
+    .drawer-actions button {
+      border-radius: 9px; transition: all .16s ease; box-shadow: var(--shadow-sm);
+    }
+    .drawer-actions button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    .drawer-actions button.primary {
+      background: linear-gradient(135deg, #4f46e5, #6d28d9); border-color: transparent;
+    }
+    details > summary { cursor: pointer; user-select: none; }
+    ::selection { background: rgba(79,70,229,.18); }
   </style>
 </head>
 <body>
@@ -366,7 +507,6 @@
       <h1>GPT 注册控制台</h1>
       <p class="meta">本地 Web 控制台 · 数据更新于 <span id="updatedAt">-</span></p>
       <div class="header-links">
-        <a href="https://t.me/+gu_cvEKq_vcyZWRl" target="_blank" rel="noopener noreferrer">TG 交流群</a>
         <form method="post" action="/logout"><button type="submit">退出</button></form>
       </div>
     </div>
@@ -383,20 +523,84 @@
 <nav>
   <div class="nav-inner">
     <button data-tab="register" class="active">注册</button>
-    <button data-tab="accounts">账号</button>
+    <button data-tab="accounts">账号资产</button>
     <button data-tab="codex">Codex 授权</button>
     <button data-tab="outlook">邮箱池</button>
+    <button data-tab="conversation">会话池</button>
+    <button data-tab="export">导出</button>
     <button data-tab="config">配置</button>
   </div>
+
 </nav>
 
 <main>
+  <!-- ============ 会话池 ============ -->
+  <div id="tab-conversation" class="hidden">
+    <section class="card">
+      <div class="head"><h2>普通 ChatGPT 会话池</h2><p>注册成功账号绑定消息模板后逐条对话（默认五轮：发一条、等答完、再发下一条）；真实发送受「配置 → 会话池 → 真实对话发送」总开关控制。</p></div>
+      <div class="body"><div id="convStatusBanner" class="banner info">读取会话池状态…</div></div>
+    </section>
+    <section class="card">
+      <div class="toolbar">
+        <div><h2>消息模板</h2></div>
+        <div class="buttons">
+          <button class="btn" id="btnConvSeedTemplate" title="生成一个内置的五轮中文对话模板（可再编辑）">生成默认五轮模板</button>
+          <button class="btn" id="btnConvRefresh">刷新</button>
+        </div>
+      </div>
+      <div class="body">
+        <div class="row" style="align-items:flex-end;">
+          <div><label class="fld">模板 ID<input id="convTplId" placeholder="如 default-five"></label></div>
+          <div><label class="fld">模板名称<input id="convTplName" placeholder="如 默认五轮对话"></label></div>
+          <div class="action-cell"><button class="btn primary" id="btnConvSaveTemplate">保存模板</button></div>
+        </div>
+        <label class="fld" style="margin-top:8px;">消息（每行一条，按顺序逐条发送）<textarea id="convTplMessages" rows="5" placeholder="第一条问题&#10;第二条问题&#10;第三条问题&#10;第四条问题&#10;第五条问题"></textarea></label>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table class="accounts-table">
+            <thead><tr><th>ID</th><th>名称</th><th>消息数</th><th>启用</th><th>操作</th></tr></thead>
+            <tbody id="convTemplatesBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+    <section class="card">
+      <div class="toolbar">
+        <div><h2>账号绑定与执行</h2></div>
+        <div class="buttons">
+          <button class="btn good" id="btnConvRunAll" title="后台执行所有排队中的绑定">运行全部排队</button>
+        </div>
+      </div>
+      <div class="body">
+        <div class="row" style="align-items:flex-end;">
+          <div><label class="fld">账号<select id="convBindAccount"></select></label></div>
+          <div><label class="fld">模板<select id="convBindTemplate"></select></label></div>
+          <div class="action-cell"><button class="btn primary" id="btnConvBind">绑定</button></div>
+        </div>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table class="accounts-table">
+            <thead><tr><th>账号</th><th>模板</th><th>状态</th><th>进度</th><th>最近错误</th><th>操作</th></tr></thead>
+            <tbody id="convBindingsBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============ 导出 ============ -->
+  <div id="tab-export" class="hidden">
+    <section class="card">
+      <div class="head"><h2>账号资产导出</h2><p>先在“账号资产”选择账号，再导出 Sub2API、Cockpit 或受控完整资产文件。敏感内容不会嵌入页面或接口响应。</p></div>
+      <div class="body"><button class="btn primary" id="btnGoAccountsExport">前往账号资产并选择导出</button></div>
+    </section>
+  </div>
+
   <!-- ============ 注册 ============ -->
   <div id="tab-register">
     <section class="card">
       <div class="head"><h2>启动批量注册</h2><p>从邮箱池自动领取邮箱并并发注册，下方实时查看任务进度与日志。</p></div>
       <div class="body">
         <div id="regWarn"></div>
+        <div id="regDriverStatus" class="banner info">正在检查注册驱动…</div>
         <div class="row">
           <div>
             <label class="fld">注册数量
@@ -460,13 +664,33 @@
             <label class="inline-num" title="默认只显示未归档账号；勾选后单独查看归档账号">
               <input id="showArchivedAccounts" type="checkbox" style="width:auto;min-height:auto;"> 查看归档
             </label>
-            <label class="inline-num" title="只查询/显示已开通 Plus 的账号">
-              <input id="showPlusAccountsOnly" type="checkbox" style="width:auto;min-height:auto;"> 已开通Plus
+            <span style="display:none" aria-hidden="true"></span>
+            <label class="inline-num" title="按套餐类型筛选">类型
+              <select id="accountTypeFilter">
+                <option value="">全部</option>
+                <option value="plus">plus</option>
+                <option value="free">free</option>
+                <option value="free_trial">free(可试用)</option>
+              </select>
             </label>
+            <label class="inline-num" title="按健康状态筛选；异常=缺token / Token过期 / 认证失效(401)">状态
+              <select id="accountHealthFilter">
+                <option value="">全部</option>
+                <option value="normal">正常</option>
+                <option value="abnormal">异常</option>
+                <option value="unknown">未检测</option>
+              </select>
+            </label>
+            <button class="btn" id="btnRefreshAccounts" title="重新加载账号列表与健康统计">刷新</button>
+            <button class="btn primary" id="btnCheckAllAccounts" title="一键检测：对当前视图全部账号批量查询套餐/Plus资格；认证失效的账号会被标记为异常">一键检测</button>
+            <button class="btn danger" id="btnDeleteAbnormalAccounts" title="一键删除当前视图（含归档视图）中全部异常账号">删除异常账号</button>
           </div>
-        </div>
-        <div class="accounts-actionbar">
-          <div class="btn-group">
+      </div>
+      <details class="accounts-bulk-actions">
+        <summary>批量操作与导出 <span id="accountsBulkSummary">（未选择账号）</span></summary>
+      <div class="accounts-actionbar">
+        <div class="hint" style="width:100%;">Token 会按 JWT 到期时间失效。Sub2API/Cockpit 为静态快照；完整账号资产导出为 JSON 文件，不会把凭据放入列表响应。</div>
+        <div class="btn-group">
             <span class="btn-group-title">套餐/提链</span>
             <button class="btn primary" id="btnCheckSelectedPlans" disabled title="查询选中账号当前套餐；free 账号会检查 Plus 试用资格">查套餐</button>
             <button class="btn good" id="btnExtractSelectedLinks" disabled title="给选中的 free(可Plus试用) 账号批量提链，类型按配置 PIX/UPI">提链</button>
@@ -484,26 +708,34 @@
             <button class="btn danger" id="btnStopSelectedCodex" disabled title="停止选中账号中正在补跑的 Codex 授权">停止</button>
           </div>
           <div class="btn-group">
-            <span class="btn-group-title">批量</span>
-            <button class="btn good" id="btnNoteSelectedAccounts" disabled title="给选中的账号统一设置备注，留空可清空备注">备注</button>
-            <button class="btn good" id="btnCopySelectedLines" disabled title="复制选中账号的完整整行，每个账号一行">复制行</button>
-            <button class="btn good" id="btnDownloadSelectedTxt" disabled title="把选中账号的完整整行保存为 TXT 文件，每个账号一行">下载TXT</button>
-            <button class="btn" id="btnArchiveSelectedAccounts" disabled title="归档选中的账号；默认账号列表将不再查询/显示这些账号">归档</button>
-            <button class="btn" id="btnDeleteSelectedAccounts" disabled title="删除选中的本地账号/token记录">删除</button>
+            <span class="btn-group-title">免手机验证转化</span>
+            <button class="btn good" id="btnSyntheticSelected" disabled title="纯本地转化：把选中账号转成 synthetic Codex auth.json（alg=none id_token），同时生成 Sub2API / Cockpit 导入文件；不跑接码、不发网络请求">一键转化</button>
+            <button class="btn good" id="btnSyntheticSelectedUpload" disabled title="一键转化并直接上传到 sub2api（需先在配置里填 SUB2API_API_BASE / Key）">转化并传sub2</button>
           </div>
           <div class="btn-group">
-            <span class="btn-group-title">全部</span>
-            <button class="btn primary" id="copyAllTokens">复制Token</button>
-            <button class="btn good" id="copyAllLines">复制整行</button>
+            <span class="btn-group-title">批量</span>
+            <button class="btn good" id="btnNoteSelectedAccounts" disabled title="给选中的账号统一设置备注，留空可清空备注">备注</button>
+            <button class="btn good" id="btnExportSelectedSub2" disabled title="导出选中账号为 Sub2API 静态快照；不会自动刷新 Token">导出 Sub2API</button>
+            <button class="btn good" id="btnExportSelectedCockpit" disabled title="导出选中账号为 Cockpit 静态快照；不会自动刷新 Token">导出 Cockpit</button>
+            <button class="btn good" id="btnExportSelectedFullAssets" disabled title="导出完整账号资产 JSON；包含敏感认证与邮箱资产，请妥善保管">导出完整账号资产 JSON</button>
+            <button class="btn" id="btnArchiveSelectedAccounts" disabled title="归档选中的账号；默认账号列表将不再查询/显示这些账号">归档</button>
+            <button class="btn" id="btnCopySelectedTokens" disabled title="逐个读取选中账号的 accessToken 并复制到剪贴板">复制Token</button>
+            <button class="btn" id="btnDeleteSelectedAccounts" disabled title="删除选中的本地账号/token记录">删除</button>
           </div>
         </div>
+      </details>
+      <div class="body hidden" id="syntheticResultPanel" style="margin-top:10px;">
+        <h3 style="font-size:13px;margin-bottom:6px;">免手机验证转化结果 <button class="btn" id="btnCloseSyntheticResult" style="float:right;min-height:26px;">关闭</button></h3>
+        <div id="syntheticResultBody" class="hint"></div>
       </div>
+      </div>
+      <div class="accounts-stats" id="accountsStats"></div>
       <div class="table-wrap">
         <table class="accounts-table">
-          <colgroup><col class="col-check"><col class="col-id"><col class="col-email"><col class="col-source"><col class="col-token"><col class="col-plan"><col class="col-note"><col class="col-small"><col class="col-status"><col class="col-agent"><col class="col-time"><col class="col-actions"></colgroup>
+          <colgroup><col class="col-check"><col class="col-email"><col class="col-source"><col class="col-plan"><col class="col-health"><col class="col-token"><col class="col-time"><col class="col-actions"></colgroup>
           <thead><tr>
             <th><input type="checkbox" id="accountsSelectAll" title="全选/取消全选当前页账号"></th>
-            <th>ID</th><th>邮箱</th><th>来源</th><th>Token</th><th>套餐</th><th>备注</th><th>2FA</th><th>Codex</th><th>Agent Token</th><th>创建时间</th><th>操作</th>
+            <th>账号</th><th>来源</th><th>套餐 / 资格</th><th>状态</th><th>认证状态 / 到期</th><th>创建时间</th><th>操作</th>
           </tr></thead>
           <tbody id="accountsBody"></tbody>
         </table>
@@ -515,6 +747,7 @@
         </h3>
         <div class="log" id="retryLogContent">加载中…</div>
       </div>
+      <aside id="accountDrawer" class="account-drawer hidden" aria-label="账号详情"></aside>
     </section>
   </div>
 
@@ -572,22 +805,20 @@
   <!-- ============ 邮箱池 ============ -->
   <div id="tab-outlook" class="hidden">
     <section class="card">
-      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址（---- 或 ==== 分隔均可）。默认按“已注册成功账号”导入，方便直接在账号页补跑 Codex 授权。</p></div>
+      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址（---- 或 ==== 分隔均可，支持 Assurivo 完整查询 URL）。默认按“已注册成功账号”导入，方便直接在账号页补跑 Codex 授权。</p></div>
       <div class="body">
         <div id="importResult"></div>
         <label class="fld">导入类型
           <select id="importSource">
+            <option value="generic_api" selected>通用 API / 自动识别 Assurivo</option>
             <option value="outlook">Outlook 邮箱池</option>
-            <option value="generic_api">通用 API 取码邮箱</option>
+            <option value="assurivo">Assurivo 邮箱池</option>
           </select>
-          <span class="hint">注册来源可在配置里填多个，例如：outlook,generic_api</span>
+          <span class="hint">粘贴 Assurivo 完整查询 URL 时，可明确选择 Assurivo，或选择“通用 API / 自动识别”；系统会归入 Assurivo 池。Outlook 必须明确选择 Outlook。</span>
         </label>
-        <label style="display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--text);font-size:13px;">
-          <input id="importAsRegistered" type="checkbox" style="width:auto;min-height:auto;">
-          导入后默认视为“注册成功账号”（邮箱池标记已用，并出现在账号页，可直接批量补跑 Codex）
-        </label>
+        <details class="accounts-bulk-actions"><summary>危险/高级选项</summary><label style="display:flex;gap:8px;align-items:center;margin:8px 12px;color:var(--red);font-size:13px;"><input id="importAsRegistered" type="checkbox" style="width:auto;min-height:auto;">将导入素材直接标记为“注册成功账号”（会占用邮箱并写入账号资产页；默认关闭）</label></details>
         <textarea id="importText" placeholder="Outlook: email----password----clientId----refreshToken
-通用API: email----取码地址"></textarea>
+通用API: email----取码地址（支持 Assurivo 完整查询 URL）"></textarea>
         <div style="margin-top:10px;"><button class="btn primary" id="btnImport">导入</button></div>
       </div>
     </section>
@@ -599,6 +830,7 @@
               <option value="all">全部邮箱池</option>
               <option value="outlook">Outlook 邮箱池</option>
               <option value="generic_api">通用 API 邮箱池</option>
+              <option value="assurivo">Assurivo 邮箱池</option>
               <option value="cloudflare_domain">域名邮箱池</option>
             </select>
             <input id="qOutlook" placeholder="搜索邮箱、状态…">
@@ -610,20 +842,21 @@
           <button class="btn" id="btnDisableSelectedOutlook" disabled title="批量停用选中的邮箱；停用后不会被注册任务领取">停用选中</button>
           <button class="btn" id="btnFailSelectedOutlook" disabled title="批量标记选中的邮箱为失败">标失败</button>
           <button class="btn" id="btnDeleteSelectedOutlook" disabled title="批量删除选中的邮箱素材">删除选中</button>
-          <button class="btn" id="copyAllEmails">复制全部邮箱素材</button>
+          <button class="btn good" id="btnExportSelectedPool" disabled title="导出选中邮箱的原始接码素材 TXT；会逐条请求受授权凭据接口">导出选中邮箱素材</button>
         </div>
       </div>
       <div class="table-wrap">
         <table class="outlook-table">
-          <colgroup><col class="col-check"><col class="col-email"><col class="col-source"><col class="col-status"><col class="col-token"><col class="col-time"><col class="col-time"><col class="col-actions"></colgroup>
+          <colgroup><col class="col-check"><col class="col-email"><col class="col-source"><col class="col-status"><col class="col-token"><col class="col-time"><col class="col-actions"></colgroup>
           <thead><tr>
             <th><input type="checkbox" id="outlookSelectAll" title="全选/取消全选当前页邮箱"></th>
-            <th>邮箱</th><th>类型</th><th>状态</th><th>Token</th><th>导入时间</th><th>已用时间</th><th>操作</th>
+            <th>邮箱</th><th>Provider</th><th>状态</th><th>接码凭据</th><th>导入 / 使用时间</th><th>操作</th>
           </tr></thead>
           <tbody id="outlookBody"></tbody>
         </table>
       </div>
       <div class="pager-bar" id="pager-outlook"></div>
+      <aside id="poolDrawer" class="account-drawer hidden" aria-label="邮箱素材详情"></aside>
     </section>
   </div>
 
@@ -655,7 +888,8 @@ let copySeq = 0;
 const copyStore = new Map();
 let ACCOUNTS = [], OUTLOOK = [], CONFIG = [];
 let SHOW_ARCHIVED_ACCOUNTS = false;
-let SHOW_PLUS_ACCOUNTS_ONLY = false;
+let ACCOUNT_TYPE_FILTER = '';
+let ACCOUNT_HEALTH_FILTER = '';
 const ACCOUNT_SELECTED = new Set();
 const OUTLOOK_SELECTED = new Set();
 let JOBS = [];
@@ -721,12 +955,13 @@ function pill(status) {
 }
 function showToast(t) { const el=$('#toast'); el.textContent=t; el.classList.add('show'); clearTimeout(showToast.t); showToast.t=setTimeout(()=>el.classList.remove('show'),1400); }
 async function copyText(text) {
-  if (!text) return;
+  if (!text) { showToast('没有可复制内容'); return false; }
   try {
     if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
     else { const a=document.createElement('textarea'); a.value=text; a.style.position='fixed'; a.style.opacity='0'; document.body.appendChild(a); a.select(); document.execCommand('copy'); a.remove(); }
     showToast('已复制');
-  } catch(e) { showToast('复制失败'); }
+    return true;
+  } catch(e) { showToast('复制失败'); return false; }
 }
 async function api(url, opts) {
   const r = await fetch(url, opts);
@@ -737,7 +972,7 @@ async function api(url, opts) {
 
 // ---------- Tab 切换 ----------
 function activateTab(tab, persist=true) {
-  const allowed = ['register','accounts','codex','outlook','config'];
+  const allowed = ['register','accounts','codex','outlook','conversation','export','config'];
   if (!allowed.includes(tab)) tab = 'register';
   $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
   allowed.forEach(t => $('#tab-'+t).classList.toggle('hidden', t !== tab));
@@ -745,10 +980,220 @@ function activateTab(tab, persist=true) {
   if (tab === 'accounts') loadAccounts();
   if (tab === 'codex') loadCodex();
   if (tab === 'outlook') loadOutlook();
+  if (tab === 'conversation') startConversationTab(); else stopConversationTab();
   if (tab === 'config') loadConfig();
   if (tab === 'register') refreshJobs();
 }
 $$('nav button').forEach(b => b.addEventListener('click', () => activateTab(b.dataset.tab)));
+$('#btnGoAccountsExport').addEventListener('click', () => activateTab('accounts'));
+
+// ---------- 会话池 ----------
+let CONV_TEMPLATES = [], CONV_BINDINGS = [], CONV_STATUS = {}, CONV_ACCOUNTS = [], convTimer = null;
+const CONV_DEFAULT_MESSAGES = [
+  '你好，请用一句话介绍你自己。',
+  '请给我三条提高英语学习效率的建议。',
+  '用 Python 写一个计算斐波那契数列第 n 项的函数，并简单解释。',
+  '请用两句话向小学生解释什么是人工智能。',
+  '谢谢，请给我一句坚持下去的鼓励。',
+];
+const CONV_STATUS_LABEL = {queued:'排队中', running:'运行中', completed:'已完成', partial:'部分完成', failed:'失败', needs_browser_verification:'待浏览器验证'};
+const CONV_STATUS_CLASS = {queued:'status-available', running:'status-running', completed:'status-success', partial:'status-partial_success', failed:'status-failed', needs_browser_verification:'status-failed'};
+
+function startConversationTab() {
+  loadConversation();
+  clearInterval(convTimer);
+  convTimer = setInterval(loadConversation, 4000);
+}
+function stopConversationTab() { clearInterval(convTimer); convTimer = null; }
+
+async function loadConversation() {
+  try {
+    const [status, templates, bindings] = await Promise.all([
+      api('/api/conversation-status'), api('/api/conversation-templates'), api('/api/conversation-bindings'),
+    ]);
+    CONV_STATUS = status || {}; CONV_TEMPLATES = templates || []; CONV_BINDINGS = bindings || [];
+    if (!ACCOUNTS.length) {
+      try { CONV_ACCOUNTS = await api('/api/accounts'); } catch (e) { CONV_ACCOUNTS = []; }
+    } else { CONV_ACCOUNTS = ACCOUNTS; }
+    renderConvStatus(); renderConvTemplates(); renderConvBindings(); renderConvBindOptions();
+  } catch (e) {
+    const b = $('#convStatusBanner');
+    if (b) { b.className = 'banner warn'; b.textContent = `读取会话池失败：${e.message}`; }
+  }
+}
+
+function renderConvStatus() {
+  const b = $('#convStatusBanner');
+  if (!b) return;
+  const on = !!CONV_STATUS.protocol_enabled;
+  const pool = !!CONV_STATUS.pool_enabled;
+  const running = (CONV_STATUS.running || []).length;
+  b.className = `banner ${on ? 'info' : 'warn'}`;
+  b.innerHTML = on
+    ? `<b>真实对话发送：已开启</b> · 会话池${pool ? '已启用' : '未启用（注册后不会自动绑定）'} · 单条超时 ${esc(CONV_STATUS.timeout || 30)} 秒 · 正在运行 ${running} 个绑定 · 已内置拟人化节奏（随机启动延迟 + 消息间随机间隔，最大限度降低风控）`
+    : `<b>真实对话发送：未开启</b> · 绑定只会排队不会真正发消息。需要五轮对话时请到「配置 → 会话池」打开「真实对话发送」（注册后自动开跑还需打开「启用会话池」并填默认模板 ID）。`;
+}
+
+function renderConvTemplates() {
+  const body = $('#convTemplatesBody');
+  if (!body) return;
+  body.innerHTML = CONV_TEMPLATES.map(t => `
+    <tr>
+      <td>${esc(t.id)}</td>
+      <td>${esc(t.name)}</td>
+      <td>${t.message_count}</td>
+      <td>${t.enabled ? '是' : '否'}</td>
+      <td class="actions">
+        <button data-conv-tpl-edit="${esc(t.id)}">编辑</button>
+        <button data-conv-tpl-delete="${esc(t.id)}" style="color:#b3261e;">删除</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="5" class="muted">暂无模板，点击右上角「生成默认五轮模板」快速开始</td></tr>';
+}
+
+function _convTplMessageCount(templateId) {
+  const t = CONV_TEMPLATES.find(x => x.id === templateId);
+  return t ? t.message_count : 0;
+}
+
+function renderConvBindings() {
+  const body = $('#convBindingsBody');
+  if (!body) return;
+  const emailOf = id => {
+    const a = CONV_ACCOUNTS.find(x => Number(x.id) === Number(id));
+    return a ? a.email : `#${id}`;
+  };
+  body.innerHTML = CONV_BINDINGS.map(bd => {
+    const total = _convTplMessageCount(bd.template_id);
+    const statusLabel = CONV_STATUS_LABEL[bd.status] || bd.status || '-';
+    const statusClass = CONV_STATUS_CLASS[bd.status] || 'status-available';
+    const canRun = bd.status === 'queued';
+    const canRetry = ['partial', 'failed', 'needs_browser_verification'].includes(bd.status);
+    return `
+    <tr>
+      <td>${esc(emailOf(bd.account_id))}</td>
+      <td>${esc(bd.template_id)}</td>
+      <td><span class="pill ${statusClass}">${esc(statusLabel)}</span></td>
+      <td>${bd.current_index || 0} / ${total}</td>
+      <td class="muted wrap">${esc(bd.last_error || bd.error || '-')}</td>
+      <td class="actions">
+        <button data-conv-run="${bd.account_id}" data-template="${esc(bd.template_id)}" ${canRun ? '' : 'disabled'}>运行</button>
+        <button data-conv-retry="${bd.account_id}" data-template="${esc(bd.template_id)}" ${canRetry ? '' : 'disabled'}>重试</button>
+        <button data-conv-unbind="${bd.account_id}" data-template="${esc(bd.template_id)}" style="color:#b3261e;">解绑</button>
+      </td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="muted">暂无绑定。选择账号和模板后点击「绑定」。</td></tr>';
+}
+
+function renderConvBindOptions() {
+  const accSel = $('#convBindAccount'), tplSel = $('#convBindTemplate');
+  if (!accSel || !tplSel) return;
+  const keepAcc = accSel.value, keepTpl = tplSel.value;
+  accSel.innerHTML = CONV_ACCOUNTS.map(a => `<option value="${a.id}">${esc(a.email)}</option>`).join('') || '<option value="">（无账号）</option>';
+  tplSel.innerHTML = CONV_TEMPLATES.map(t => `<option value="${esc(t.id)}">${esc(t.name)}（${t.message_count} 条）</option>`).join('') || '<option value="">（无模板）</option>';
+  if (keepAcc) accSel.value = keepAcc;
+  if (keepTpl) tplSel.value = keepTpl;
+}
+
+async function convSaveTemplate() {
+  const id = $('#convTplId').value.trim();
+  const name = $('#convTplName').value.trim();
+  const messages = $('#convTplMessages').value.split('\n').map(x => x.trim()).filter(Boolean);
+  if (!id || !name || !messages.length) { toast('模板 ID、名称和至少一条消息必填', 'err'); return; }
+  try {
+    const r = await api('/api/conversation-templates', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({id, name, messages, enabled:true})});
+    if (!r.ok) throw new Error(r.error || '保存失败');
+    toast(`模板「${name}」已保存（${messages.length} 条消息）`, 'ok');
+    loadConversation();
+  } catch (e) { toast(e.message || String(e), 'err'); }
+}
+
+async function convSeedTemplate() {
+  $('#convTplId').value = 'default-five';
+  $('#convTplName').value = '默认五轮对话';
+  $('#convTplMessages').value = CONV_DEFAULT_MESSAGES.join('\n');
+  await convSaveTemplate();
+}
+
+async function convEditTemplate(id) {
+  try {
+    const t = await api(`/api/conversation-templates/${encodeURIComponent(id)}`);
+    $('#convTplId').value = t.id;
+    $('#convTplName').value = t.name;
+    $('#convTplMessages').value = (t.messages || []).join('\n');
+    toast(`已载入模板「${t.name}」，修改后点保存`, 'ok');
+  } catch (e) { toast(e.message || String(e), 'err'); }
+}
+
+async function convDeleteTemplate(id, btn) {
+  if (!confirm(`确定删除模板「${id}」？已有绑定不会被删除但会失效。`)) return;
+  try {
+    const r = await api(`/api/conversation-templates/${encodeURIComponent(id)}`, {method:'DELETE'});
+    if (!r.ok) throw new Error(r.error || '删除失败');
+    toast('模板已删除', 'ok');
+    loadConversation();
+  } catch (e) { toast(e.message || String(e), 'err'); }
+}
+
+async function convBind() {
+  const accountId = Number($('#convBindAccount').value);
+  const templateId = $('#convBindTemplate').value;
+  if (!accountId || !templateId) { toast('请先选择账号和模板', 'err'); return; }
+  try {
+    const r = await api('/api/conversation-bindings', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({account_id:accountId, template_id:templateId})});
+    if (!r.ok) throw new Error(r.error || '绑定失败');
+    toast('绑定成功，可点击「运行」开始对话', 'ok');
+    loadConversation();
+  } catch (e) { toast(e.message || String(e), 'err'); }
+}
+
+async function convRun(accountId, templateId, retry) {
+  try {
+    const r = await api('/api/conversation-run', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({account_id:accountId, template_id:templateId, retry:!!retry})});
+    if (!r.ok) throw new Error(r.error || (r.busy ? '该绑定正在运行中' : '提交失败'));
+    toast('已提交后台执行，逐条发送并等待回答', 'ok');
+    loadConversation();
+  } catch (e) { toast(e.message || String(e), 'err'); }
+}
+
+async function convRunAll() {
+  if (!CONV_STATUS.protocol_enabled && !confirm('「真实对话发送」总开关未开启，运行会立刻失败。仍要提交全部排队绑定吗？')) return;
+  try {
+    const r = await api('/api/conversation-run-all', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
+    if (!r.ok) throw new Error(r.error || '提交失败');
+    toast(`已提交 ${r.submitted_count} 个绑定后台执行`, 'ok');
+    loadConversation();
+  } catch (e) { toast(e.message || String(e), 'err'); }
+}
+
+async function convUnbind(accountId, templateId) {
+  if (!confirm(`确定解绑账号 #${accountId} 与模板「${templateId}」？进度将丢失。`)) return;
+  try {
+    const r = await api(`/api/conversation-bindings/${accountId}/${encodeURIComponent(templateId)}`, {method:'DELETE'});
+    if (!r.ok) throw new Error(r.error || '解绑失败');
+    toast('已解绑', 'ok');
+    loadConversation();
+  } catch (e) { toast(e.message || String(e), 'err'); }
+}
+
+$('#btnConvSaveTemplate').addEventListener('click', convSaveTemplate);
+$('#btnConvSeedTemplate').addEventListener('click', convSeedTemplate);
+$('#btnConvRefresh').addEventListener('click', loadConversation);
+$('#btnConvBind').addEventListener('click', convBind);
+$('#btnConvRunAll').addEventListener('click', convRunAll);
+$('#convTemplatesBody').addEventListener('click', async (e) => {
+  const editBtn = e.target.closest('[data-conv-tpl-edit]');
+  if (editBtn) { await convEditTemplate(editBtn.dataset.convTplEdit); return; }
+  const delBtn = e.target.closest('[data-conv-tpl-delete]');
+  if (delBtn) { await convDeleteTemplate(delBtn.dataset.convTplDelete, delBtn); return; }
+});
+$('#convBindingsBody').addEventListener('click', async (e) => {
+  const runBtn = e.target.closest('[data-conv-run]');
+  if (runBtn) { await convRun(Number(runBtn.dataset.convRun), runBtn.dataset.template, false); return; }
+  const retryBtn = e.target.closest('[data-conv-retry]');
+  if (retryBtn) { await convRun(Number(retryBtn.dataset.convRetry), retryBtn.dataset.template, true); return; }
+  const unbindBtn = e.target.closest('[data-conv-unbind]');
+  if (unbindBtn) { await convUnbind(Number(unbindBtn.dataset.convUnbind), unbindBtn.dataset.template); return; }
+});
 
 // ---------- 概览 ----------
 async function loadSummary() {
@@ -777,7 +1222,7 @@ $('#btnStart').addEventListener('click', async () => {
     if (!ok) return;
   }
   $('#btnStart').disabled = true;
-  const restoreBtn = () => { $('#btnStart').disabled = false; };
+  const restoreBtn = () => { $('#btnStart').disabled = !REGISTRATION_CAN_SUBMIT; };
   try {
     const r = await api('/api/jobs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count, workers}) });
     $('#regWarn').innerHTML = r.warning ? `<div class="banner warn">${esc(r.warning)}（本次并发 ${r.workers || workers}）</div>` : `<div class="banner info">已提交 ${r.submitted} 个任务，本次并发 ${r.workers || workers}</div>`;
@@ -881,7 +1326,7 @@ async function refreshJobs() {
 
 let modalScrollY = 0;
 function updateModalScrollLock() {
-  const opened = !$('#logPanel').classList.contains('hidden') || !$('#retryLogPanel').classList.contains('hidden') || !$('#qrPanel').classList.contains('hidden');
+  const opened = !$('#logPanel').classList.contains('hidden') || !$('#retryLogPanel').classList.contains('hidden') || !$('#qrPanel').classList.contains('hidden') || !$('#accountDrawer').classList.contains('hidden') || !$('#poolDrawer').classList.contains('hidden');
   const locked = document.body.classList.contains('modal-open');
   if (opened && !locked) {
     modalScrollY = window.scrollY || document.documentElement.scrollTop || 0;
@@ -1133,9 +1578,10 @@ async function loadAccounts() {
   accountsLoading = true;
   try {
     const archived = SHOW_ARCHIVED_ACCOUNTS ? 'only' : '0';
-    const plan = SHOW_PLUS_ACCOUNTS_ONLY ? 'plus' : '';
+    const plan = ['plus', 'free'].includes(ACCOUNT_TYPE_FILTER) ? ACCOUNT_TYPE_FILTER : '';
     ACCOUNTS = await api(`/api/accounts?limit=2000&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}`);
     renderAccounts();
+    loadAccountHealthSummary();
   } catch(e) {}
   finally { accountsLoading = false; }
 }
@@ -1144,7 +1590,7 @@ async function pollAccountPlanStatuses() {
   planStatusLoading = true;
   try {
     const archived = SHOW_ARCHIVED_ACCOUNTS ? 'only' : '0';
-    const plan = SHOW_PLUS_ACCOUNTS_ONLY ? 'plus' : '';
+    const plan = ['plus', 'free'].includes(ACCOUNT_TYPE_FILTER) ? ACCOUNT_TYPE_FILTER : '';
     const snapshot = await api(`/api/accounts/plan-check-status?limit=2000&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}`);
     const items = snapshot.items || [];
     const accountById = new Map(ACCOUNTS.map(r => [Number(r.id), r]));
@@ -1209,7 +1655,7 @@ function _codexAgentCell(r) {
     const regen = `<button data-codex-agent="${esc(r.id)}" title="重新生成 Codex Agent Token">重生成</button>`;
     return `<div class="agent-token-cell"><span class="pill status-success" title="${title}">${esc(rid)}</span>${copy}${download}${uploadSub2}${regen}</div>`;
   }
-  const gen = (r.access_token || '').trim() ? `<button data-codex-agent="${esc(r.id)}" title="生成 Codex CLI agent_identity auth.json/token">生成Agent</button>` : '';
+  const gen = r.has_access_token ? `<button data-codex-agent="${esc(r.id)}" title="生成 Codex CLI agent_identity auth.json/token">生成Agent</button>` : '';
   if (s === 'failed') return `<div class="agent-token-cell"><span class="pill status-failed" title="${title}">失败</span>${gen}</div>`;
   return gen ? `<div class="agent-token-cell">${gen}</div>` : '<span class="muted">-</span>';
 }
@@ -1227,6 +1673,15 @@ function _fmtPlanTime(v, dateOnly = false) {
   } catch(e) {
     return String(v);
   }
+}
+function _tokenStatusCell(r) {
+  const s = r.token_status || {};
+  if (!r.has_access_token) return '<span class="muted">未生成</span>';
+  const expiry = s.expires_at ? _fmtPlanTime(s.expires_at) : '到期未知';
+  const validity = s.expired ? '已过期' : '未过期';
+  const mode = s.refresh_label || '无可用刷新材料';
+  const title = `JWT ${validity}；${s.expires_at ? '到期：' + s.expires_at : '未解析到 JWT 到期时间'}；${mode}。导出为静态快照，不会自动刷新。`;
+  return `<div class="sub-cell mono" title="${esc(title)}">已脱敏 · ${esc(expiry)}</div><div class="sub-cell">${esc(validity)} · ${esc(mode)}</div>`;
 }
 function _billingLabel(v) {
   const x = (v || '').toString().toLowerCase();
@@ -1308,6 +1763,31 @@ function _planAction(r) {
   }
   return `<button data-plan-check="${esc(r.id)}" title="查询当前套餐；free 账号会检查 Plus 试用资格">查套餐</button>`;
 }
+function _healthCell(r) {
+  const h = r.health_status || 'unknown';
+  const reason = r.health_reason || '';
+  if (h === 'normal') return `<span class="pill status-success" title="${esc(reason || ('最近检测通过' + (r.plan_checked_at ? ' · ' + r.plan_checked_at : '')))}">正常</span>`;
+  if (h === 'abnormal') return `<span class="pill status-failed" title="${esc(reason || '异常')}">异常</span>`;
+  return `<span class="pill status-used" title="${esc(reason || '未检测')}">未检测</span>`;
+}
+async function loadAccountHealthSummary() {
+  try {
+    const archived = SHOW_ARCHIVED_ACCOUNTS ? 'only' : '0';
+    const s = await api(`/api/accounts/health-summary?archived=${encodeURIComponent(archived)}`);
+    const el = $('#accountsStats');
+    if (!el) return;
+    const cards = [
+      ['账号总数', s.total ?? 0, ''],
+      ['正常', s.normal ?? 0, 'stat-good'],
+      ['异常', s.abnormal ?? 0, 'stat-danger'],
+      ['未检测', s.unknown ?? 0, 'stat-muted'],
+      ['plus', s.plus ?? 0, 'stat-plus'],
+      ['free', s.free ?? 0, ''],
+      ['free(可试用)', s.free_trial ?? 0, 'stat-good'],
+    ];
+    el.innerHTML = cards.map(([label, value, cls]) => `<div class="stat-card ${cls}"><div class="stat-label">${label}</div><div class="stat-value">${value}</div></div>`).join('');
+  } catch(e) {}
+}
 function _fmtExtractExpire(v) {
   if (!v) return '';
   const raw = String(v).trim();
@@ -1360,6 +1840,23 @@ function _codexAction(r) {
   const label = s === 'success' ? '重新补跑 Codex' : '补跑 Codex';
   return `<button data-codex-retry="${esc(r.email)}" title="重新跑一次 Codex 授权（会消耗 1 封邮箱 OTP + 1 个接码短信）">${label}</button>`;
 }
+function openAccountDrawer(id) {
+  const r = ACCOUNTS.find(x => Number(x.id) === Number(id));
+  if (!r) { showToast('账号不存在'); return; }
+  const s = r.token_status || {};
+  const drawer = $('#accountDrawer');
+  const plan = r.current_plan_type || r.plan_type || '未查询';
+  const codex = r.codex_status || '未运行';
+  const agent = r.codex_agent_status || '未生成';
+  const refresh = s.session_renewal_possible ? `<button data-refresh-session="${esc(r.id)}">刷新登录态</button>` : '<button disabled title="未保存可用会话 Cookie">无法续期</button>';
+  drawer.innerHTML = `<div class="drawer-head"><div><h2>${esc(r.email || ('账号 #' + r.id))}</h2><div class="sub-cell">${esc(r.user_name || '未保存显示名')} · #${esc(r.id)}</div></div><button class="btn" data-close-account-drawer>关闭</button></div>
+    <section class="drawer-section"><h3>认证与交付</h3><div class="drawer-grid"><div class="drawer-kv"><b>Token</b>${esc(s.access_token_present ? (s.expired ? '已过期' : '已保存') : '未生成')}</div><div class="drawer-kv"><b>JWT 到期</b>${esc(_fmtPlanTime(s.expires_at) || '未知')}</div><div class="drawer-kv"><b>刷新能力</b>${esc(s.refresh_label || '无可用刷新材料')}</div><div class="drawer-kv"><b>2FA</b>${r.has_totp_secret ? '已启用' : '未启用'}</div></div><div class="drawer-actions" style="margin-top:10px;"><button class="primary" data-copy-access-token="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>${r.has_access_token ? '复制 accessToken' : 'Token 未生成'}</button><button data-copy-email-asset="${esc(r.id)}">复制邮箱资产</button>${refresh}</div><p class="hint">邮箱资产按来源原始格式交付；完整账号资产请使用下方 JSON 导出。</p></section>
+    <section class="drawer-section"><h3>账号状态</h3><div class="drawer-grid"><div class="drawer-kv"><b>来源</b>${esc(r.email_source || '-')}</div><div class="drawer-kv"><b>创建时间</b>${esc(r.created_at || '-')}</div><div class="drawer-kv"><b>套餐</b>${esc(plan)}</div><div class="drawer-kv"><b>Codex / Agent</b>${esc(codex)} / ${esc(agent)}</div><div class="drawer-kv"><b>备注</b>${esc(r.note || '—')}</div></div></section>
+    <section class="drawer-section"><h3>操作</h3><div class="drawer-actions"><button data-account-note="${esc(r.id)}">备注</button><button data-plan-check="${esc(r.id)}">查套餐</button>${_extractLinkAction(r)}<button data-codex-retry="${esc(r.email)}">补跑 Codex</button><button data-codex-agent="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>生成 Agent</button><button data-synthetic-one="${esc(r.id)}">免手机验证转化</button><button class="good" data-export-one-full-assets="${esc(r.id)}">导出完整账号资产 JSON</button><button data-account-archive="${esc(r.id)}" data-archived="${r.archived ? '0' : '1'}">${r.archived ? '恢复账号' : '归档账号'}</button><button class="danger" data-account-delete="${esc(r.id)}" data-email="${esc(r.email)}">删除账号</button></div><p class="hint">导出完整账号资产 JSON 含认证和邮箱敏感资产，仅通过受控下载提供。</p></section>`;
+  drawer.classList.remove('hidden');
+  updateModalScrollLock();
+}
+function closeAccountDrawer() { $('#accountDrawer').classList.add('hidden'); updateModalScrollLock(); }
 function renderAccounts() {
   const q = $('#qAccounts').value.trim().toLowerCase();
   const filtered = ACCOUNTS.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
@@ -1373,25 +1870,14 @@ function renderAccounts() {
   $('#accountsBody').innerHTML = rows.map(r => `
     <tr>
       <td><input type="checkbox" class="account-row-check" data-account-id="${esc(r.id)}" ${ACCOUNT_SELECTED.has(Number(r.id)) ? 'checked' : ''}></td>
-      <td class="muted">#${esc(r.id)}</td>
-      <td><div class="main-cell">${esc(r.email)}${r.archived ? ' <span class="pill status-used" title="该账号已归档">归档</span>' : ''}</div><div class="sub-cell">${esc(r.user_name || '-')}</div></td>
+      <td><div class="main-cell">${esc(r.email)}${r.archived ? ' <span class="pill status-used" title="该账号已归档">归档</span>' : ''}${r.synthetic_auth_status === 'success' ? ' <span class="pill" style="background:#eef4ff;color:#175cd3;border:1px solid #b2ddff;" title="已做免手机验证 synthetic 转化">已转化</span>' : ''}</div><div class="sub-cell">${esc(r.user_name || '-')}</div></td>
       <td>${esc(r.email_source || '-')}</td>
-      <td><span class="mono" title="${esc(r.access_token || '')}">${esc(short(r.access_token || '', 10))}</span></td>
-      <td>${_planCell(r)}<div class="sub-cell">${_extractLinkCell(r)}</div></td>
-      <td class="wrap" title="${esc(r.note || '')}">${r.note ? esc(short(r.note, 80)) : '<span class="muted">-</span>'}</td>
-      <td>${r.totp_secret ? '已启用' : '<span class="muted">未启用</span>'}</td>
-      <td>${_codexCell(r)}</td>
-      <td>${_codexAgentCell(r)}</td>
+      <td>${_planCell(r)}</td>
+      <td>${_healthCell(r)}</td>
+      <td>${_tokenStatusCell(r)}</td>
       <td class="muted">${esc(r.created_at || '-')}</td>
-      <td class="actions actions-cell">
-        <div class="account-row-actions">
-          <div class="account-action-group">${cbtn('复制Token', r.access_token, 'primary')} ${cbtn('复制整行', r.copy_line, 'good')}</div>
-          <div class="account-action-group"><button data-account-note="${esc(r.id)}" title="设置/清空该账号备注">备注</button> ${_planAction(r)} ${_extractLinkAction(r)}</div>
-          <div class="account-action-group">${_codexAction(r)} <button data-codex-log="${esc(r.email)}" title="查看该账号最近一次 Codex 补跑日志">补跑日志</button></div>
-          <div class="account-action-group danger-zone"><button data-account-archive="${esc(r.id)}" data-archived="${r.archived ? '0' : '1'}" title="${r.archived ? '恢复到默认账号列表' : '归档后默认账号列表不再显示'}">${r.archived ? '恢复' : '归档'}</button> <button class="danger" data-account-delete="${esc(r.id)}" data-email="${esc(r.email)}">删除</button></div>
-        </div>
-      </td>
-    </tr>`).join('') || '<tr><td colspan="12" class="muted">暂无账号</td></tr>';
+      <td class="actions"><button data-account-details="${esc(r.id)}">操作 / 详情</button></td>
+    </tr>`).join('') || '<tr><td colspan="8" class="muted">暂无账号</td></tr>';
   updateAccountSelectionUi(rows);
   _renderPager('accounts', total);
 }
@@ -1407,8 +1893,9 @@ function updateAccountSelectionUi(pageRows = null) {
   const downloadAgentBtn = $('#btnDownloadSelectedAgent');
   const uploadAgentSub2Btn = $('#btnUploadSelectedAgentSub2');
   const checkPlanBtn = $('#btnCheckSelectedPlans');
-  const copySelectedBtn = $('#btnCopySelectedLines');
-  const downloadTxtBtn = $('#btnDownloadSelectedTxt');
+  const sub2Btn = $('#btnExportSelectedSub2');
+  const cockpitBtn = $('#btnExportSelectedCockpit');
+  const fullAssetsBtn = $('#btnExportSelectedFullAssets');
   const noteSelectedBtn = $('#btnNoteSelectedAccounts');
   const archiveSelectedBtn = $('#btnArchiveSelectedAccounts');
   if (hint) hint.textContent = `已选 ${ACCOUNT_SELECTED.size}`;
@@ -1421,8 +1908,17 @@ function updateAccountSelectionUi(pageRows = null) {
   if (downloadAgentBtn) downloadAgentBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (uploadAgentSub2Btn) uploadAgentSub2Btn.disabled = ACCOUNT_SELECTED.size === 0;
   if (checkPlanBtn) checkPlanBtn.disabled = ACCOUNT_SELECTED.size === 0;
-  if (copySelectedBtn) copySelectedBtn.disabled = ACCOUNT_SELECTED.size === 0;
-  if (downloadTxtBtn) downloadTxtBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  if (sub2Btn) sub2Btn.disabled = ACCOUNT_SELECTED.size === 0;
+  if (cockpitBtn) cockpitBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  if (fullAssetsBtn) fullAssetsBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  const copyTokBtn = $('#btnCopySelectedTokens');
+  if (copyTokBtn) copyTokBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  const synBtn = $('#btnSyntheticSelected');
+  const synUpBtn = $('#btnSyntheticSelectedUpload');
+  if (synBtn) synBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  if (synUpBtn) synUpBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  const bulkSummary = $('#accountsBulkSummary');
+  if (bulkSummary) bulkSummary.textContent = ACCOUNT_SELECTED.size ? `（已选 ${ACCOUNT_SELECTED.size} 个）` : '（未选择账号）';
   if (noteSelectedBtn) noteSelectedBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (archiveSelectedBtn) {
     archiveSelectedBtn.disabled = ACCOUNT_SELECTED.size === 0;
@@ -1433,8 +1929,7 @@ function updateAccountSelectionUi(pageRows = null) {
   const cbAll = $('#accountsSelectAll');
   if (!cbAll) return;
   if (!pageRows) {
-    const q = $('#qAccounts').value.trim().toLowerCase();
-    const filtered = ACCOUNTS.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+    const filtered = _filteredAccounts();
     const p = PAGERS.accounts;
     pageRows = filtered.slice((p.page - 1) * p.size, p.page * p.size);
   }
@@ -1476,6 +1971,21 @@ $('#btnCloseRetryLog').addEventListener('click', closeRetryLogModal);
 
 // 账号操作按钮（事件委托）
 $('#accountsBody').addEventListener('click', async (e) => {
+  const detailBtn = e.target.closest('[data-account-details]');
+  if (detailBtn) { openAccountDrawer(Number(detailBtn.dataset.accountDetails)); return; }
+
+  const refreshSessionBtn = e.target.closest('[data-refresh-session]');
+  if (refreshSessionBtn) {
+    await refreshAccountSession(Number(refreshSessionBtn.dataset.refreshSession), refreshSessionBtn);
+    return;
+  }
+
+  const tokenBtn = e.target.closest('[data-copy-access-token]');
+  if (tokenBtn) {
+    await copyAccountAccessToken(Number(tokenBtn.dataset.copyAccessToken), tokenBtn);
+    return;
+  }
+
   const planBtn = e.target.closest('[data-plan-check]');
   if (planBtn) {
     await checkOnePlan(Number(planBtn.dataset.planCheck), planBtn);
@@ -1595,6 +2105,33 @@ $('#accountsBody').addEventListener('click', async (e) => {
     btn.disabled = false;
   }
 });
+$('#accountDrawer').addEventListener('click', async (e) => {
+  if (e.target.closest('[data-close-account-drawer]')) { closeAccountDrawer(); return; }
+  const tokenBtn = e.target.closest('[data-copy-access-token]');
+  if (tokenBtn) { await copyAccountAccessToken(Number(tokenBtn.dataset.copyAccessToken), tokenBtn); return; }
+  const emailAssetBtn = e.target.closest('[data-copy-email-asset]');
+  if (emailAssetBtn) { await copyAccountEmailAsset(Number(emailAssetBtn.dataset.copyEmailAsset), emailAssetBtn); return; }
+  const refreshBtn = e.target.closest('[data-refresh-session]');
+  if (refreshBtn) { await refreshAccountSession(Number(refreshBtn.dataset.refreshSession), refreshBtn); return; }
+  const noteBtn = e.target.closest('[data-account-note]');
+  if (noteBtn) { await editAccountNote(Number(noteBtn.dataset.accountNote), noteBtn); return; }
+  const planBtn = e.target.closest('[data-plan-check]');
+  if (planBtn) { await checkOnePlan(Number(planBtn.dataset.planCheck), planBtn); return; }
+  const extractBtn = e.target.closest('[data-extract-link]');
+  if (extractBtn) { await extractOneLink(Number(extractBtn.dataset.extractLink), extractBtn); return; }
+  const agentBtn = e.target.closest('[data-codex-agent]');
+  if (agentBtn) { await generateOneCodexAgent(Number(agentBtn.dataset.codexAgent), agentBtn); return; }
+  const synOneBtn = e.target.closest('[data-synthetic-one]');
+  if (synOneBtn) { await syntheticConvertOne(Number(synOneBtn.dataset.syntheticOne), synOneBtn); return; }
+  const exportBtn = e.target.closest('[data-export-one-full-assets]');
+  if (exportBtn) { await exportAccountAssets(Number(exportBtn.dataset.exportOneFullAssets)); return; }
+  const archiveBtn = e.target.closest('[data-account-archive]');
+  if (archiveBtn) { await archiveOneAccount(Number(archiveBtn.dataset.accountArchive), archiveBtn.dataset.archived === '1', archiveBtn); return; }
+  const delBtn = e.target.closest('[data-account-delete]');
+  if (delBtn) { await deleteAccount(Number(delBtn.dataset.accountDelete), delBtn.dataset.email, delBtn); return; }
+  const retryBtn = e.target.closest('[data-codex-retry]');
+  if (retryBtn) { await retryAccountCodex(retryBtn.dataset.codexRetry, retryBtn); return; }
+});
 $('#accountsBody').addEventListener('change', (e) => {
   const cb = e.target.closest('.account-row-check');
   if (!cb) return;
@@ -1604,8 +2141,7 @@ $('#accountsBody').addEventListener('change', (e) => {
   updateAccountSelectionUi();
 });
 $('#accountsSelectAll').addEventListener('change', (e) => {
-  const q = $('#qAccounts').value.trim().toLowerCase();
-  const filtered = ACCOUNTS.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
+  const filtered = _filteredAccounts();
   const p = PAGERS.accounts;
   const pageRows = filtered.slice((p.page - 1) * p.size, p.page * p.size);
   if (e.target.checked) pageRows.forEach(r => ACCOUNT_SELECTED.add(Number(r.id)));
@@ -1614,8 +2150,91 @@ $('#accountsSelectAll').addEventListener('change', (e) => {
 });
 $('#btnDeleteSelectedAccounts').addEventListener('click', deleteSelectedAccounts);
 $('#btnArchiveSelectedAccounts').addEventListener('click', archiveSelectedAccounts);
-$('#btnCopySelectedLines').addEventListener('click', copySelectedAccountLines);
-$('#btnDownloadSelectedTxt').addEventListener('click', downloadSelectedAccountTxt);
+async function exportSelectedAccounts(format) {
+  const ids = [...ACCOUNT_SELECTED];
+  if (!ids.length) return;
+  try {
+    const r = await api(`/api/accounts/export/${format}`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({account_ids:ids})});
+    if (!r.ok) throw new Error(r.error || '导出失败');
+    window.location.href = `/api/accounts/export/download/${encodeURIComponent(r.filename)}`;
+    const s = r.token_summary || {};
+    const label = format === 'full-assets' ? '完整账号资产 JSON' : `${format} 静态快照`;
+    toast(`${label} 已导出 ${r.accounts} 个；已过期 ${s.expired || 0}，OAuth 可刷新 ${s.oauth_refreshable || 0}，可尝试会话续期 ${s.session_renewal_possible || 0}`, 'ok');
+  } catch (e) { toast(e.message || String(e), 'err'); }
+}
+
+let REGISTRATION_CAN_SUBMIT = true;
+async function loadRegistrationDriver() {
+  try {
+    const s = await api('/api/registration-preflight');
+    const requirements = (s.required || []).length ? `所需配置：${esc(s.required.join('、'))}。` : '所需配置：无额外云端密钥。';
+    $('#regDriverStatus').className = `banner ${s.can_submit ? 'info' : 'warn'}`;
+    $('#regDriverStatus').innerHTML = `<b>当前注册驱动：${esc(s.driver_label || s.driver || '-')}</b><br>${esc(s.message || '')}<br>${requirements}`;
+    REGISTRATION_CAN_SUBMIT = Boolean(s.can_submit);
+    $('#btnStart').disabled = !REGISTRATION_CAN_SUBMIT;
+    $('#btnStart').title = s.can_submit ? '' : (s.message || '当前驱动配置不完整');
+  } catch(e) {
+    $('#regDriverStatus').className = 'banner warn';
+    $('#regDriverStatus').textContent = `无法读取注册驱动状态：${e.message}`;
+  }
+}
+$('#btnExportSelectedSub2').addEventListener('click', () => exportSelectedAccounts('sub2api'));
+$('#btnExportSelectedCockpit').addEventListener('click', () => exportSelectedAccounts('cockpit'));
+$('#btnExportSelectedFullAssets').addEventListener('click', () => exportSelectedAccounts('full-assets'));
+
+// ---------- 免手机验证 synthetic 转化 ----------
+function _renderSyntheticResult(html) {
+  const panel = $('#syntheticResultPanel');
+  if (!panel) return;
+  panel.classList.remove('hidden');
+  $('#syntheticResultBody').innerHTML = html;
+}
+function _syntheticDownloadLink(filename, label) {
+  return `<a href="/api/accounts/synthetic-auth/download/${encodeURIComponent(filename)}" download>${esc(label || filename)}</a>`;
+}
+async function syntheticConvertSelected(upload) {
+  const ids = [...ACCOUNT_SELECTED];
+  if (!ids.length) return;
+  const tip = upload ? '转化并上传到 sub2api' : '本地转化';
+  if (!confirm(`将对 ${ids.length} 个账号执行免手机验证${tip}。
+说明：synthetic id_token 无签名（alg=none），refresh_token 为 sessionToken 占位；access token 过期后需重新转化。继续？`)) return;
+  _renderSyntheticResult('转化中，请稍候…');
+  try {
+    const r = await api('/api/accounts/synthetic-auth-bulk', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({account_ids:ids, upload_sub2api:!!upload})});
+    if (!r.ok) throw new Error(r.error || '转化失败');
+    const lines = [];
+    lines.push(`<b>成功 ${r.converted_count} 个，失败 ${r.failed_count} 个。</b>`);
+    lines.push(`打包文件：${_syntheticDownloadLink(r.sub2api_file, 'Sub2API 导入文件')} ｜ ${_syntheticDownloadLink(r.cockpit_file, 'Cockpit 导入文件')}`);
+    (r.converted || []).forEach(it => {
+      let extra = '';
+      if (it.sub2api_upload) extra = it.sub2api_upload.ok ? ' ｜ sub2api 上传成功' : ` ｜ sub2api 上传失败：${esc(it.sub2api_upload.error || '')}`;
+      lines.push(`✅ ${esc(it.email)}（${esc(it.plan_type)}） ${_syntheticDownloadLink(it.filename, 'auth.json')}${extra}`);
+    });
+    (r.failed || []).forEach(it => lines.push(`❌ ${esc(it.email || ('#' + it.id))}：${esc(it.error || '未知错误')}`));
+    lines.push('<span class="muted">注意：refresh_token 为占位值，access token 过期后请重新转化。</span>');
+    _renderSyntheticResult(lines.join('<br>'));
+    toast(`转化完成：成功 ${r.converted_count} 个`, 'ok');
+    loadAccounts();
+  } catch (e) {
+    _renderSyntheticResult(`<span style="color:#b3261e;">转化失败：${esc(e.message || String(e))}</span>`);
+    toast(e.message || String(e), 'err');
+  }
+}
+async function syntheticConvertOne(accId, btn) {
+  const old = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '转化中…'; }
+  try {
+    const r = await api(`/api/accounts/${accId}/synthetic-auth`, {method:'POST'});
+    if (!r.ok) throw new Error(r.error || '转化失败');
+    toast(`已转化 ${r.email}（${r.plan_type}），开始下载 auth.json`, 'ok');
+    window.location.href = `/api/accounts/synthetic-auth/download/${encodeURIComponent(r.filename)}`;
+    loadAccounts();
+  } catch (e) { toast(e.message || String(e), 'err'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = old; } }
+}
+$('#btnSyntheticSelected').addEventListener('click', () => syntheticConvertSelected(false));
+$('#btnSyntheticSelectedUpload').addEventListener('click', () => syntheticConvertSelected(true));
+$('#btnCloseSyntheticResult').addEventListener('click', () => $('#syntheticResultPanel').classList.add('hidden'));
 $('#btnNoteSelectedAccounts').addEventListener('click', noteSelectedAccounts);
 $('#btnExtractSelectedLinks').addEventListener('click', extractSelectedLinks);
 $('#btnGenerateSelectedAgent').addEventListener('click', generateSelectedCodexAgents);
@@ -1632,13 +2251,71 @@ $('#showArchivedAccounts').addEventListener('change', async (e) => {
   await loadAccounts();
   await pollAccountPlanStatuses();
 });
-$('#showPlusAccountsOnly').addEventListener('change', async (e) => {
-  SHOW_PLUS_ACCOUNTS_ONLY = !!e.target.checked;
+$('#accountTypeFilter').addEventListener('change', async (e) => {
+  ACCOUNT_TYPE_FILTER = e.target.value || '';
   ACCOUNT_SELECTED.clear();
   PAGERS.accounts.page = 1;
   await loadAccounts();
   await pollAccountPlanStatuses();
 });
+$('#accountHealthFilter').addEventListener('change', (e) => {
+  ACCOUNT_HEALTH_FILTER = e.target.value || '';
+  PAGERS.accounts.page = 1;
+  renderAccounts();
+});
+$('#btnRefreshAccounts').addEventListener('click', async () => {
+  await loadAccounts();
+  showToast('账号列表已刷新');
+});
+$('#btnCheckAllAccounts').addEventListener('click', checkAllAccountsHealth);
+$('#btnDeleteAbnormalAccounts').addEventListener('click', deleteAbnormalAccounts);
+
+async function checkAllAccountsHealth() {
+  const ids = ACCOUNTS.filter(r => r.has_access_token).map(r => Number(r.id));
+  if (!ids.length) { showToast('当前视图没有可检测的账号'); return; }
+  if (!confirm(`确定一键检测当前视图 ${ids.length} 个账号吗？\n\n将批量查询套餐/Plus 资格；认证失效(401)的账号会被标记为「异常」。`)) return;
+  const btn = $('#btnCheckAllAccounts');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '检测中…';
+  try {
+    const r = await api('/api/accounts/check-plan-bulk', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({account_ids: ids}),
+    });
+    showToast(`已入队 ${r.started_count || 0} 个，查询中跳过 ${r.busy_count || 0} 个，无token跳过 ${r.skipped_count || 0} 个`);
+    await pollAccountPlanStatuses();
+  } catch(err) {
+    showToast('一键检测失败: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+async function deleteAbnormalAccounts() {
+  const abnormal = ACCOUNTS.filter(r => r.health_status === 'abnormal');
+  if (!abnormal.length) { showToast('当前视图没有异常账号'); return; }
+  const preview = abnormal.slice(0, 8).map(r => `${r.email || r.id}（${r.health_reason || '异常'}）`).join('\n');
+  const more = abnormal.length > 8 ? `\n…以及另外 ${abnormal.length - 8} 个` : '';
+  if (!confirm(`确定一键删除当前视图 ${abnormal.length} 个异常账号吗？此操作不可恢复！\n\n${preview}${more}`)) return;
+  const btn = $('#btnDeleteAbnormalAccounts');
+  btn.disabled = true;
+  try {
+    const archived = SHOW_ARCHIVED_ACCOUNTS ? 'only' : '0';
+    const r = await api('/api/accounts/delete-abnormal', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({archived}),
+    });
+    showToast(`已删除异常账号 ${r.deleted_count || 0} 个`);
+    ACCOUNT_SELECTED.clear();
+    await loadAccounts();
+  } catch(err) {
+    showToast('删除异常账号失败: ' + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 
 function copySelectedAccountLines() {
@@ -1797,7 +2474,7 @@ async function extractSelectedLinks() {
 async function generateOneCodexAgent(id, btn) {
   const acc = ACCOUNTS.find(a => Number(a.id) === Number(id));
   if (!acc) { showToast('账号不存在'); return; }
-  if (!(acc.access_token || '').trim()) { showToast('该账号没有 access_token'); return; }
+  if (!acc.has_access_token) { showToast('该账号没有可用 accessToken'); return; }
   if (!confirm(`确定为该账号生成 Codex Agent Token 吗？\n\n${acc.email || ('#' + id)}\n\n会调用 auth.openai.com 注册 agent_identity，并保存到本地账号记录。`)) return;
   const old = btn.textContent;
   btn.disabled = true;
@@ -1821,7 +2498,7 @@ async function generateSelectedCodexAgents() {
   const ids = Array.from(ACCOUNT_SELECTED);
   if (ids.length === 0) { showToast('请先选择账号'); return; }
   const selected = ids.map(id => ACCOUNTS.find(a => Number(a.id) === Number(id))).filter(Boolean);
-  const eligible = selected.filter(a => (a.access_token || '').trim());
+  const eligible = selected.filter(a => a.has_access_token);
   if (!eligible.length) { showToast('选中账号里没有可用 access_token'); return; }
   if (!confirm(`确定批量生成 ${eligible.length} 个 Codex Agent Token 吗？\n\n缺少 access_token 的账号会自动跳过。`)) return;
   const btn = $('#btnGenerateSelectedAgent');
@@ -2180,14 +2857,120 @@ async function retrySelectedCodex() {
 }
 
 $('#qAccounts').addEventListener('input', () => { PAGERS.accounts.page = 1; renderAccounts(); });
-$('#copyAllTokens').addEventListener('click', () => copyText(ACCOUNTS.map(r=>r.access_token).filter(Boolean).join('\n')));
-$('#copyAllLines').addEventListener('click', () => copyText(ACCOUNTS.map(r=>r.copy_line).filter(Boolean).join('\n')));
+async function refreshAccountSession(id, btn) {
+  if (!confirm('将使用本地保存的会话 Cookie 请求官方 /api/auth/session，以尝试更新该账号本地登录态。\n\n如遇 Cloudflare、Turnstile 或 401，操作会停止且不会尝试绕过。是否继续？')) return;
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '刷新中…';
+  try {
+    const result = await api(`/api/accounts/${encodeURIComponent(id)}/refresh-session`, {method:'POST'});
+    showToast(result.message || (result.ok ? '登录态已更新' : '登录态未更新'));
+    await loadAccounts();
+  } catch (err) {
+    showToast(`刷新登录态失败：${err.message || '请求失败'}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+async function copyAccountEmailAsset(id, btn) {
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '读取中…';
+  try {
+    const result = await api(`/api/accounts/${encodeURIComponent(id)}/email-asset`, {method:'POST'});
+    if (await copyText(result.delivery_line)) showToast(`已复制${result.label || '邮箱资产'}（${result.format || '原始格式'}）`);
+  } catch (err) {
+    showToast(`无法复制邮箱资产：${err.message || '资产缺失'}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+async function exportAccountAssets(id) {
+  try {
+    const r = await api('/api/accounts/export/full-assets', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({account_ids:[id]})});
+    window.location.href = `/api/accounts/export/download/${encodeURIComponent(r.filename)}`;
+    showToast('已生成完整账号资产 JSON；文件含敏感凭证，请妥善保管');
+  } catch (err) { showToast(`完整资产导出失败：${err.message || '未知错误'}`); }
+}
+async function retryAccountCodex(email, btn) {
+  if (!confirm(`重新跑 Codex 授权？\n\n${email}\n\n会消耗邮箱 OTP 与接码短信。`)) return;
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '启动中…';
+  try {
+    const r = await api('/api/codex/retry', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email})});
+    showToast(r.message || '已开始补跑 Codex');
+    openRetryLog(email);
+    await loadAccounts();
+  } catch (err) { showToast(`补跑失败：${err.message || '未知错误'}`); }
+  finally { btn.disabled = false; btn.textContent = old; }
+}
+async function copyAccountAccessToken(id, btn) {
+  const old = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '读取中…'; }
+  try {
+    const result = await api(`/api/accounts/${encodeURIComponent(id)}/access-token`, {method:'POST'});
+    if (!await copyText(result.access_token)) return false;
+    showToast('Token 已复制');
+    return true;
+  } catch (err) {
+    showToast(`无法复制 Token：${err.message || '读取失败'}`);
+    return false;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = old; }
+  }
+}
+
+async function copySelectedAccountAccessTokens() {
+  const btn = $('#btnCopySelectedTokens');
+  if (!ACCOUNT_SELECTED.size) return;
+  const targets = ACCOUNTS.filter(a => ACCOUNT_SELECTED.has(Number(a.id)));
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '读取中…';
+  const tokens = [];
+  let unavailable = 0;
+  try {
+    // 逐账号调用受保护的显式接口，不在普通列表响应中聚合认证资产。
+    for (const account of targets) {
+      try {
+        const result = await api(`/api/accounts/${encodeURIComponent(account.id)}/access-token`, {method:'POST'});
+        if (result.access_token) tokens.push(result.access_token);
+        else unavailable += 1;
+      } catch (_) {
+        unavailable += 1;
+      }
+    }
+    if (!tokens.length) {
+      showToast('没有可复制的 Token：账号尚未生成认证资产或无法读取');
+      return;
+    }
+    if (await copyText(tokens.join('\n'))) {
+      showToast(unavailable ? `已复制 ${tokens.length} 个 Token；${unavailable} 个不可用` : `已复制 ${tokens.length} 个 Token`);
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+$('#btnCopySelectedTokens').addEventListener('click', copySelectedAccountAccessTokens);
 
 // ---------- 邮箱池 ----------
 function poolKey(r) { return `${r.source || $('#poolSource')?.value || 'outlook'}|${r.email || ''}`; }
 function poolLabel(src) {
-  return ({outlook:'Outlook', generic_api:'通用API', cloudflare_domain:'域名邮箱'})[src] || src || '-';
+  return ({outlook:'Outlook', generic_api:'通用API', assurivo:'Assurivo', cloudflare_domain:'域名邮箱'})[src] || src || '-';
 }
+function openPoolDrawer(email, source) {
+  const r = OUTLOOK.find(x => x.email === email && (x.source || 'outlook') === source);
+  if (!r) { showToast('邮箱素材不存在'); return; }
+  const drawer = $('#poolDrawer');
+  const material = r.has_delivery_material ? `<button class="primary" data-copy-pool-material data-email="${esc(email)}" data-source="${esc(source)}">复制接码凭据</button>` : '<button disabled title="未保存该 Provider 所需接码凭据">无接码凭据</button>';
+  drawer.innerHTML = `<div class="drawer-head"><div><h2>${esc(email)}</h2><div class="sub-cell">${esc(poolLabel(source))} · ${esc(r.status || '-')}</div></div><button class="btn" data-close-pool-drawer>关闭</button></div><section class="drawer-section"><h3>素材状态</h3><div class="drawer-grid"><div class="drawer-kv"><b>Provider</b>${esc(poolLabel(source))}</div><div class="drawer-kv"><b>状态</b>${esc(r.status || '-')}</div><div class="drawer-kv"><b>接码凭据</b>${r.has_delivery_material ? '已保存（默认隐藏）' : '未保存'}</div><div class="drawer-kv"><b>时间</b>${esc(r.used_at || r.imported_at || r.created_at || '-')}</div></div><div class="drawer-actions" style="margin-top:10px;"><button data-copy-pool-email="${esc(email)}">复制邮箱地址</button>${material}</div></section><section class="drawer-section"><h3>状态操作</h3><p class="hint">恢复可用：重新允许领取；停用：保留素材但禁止领取；标失败：记录本素材不可用；删除：永久移除本地素材。</p><div class="drawer-actions"><button data-pool-act="available" data-email="${esc(email)}" data-source="${esc(source)}">恢复可用</button><button data-pool-act="disabled" data-email="${esc(email)}" data-source="${esc(source)}">停用</button><button data-pool-act="failed" data-email="${esc(email)}" data-source="${esc(source)}">标失败</button><button class="danger" data-pool-act="delete" data-email="${esc(email)}" data-source="${esc(source)}">删除</button></div></section>`;
+  drawer.classList.remove('hidden'); updateModalScrollLock();
+}
+function closePoolDrawer() { $('#poolDrawer').classList.add('hidden'); updateModalScrollLock(); }
 async function loadOutlook() {
   try {
     const source = $('#poolSource')?.value || 'outlook';
@@ -2209,26 +2992,13 @@ function renderOutlook() {
   $('#outlookBody').innerHTML = rows.map(r => `
     <tr>
       <td><input type="checkbox" class="outlook-row-check" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}" ${OUTLOOK_SELECTED.has(poolKey(r)) ? 'checked' : ''}></td>
-      <td><div class="main-cell">${esc(r.email)}</div><div class="sub-cell mono">${esc(short(r.copy_line, 70))}</div></td>
+      <td><div class="main-cell">${esc(r.email)}</div></td>
       <td>${esc(poolLabel(r.source))}</td>
       <td>${pill(r.status)}</td>
-      <td><span class="mono">${esc(short(r.access_token || '', 36) || '未生成')}</span></td>
-      <td class="muted">${esc(r.imported_at || r.created_at || '-')}</td>
-      <td class="muted">${esc(r.used_at || '-')}</td>
-      <td class="actions">
-        ${cbtn('复制邮箱', r.copy_line)} ${cbtn('复制Token', r.access_token, 'primary')} ${cbtn('复制整行', r.account_copy_line, 'good')}
-        ${r.status !== 'available'
-          ? `<button data-pool-act="available" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}">恢复可用</button>`
-          : ''}
-        ${r.status !== 'disabled'
-          ? `<button data-pool-act="disabled" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}">停用</button>`
-          : ''}
-        ${r.status !== 'failed'
-          ? `<button data-pool-act="failed" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}">标失败</button>`
-          : ''}
-        <button data-pool-act="delete" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}" style="border-color:#e7a3a0;color:#b3261e;">删除</button>
-      </td>
-    </tr>`).join('') || '<tr><td colspan="8" class="muted">邮箱池为空</td></tr>';
+      <td>${r.has_delivery_material ? '<span class="muted">已保存（隐藏）</span>' : '<span class="muted">未保存</span>'}</td>
+      <td class="muted">${esc(r.imported_at || r.created_at || '-')}<div class="sub-cell">${esc(r.used_at || '未使用')}</div></td>
+      <td class="actions"><button data-pool-details data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}">操作 / 详情</button></td>
+    </tr>`).join('') || '<tr><td colspan="7" class="muted">邮箱池为空</td></tr>';
   updateOutlookSelectionUi(rows);
   _renderPager('outlook', total);
 }
@@ -2238,11 +3008,13 @@ function updateOutlookSelectionUi(pageRows = null) {
   const markAvailBtn = $('#btnMarkSelectedOutlookAvailable');
   const disableBtn = $('#btnDisableSelectedOutlook');
   const failBtn = $('#btnFailSelectedOutlook');
+  const exportBtn = $('#btnExportSelectedPool');
   if (hint) hint.textContent = `已选 ${OUTLOOK_SELECTED.size}`;
   if (bulkBtn) bulkBtn.disabled = OUTLOOK_SELECTED.size === 0;
   if (markAvailBtn) markAvailBtn.disabled = OUTLOOK_SELECTED.size === 0;
   if (disableBtn) disableBtn.disabled = OUTLOOK_SELECTED.size === 0;
   if (failBtn) failBtn.disabled = OUTLOOK_SELECTED.size === 0;
+  if (exportBtn) exportBtn.disabled = OUTLOOK_SELECTED.size === 0;
 
   const cbAll = $('#outlookSelectAll');
   if (!cbAll) return;
@@ -2271,7 +3043,7 @@ $('#importSource').addEventListener('change', () => {
   OUTLOOK_SELECTED.clear();
   loadOutlook();
 });
-$('#copyAllEmails').addEventListener('click', () => copyText(OUTLOOK.map(r=>r.copy_line).filter(Boolean).join('\n')));
+$('#btnExportSelectedPool').addEventListener('click', exportSelectedPoolMaterials);
 $('#outlookSelectAll').addEventListener('change', (e) => {
   const q = $('#qOutlook').value.trim().toLowerCase();
   const filtered = OUTLOOK.filter(r => !q || Object.values(r).join('\n').toLowerCase().includes(q));
@@ -2286,6 +3058,8 @@ $('#btnMarkSelectedOutlookAvailable').addEventListener('click', () => bulkMarkOu
 $('#btnDisableSelectedOutlook').addEventListener('click', () => bulkMarkOutlookStatus('disabled'));
 $('#btnFailSelectedOutlook').addEventListener('click', () => bulkMarkOutlookStatus('failed'));
 $('#outlookBody').addEventListener('click', async (e) => {
+  const detail = e.target.closest('[data-pool-details]');
+  if (detail) { openPoolDrawer(detail.dataset.email, detail.dataset.source || 'outlook'); return; }
   const t = e.target.closest('[data-pool-act]');
   if (!t) return;
   const { poolAct, email } = t.dataset;
@@ -2304,6 +3078,38 @@ $('#outlookBody').addEventListener('click', async (e) => {
     loadOutlook(); loadSummary();
   } catch(err) { showToast('操作失败: ' + err.message); }
 });
+$('#poolDrawer').addEventListener('click', async (e) => {
+  if (e.target.closest('[data-close-pool-drawer]')) { closePoolDrawer(); return; }
+  const emailBtn = e.target.closest('[data-copy-pool-email]');
+  if (emailBtn) { await copyText(emailBtn.dataset.copyPoolEmail); showToast('已复制邮箱地址'); return; }
+  const materialBtn = e.target.closest('[data-copy-pool-material]');
+  if (materialBtn) { await copyPoolMaterial(materialBtn.dataset.email, materialBtn.dataset.source, materialBtn); return; }
+  const t = e.target.closest('[data-pool-act]');
+  if (!t) return;
+  const {poolAct, email, source} = t.dataset;
+  const actionText = {available:'恢复为可用', disabled:'停用', failed:'标记失败', delete:'删除'}[poolAct] || poolAct;
+  if (!confirm(`确定${actionText}该邮箱素材？\n\n${email}`)) return;
+  try {
+    if (poolAct === 'delete') await api('/api/outlook/delete', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,source})});
+    else await api('/api/outlook/status', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,source,status:poolAct,note:`详情页${actionText}`})});
+    showToast(`已${actionText}`); closePoolDrawer(); await loadOutlook(); loadSummary();
+  } catch(err) { showToast(`操作失败：${err.message}`); }
+});
+async function copyPoolMaterial(email, source, btn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = '读取中…';
+  try { const r = await api('/api/outlook/material', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,source})}); if (await copyText(r.delivery_line)) showToast(`已复制接码凭据（${r.format}）`); }
+  catch(err) { showToast(`无法复制接码凭据：${err.message || '凭据缺失'}`); }
+  finally { btn.disabled = false; btn.textContent = old; }
+}
+async function exportSelectedPoolMaterials() {
+  const items = Array.from(OUTLOOK_SELECTED).map(key => { const [source,...tail]=key.split('|'); return {source,email:tail.join('|')}; });
+  if (!items.length) { showToast('请先选择邮箱素材'); return; }
+  const lines=[]; let skipped=0;
+  for (const item of items) { try { const r=await api('/api/outlook/material',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(item)}); if (r.delivery_line) lines.push(r.delivery_line); else skipped++; } catch (_) { skipped++; } }
+  if (!lines.length) { showToast('选中邮箱均无可导出接码凭据'); return; }
+  const blob=new Blob([lines.join('\n')+'\n'],{type:'text/plain;charset=utf-8'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='邮箱接码素材.txt'; a.click(); URL.revokeObjectURL(a.href);
+  showToast(skipped ? `已导出 ${lines.length} 条；跳过 ${skipped} 条缺失凭据` : `已导出 ${lines.length} 条邮箱素材`);
+}
 $('#outlookBody').addEventListener('change', (e) => {
   const cb = e.target.closest('.outlook-row-check');
   if (!cb) return;
@@ -2371,7 +3177,7 @@ $('#btnImport').addEventListener('click', async () => {
   $('#btnImport').disabled = true;
   try {
     const source = $('#importSource').value;
-    const as_registered = $('#importAsRegistered')?.checked ?? true;
+    const as_registered = $('#importAsRegistered')?.checked ?? false;
     const r = await api('/api/outlook/import', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, source, as_registered}) });
     const mode = r.as_registered ? '已注册账号' : '邮箱池素材';
     $('#importResult').innerHTML = `<div class="banner info">按 ${mode} 导入：解析 ${r.parsed} 行，新增 ${r.inserted}，跳过 ${r.skipped}${r.as_registered ? '；可到“账号”页选择后批量补跑 Codex' : ''}</div>`;
@@ -2793,7 +3599,6 @@ function renderRoxyWorkspaceTools() {
       <div>
         <b>团队 / 项目选择</b>
         <div class="hint">点击“获取团队”调用 Roxy <span class="mono">/browser/workspace</span>，选择后保存 <span class="mono">ROXY_WORKSPACE_ID</span> 和 <span class="mono">ROXY_PROJECT_ID</span>。</div>
-        <a class="roxy-invite-link" href="https://roxybrowser.cn/invite/NvH4Jx" target="_blank" rel="noopener noreferrer">打开 RoxyBrowser 官网（免费 5 个窗口）</a>
       </div>
       <div class="row">
         <div>
@@ -3063,6 +3868,7 @@ $('#btnSaveConfig').addEventListener('click', async () => {
       $('#configBanner').innerHTML = `已保存 ${r.updated.length} 项，但<b>热加载失败</b>（${esc(r.note||'')}），请重启 Web 服务后生效。`;
     }
     for (const [k, v] of Object.entries(updates)) { const f = CONFIG.find(x => x.key === k); if (f) f.value = v; delete CONFIG_PENDING_UPDATES[k]; }
+    loadRegistrationDriver();
     showToast(r.reloaded ? '配置已生效' : '配置已保存（需重启）');
   } catch(e) { showToast('保存失败: ' + e.message); }
   finally { $('#btnSaveConfig').disabled = false; }
@@ -3077,6 +3883,7 @@ document.addEventListener('click', (e) => {
 
 // ---------- 初始化 ----------
 loadSummary();
+loadRegistrationDriver();
 activateTab(localStorage.getItem('gpt_console_active_tab') || 'register', false);
 jobsTimer = setInterval(() => { if (!$('#tab-register').classList.contains('hidden')) refreshJobs(); }, 3000);
 setInterval(loadSummary, 5000);

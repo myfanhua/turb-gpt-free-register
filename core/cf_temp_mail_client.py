@@ -25,6 +25,7 @@ import requests
 
 from config import email as _email_cfg
 from core.otp_utils import extract_otp, looks_like_openai_email
+from core.otp_wait_policy import OTPProbeResult, resolve_wait_timeout, wait_for_otp_with_policy
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,14 @@ class CFTempMailAccount:
     jwt: str
     domain: str = ""
     created_at: float = 0.0
+
+
+@dataclass
+class CFTempMailProbeState:
+    best_otp: str | None = None
+    best_timestamp: float = float("-inf")
+    best_message_key: str = ""
+    settle_until: float | None = None
 
 
 _CONTEXT_CACHE: dict[str, CFTempMailAccount] = {}
@@ -560,14 +569,13 @@ def get_message_detail(jwt: str, message_id: str) -> dict:
     return {}
 
 
-def fetch_latest_otp(
+def fetch_otp_once(
     email: str,
-    after_ts: float | None = None,
-    max_wait: int | None = None,
-    poll_interval: int | None = None,
+    after_ts: float | None,
+    state: CFTempMailProbeState,
     settle_seconds: int | None = None,
-) -> str:
-    """轮询 Cloudflare 邮箱，返回领取时间后最新的 OpenAI 六位验证码。"""
+) -> OTPProbeResult:
+    """单次 Cloudflare 取码 probe；不 sleep、不维护总 deadline。"""
     target = str(email or "").strip()
     if not target:
         raise CFTempMailError("Cloudflare 取码缺少邮箱地址")
@@ -578,34 +586,14 @@ def fetch_latest_otp(
             f"Cloudflare 邮箱上下文缺失: {target}。请确认该地址由当前进程 cloudflare 来源创建。"
         )
 
-    wait_seconds = int(max_wait if max_wait is not None else _email_cfg.OTP_MAX_WAIT)
-    interval = max(1, int(poll_interval if poll_interval is not None else _email_cfg.OTP_POLL_INTERVAL))
     settle = max(0, int(settle_seconds if settle_seconds is not None else _email_cfg.OTP_SETTLE_SECONDS))
     after = float(after_ts if after_ts is not None else time.time()) - 30
-    deadline = time.monotonic() + max(0, wait_seconds)
-
-    best_otp: str | None = None
-    best_timestamp = float("-inf")
-    best_message_key = ""
-    settle_until: float | None = None
-    last_error = "收件箱为空或尚未出现新的 OpenAI 验证码"
     target_lower = target.lower()
 
-    logger.info("[Cloudflare] 开始轮询邮箱 %s，最长 %ss", target, wait_seconds)
-
-    while time.monotonic() < deadline:
-        try:
-            messages = list_messages(account.jwt)
-        except CFTempMailError as exc:
-            last_error = str(exc)
-            logger.warning("[Cloudflare] 拉取邮件失败: %s", exc)
-            time.sleep(interval)
-            continue
-
-        if messages:
-            logger.debug("[Cloudflare] 本轮收件 %s 封", len(messages))
-
-        for item in messages:
+    messages = list_messages(account.jwt)
+    if messages:
+        logger.debug("[Cloudflare] 本轮收件 %s 封", len(messages))
+    for item in messages:
             addresses = _message_addresses(item)
             if addresses and not any(target_lower == a or target_lower in a for a in addresses):
                 continue
@@ -655,47 +643,33 @@ def fetch_latest_otp(
 
             message_key = msg_id or f"{otp_item.get('subject')}|{otp}|{ts}"
             effective_ts = ts if ts is not None else time.time()
-            if effective_ts > best_timestamp or (
-                effective_ts == best_timestamp and message_key != best_message_key and best_otp != otp
+            if effective_ts > state.best_timestamp or (
+                effective_ts == state.best_timestamp and message_key != state.best_message_key and state.best_otp != otp
             ):
-                if best_otp and best_otp != otp:
-                    logger.info("[Cloudflare] 发现更晚 OTP=%s，替换 %s", otp, best_otp)
-                elif not best_otp:
+                if state.best_otp and state.best_otp != otp:
+                    logger.info("[Cloudflare] 发现更晚 OTP=%s，替换 %s", otp, state.best_otp)
+                elif not state.best_otp:
                     logger.info("[Cloudflare] 锁定 OTP 候选 %s，等待 settle=%ss", otp, settle)
-                best_otp = otp
-                best_timestamp = effective_ts
-                best_message_key = message_key
-                settle_until = time.monotonic() + settle
-            elif message_key == best_message_key and best_otp == otp:
+                state.best_otp = otp
+                state.best_timestamp = effective_ts
+                state.best_message_key = message_key
+                state.settle_until = time.monotonic() + settle
+            elif message_key == state.best_message_key and state.best_otp == otp:
                 # 同一封邮件不重置 settle
                 pass
 
-        now = time.monotonic()
-        if best_otp and settle_until is not None and now >= settle_until:
-            logger.info("[Cloudflare] settle 完成，返回 OTP=%s", best_otp)
-            return best_otp
+    now = time.monotonic()
+    if state.best_otp and state.settle_until is not None and now >= state.settle_until:
+        logger.info("[Cloudflare] settle 完成，返回 OTP=%s", state.best_otp)
+        return OTPProbeResult.completed(state.best_otp, state)
+    return OTPProbeResult.candidate(state, state.settle_until) if state.best_otp else OTPProbeResult.pending(state)
 
-        remaining = max(0, int(deadline - now))
-        if best_otp and settle_until is not None:
-            logger.info(
-                "[Cloudflare] 已有候选 OTP=%s，settle 剩余 ~%ss，总剩余 %ss",
-                best_otp,
-                max(0, int(settle_until - now)),
-                remaining,
-            )
-        else:
-            logger.info(
-                "[Cloudflare] 暂未匹配到可用 OTP，%ss 后重试（剩余 %ss；本轮邮件数=%s）",
-                interval,
-                remaining,
-                len(messages),
-            )
-        if remaining <= 0:
-            break
-        time.sleep(min(interval, max(1, remaining)))
 
-    if best_otp:
-        logger.warning("[Cloudflare] 总超时但已有候选，返回 OTP=%s", best_otp)
-        return best_otp
-
-    raise CFTempMailError(f"等待 Cloudflare 验证码超时: {target}; {last_error}")
+def fetch_latest_otp(email: str, after_ts: float | None = None, max_wait: int | None = None, poll_interval: int | None = None, settle_seconds: int | None = None) -> str:
+    """按统一策略轮询 Cloudflare 邮箱，返回领取时间后最新的 OpenAI 六位验证码。"""
+    target = str(email or "").strip()
+    if not target:
+        raise CFTempMailError("Cloudflare 取码缺少邮箱地址")
+    state = CFTempMailProbeState()
+    timeout = resolve_wait_timeout(max_wait if max_wait is not None else getattr(_email_cfg, "OTP_WAIT_TIMEOUT", None), _email_cfg.OTP_MAX_WAIT)
+    return wait_for_otp_with_policy(provider="cloudflare", email=target, initial_after_ts=after_ts if after_ts is not None else time.time(), fetch=lambda stamp: fetch_otp_once(target, stamp, state, settle_seconds), retrigger=lambda: time.time(), wait_timeout=timeout, poll_interval=poll_interval or _email_cfg.OTP_POLL_INTERVAL, retry_count=0)

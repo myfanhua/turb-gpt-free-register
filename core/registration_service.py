@@ -36,6 +36,63 @@ _STOP_LOCK = threading.Lock()
 _THREAD_CTX = threading.local()
 
 
+def registration_driver_preflight() -> dict[str, object]:
+    """返回不含凭证的注册驱动就绪状态，供 WebUI 在创建任务前校验。"""
+    from config import roxybrowser as roxy_cfg
+
+    raw_driver = str(getattr(roxy_cfg, "REGISTRATION_DRIVER", "cloak") or "cloak").strip().lower()
+    aliases = {
+        "protocol": "protocol", "api": "protocol", "http": "protocol",
+        "roxy": "roxy", "roxybrowser": "roxy",
+        "cloak": "cloak", "cloakbrowser": "cloak",
+        "browser_use": "browser_use", "browseruse": "browser_use", "browser-use": "browser_use", "bu": "browser_use",
+        "skyvern": "skyvern", "sv": "skyvern",
+    }
+    driver = aliases.get(raw_driver, raw_driver)
+    labels = {
+        "protocol": "Protocol（已验证主线）",
+        "roxy": "RoxyBrowser",
+        "cloak": "CloakBrowser",
+        "browser_use": "Browser Use Cloud",
+        "skyvern": "Skyvern Browser Sessions",
+    }
+    required: list[str] = []
+    missing: list[str] = []
+    if driver == "browser_use":
+        from config import browser_use as browser_use_cfg
+        required = ["BROWSER_USE_API_KEY"]
+        if not str(getattr(browser_use_cfg, "BROWSER_USE_API_KEY", "") or "").strip():
+            missing.append("BROWSER_USE_API_KEY")
+    elif driver not in labels:
+        missing.append("REGISTRATION_DRIVER（应为 protocol / roxy / cloak / browser_use / skyvern）")
+
+    can_submit = not missing
+    if driver == "browser_use" and missing:
+        message = "当前驱动为 Browser Use Cloud，但未配置 BROWSER_USE_API_KEY；不会创建注册任务。请填写密钥，或切换回 cloak。"
+    elif driver not in labels:
+        message = f"不支持的 REGISTRATION_DRIVER={raw_driver!r}；不会创建注册任务。"
+    elif driver == "protocol":
+        message = "当前驱动：Protocol（已验证主线）。不依赖 Browser Use Cloud。"
+    else:
+        message = f"当前驱动：{labels[driver]}。"
+    return {
+        "driver": driver,
+        "driver_label": labels.get(driver, "未知驱动"),
+        "required": required,
+        "missing": missing,
+        "can_submit": can_submit,
+        "message": message,
+    }
+
+
+def ensure_registration_driver_ready() -> dict[str, object]:
+    """在写入任务记录前阻断不完整的驱动配置。"""
+    status = registration_driver_preflight()
+    if not status["can_submit"]:
+        raise ValueError(str(status["message"]))
+    return status
+
+
 class StopRequested(RuntimeError):
     """用户手动停止注册任务。"""
 
@@ -91,17 +148,11 @@ def _append_job_log(job_id: int, message: str) -> None:
 
 
 def _random_display_name() -> str:
-    """生成符合 OpenAI 限制的英文字母显示名。"""
-    import random
-    import string
+    """复用 CLI 的显示名生成规则，避免 WebUI 与 CLI 名称策略漂移。"""
+    from config import register as register_cfg
+    from core.profile_utils import generate_display_name
 
-    first = random.choice(string.ascii_uppercase) + "".join(
-        random.choices(string.ascii_lowercase, k=random.randint(3, 6))
-    )
-    last = random.choice(string.ascii_uppercase) + "".join(
-        random.choices(string.ascii_lowercase, k=random.randint(3, 6))
-    )
-    return f"{first} {last}"
+    return generate_display_name(register_cfg.REGISTER_NAME_LOCALE)
 
 
 def _prepare_registration_args() -> tuple[str, str, str]:
@@ -134,6 +185,15 @@ def _prepare_registration_args() -> tuple[str, str, str]:
             )
 
     return email, name, birthday
+
+
+def _record_actual_email_source(job_id: int, email: str) -> str:
+    """把任务来源从提交时配置快照更新为实际领取素材的归属。"""
+    from core.email_provider import resolve_email_source
+
+    actual_source = resolve_email_source(email)
+    db.update_job(job_id, email=email, email_source=actual_source)
+    return actual_source
 
 
 def _release_unconsumed_job_email(email: str | None, reason: str) -> None:
@@ -306,7 +366,8 @@ def _run_one_job(job_id: int, log_file: str) -> None:
             from main import run_registration
             log_logger.info(f"[Job {job_id}] 开始注册任务")
             email, name, birthday = _prepare_registration_args()
-            db.update_job(job_id, email=email)
+            actual_email_source = _record_actual_email_source(job_id, email)
+            log_logger.info("[Job %s] 实际邮箱来源: %s", job_id, actual_email_source)
             check_stop_requested()
             result = run_registration(email=email, name=name, birthday=birthday)
             if is_stop_requested(job_id):
@@ -437,11 +498,12 @@ def _run_codex_retry_job(job_id: int, log_file: str, email: str, account_id: int
 def submit_registration(count: int = 1, email_source: str | None = None, workers: int | None = None) -> list[dict]:
     """
     创建 N 个注册任务并提交到线程池。
-    email_source 仅记录到 DB；实际邮箱来源固定为 Outlook 账号池。
+    email_source 是提交时的配置快照；任务领取邮箱后会更新为实际归属来源。
 
     Returns:
         N 个新创建的 job dict
     """
+    ensure_registration_driver_ready()
     if email_source is None:
         from config import email as _email_cfg
         email_source = _email_cfg.EMAIL_SOURCE

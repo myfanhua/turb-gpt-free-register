@@ -1322,7 +1322,7 @@ def run_codex_oauth(
         from config import roxybrowser as _roxy_cfg
         oauth_driver = str(getattr(_codex_cfg, "CODEX_OAUTH_DRIVER", "protocol") or "protocol").strip().lower()
         if oauth_driver == "same_as_registration":
-            oauth_driver = str(getattr(_roxy_cfg, "REGISTRATION_DRIVER", "protocol") or "protocol").strip().lower()
+            oauth_driver = str(getattr(_roxy_cfg, "REGISTRATION_DRIVER", "cloak") or "cloak").strip().lower()
         if oauth_driver in ("roxy", "roxybrowser", "fingerprint", "browser"):
             from core.roxy_codex_oauth import run_roxy_codex_oauth
             return run_roxy_codex_oauth(email, otp_provider=otp_provider, proxy=proxy, force=True)
