@@ -10,6 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from urllib.parse import quote, urlencode
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 try:
@@ -61,6 +62,23 @@ def _api_base() -> str:
     return base
 
 
+def _api_mode() -> str:
+    mode = str(_runtime_setting("EXTRACT_LINK_API_MODE", "legacy") or "legacy").strip().lower()
+    aliases = {"native": "upi_native", "upi": "upi_native", "8085": "upi_native"}
+    mode = aliases.get(mode, mode)
+    if mode not in {"legacy", "upi_native"}:
+        raise ValueError("EXTRACT_LINK_API_MODE must be legacy or upi_native")
+    return mode
+
+
+def _api_headers() -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    token = str(_runtime_setting("EXTRACT_LINK_API_TOKEN", "") or "").strip()
+    if token:
+        headers["X-API-Token"] = token
+    return headers
+
+
 def _cdk(value: str | None = None) -> str:
     cdk = str(value or _runtime_setting("EXTRACT_LINK_CDK", "") or "").strip()
     if not cdk:
@@ -84,7 +102,54 @@ def _session():
     return curl_requests.Session()
 
 
+class _JsonHttpError(RuntimeError):
+    def __init__(self, status_code: int, payload):
+        self.status_code = int(status_code)
+        self.payload = payload
+        super().__init__(_extract_error_message(payload) or f"HTTP {status_code}")
+
+
+def _json_request(method: str, path: str, *, payload: dict | None = None, timeout: int | None = None) -> dict:
+    url = f"{_api_base()}{path}"
+    timeout = timeout or _int_setting("EXTRACT_LINK_REQUEST_TIMEOUT", 30, 5, 300)
+    headers = _api_headers()
+    s = _session()
+    try:
+        if s is None:
+            body = None
+            if payload is not None:
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                headers["Content-Type"] = "application/json"
+            req = Request(url, data=body, headers=headers, method=method.upper())
+            try:
+                with urlopen(req, timeout=timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8", "replace") or "{}")
+            except HTTPError as exc:
+                raw = exc.read().decode("utf-8", "replace")
+                try:
+                    error_data = json.loads(raw or "{}")
+                except Exception:
+                    error_data = {"error": raw[:500]}
+                raise _JsonHttpError(exc.code, error_data) from exc
+        else:
+            resp = s.request(method.upper(), url, json=payload, headers=headers, timeout=timeout)
+            try:
+                data = resp.json()
+            except Exception:
+                data = {"error": (resp.text or "")[:500]}
+            if resp.status_code < 200 or resp.status_code >= 300:
+                raise _JsonHttpError(resp.status_code, data)
+        return data if isinstance(data, dict) else {}
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
 def query_cdk(*, cdk: str | None = None) -> dict:
+    if _api_mode() == "upi_native":
+        return {"mode": "upi_native", "remaining": None}
     base = _api_base()
     code = _cdk(cdk)
     timeout = _int_setting("EXTRACT_LINK_REQUEST_TIMEOUT", 30, 5, 300)
@@ -110,7 +175,46 @@ def query_cdk(*, cdk: str | None = None) -> dict:
             pass
 
 
-def _create_extract_job(*, token: str, link_type: str, cdk: str) -> dict:
+def _native_existing_job(email: str) -> dict | None:
+    data = _json_request("GET", "/api/upi/jobs")
+    jobs = data.get("jobs") if isinstance(data, dict) else None
+    if not isinstance(jobs, list):
+        return None
+    matches = [
+        item for item in jobs
+        if isinstance(item, dict) and str(item.get("email") or "").strip().lower() == email.strip().lower()
+    ]
+    if not matches:
+        return None
+    return max(matches, key=lambda item: float(item.get("created_at") or 0))
+
+
+def _create_native_job(*, token: str, email: str, link_type: str) -> dict:
+    if _link_type(link_type) != "upi":
+        raise ValueError("8085 native task pool only supports UPI links")
+    payload = {"accessToken": token, "email": email, "notify_telegram": False}
+    try:
+        return _json_request("POST", "/api/upi/session-jobs", payload=payload)
+    except _JsonHttpError as exc:
+        if exc.status_code != 409:
+            raise
+        existing = _native_existing_job(email)
+        if not existing:
+            raise
+        job_id = str(existing.get("id") or "")
+        if not job_id:
+            raise
+        status = str(existing.get("status") or "").lower()
+        expires_at = float(existing.get("qr_expires_at") or 0)
+        reusable = status == "success" and bool(existing.get("has_qr")) and expires_at > time.time() + 30
+        if not reusable and status not in {"queued", "running"}:
+            _json_request("POST", f"/api/upi/jobs/{quote(job_id, safe='')}/retry", payload={})
+        return {"job_id": job_id, "status": status, "reused": reusable}
+
+
+def _create_extract_job(*, token: str, email: str, link_type: str, cdk: str) -> dict:
+    if _api_mode() == "upi_native":
+        return _create_native_job(token=token, email=email, link_type=link_type)
     base = _api_base()
     timeout = _int_setting("EXTRACT_LINK_REQUEST_TIMEOUT", 30, 5, 300)
     payload = {"link_type": _link_type(link_type), "cdk": _cdk(cdk), "token": token}
@@ -146,7 +250,55 @@ def _create_extract_job(*, token: str, link_type: str, cdk: str) -> dict:
             pass
 
 
+def _iter_native_events(*, job_id: str):
+    timeout = _int_setting("EXTRACT_LINK_EVENT_TIMEOUT", 180, 30, 7200)
+    try:
+        poll_interval = float(_runtime_setting("EXTRACT_LINK_POLL_INTERVAL", 2.0) or 2.0)
+    except (TypeError, ValueError):
+        poll_interval = 2.0
+    poll_interval = max(0.2, min(30.0, poll_interval))
+    deadline = time.monotonic() + timeout
+    previous = None
+    job_path = f"/api/upi/jobs/{quote(job_id, safe='')}"
+    while time.monotonic() < deadline:
+        data = _json_request("GET", job_path)
+        status = str(data.get("status") or "").strip().lower()
+        message = str(data.get("error") or status or "waiting")
+        marker = (status, message)
+        if marker != previous:
+            yield "log", {"message": f"8085 task {status or 'unknown'}: {message}"}
+            previous = marker
+        if status == "success":
+            long_url = str(data.get("return_url") or "").strip()
+            has_qr = bool(data.get("has_qr"))
+            if not long_url and not has_qr:
+                yield "error", {"error": "8085 task succeeded without a link or QR code"}
+                yield "done", {}
+                return
+            qr_url = f"{_api_base()}/api/upi/jobs/{quote(job_id, safe='')}/qr" if has_qr else ""
+            yield "result", {"result": {
+                "long_url": long_url,
+                "copy_paste": long_url,
+                "image_url_png": qr_url,
+                "image_url_svg": "",
+                "expires_at": data.get("qr_expires_at"),
+                "payment_method": "upi",
+                "payment_link_type": "upi",
+            }}
+            yield "done", {}
+            return
+        if status in {"error", "failed", "cancelled"}:
+            yield "error", {"error": message or f"8085 task {status}"}
+            yield "done", {}
+            return
+        time.sleep(poll_interval)
+    raise TimeoutError(f"8085 task {job_id} did not finish within {timeout}s")
+
+
 def _iter_sse_events(*, job_id: str, cdk: str):
+    if _api_mode() == "upi_native":
+        yield from _iter_native_events(job_id=job_id)
+        return
     base = _api_base()
     timeout = _int_setting("EXTRACT_LINK_EVENT_TIMEOUT", 180, 30, 900)
     url = f"{base}/api/jobs/{quote(job_id, safe='')}/events?{urlencode({'cdk': _cdk(cdk)})}"
@@ -269,7 +421,7 @@ def _run_extract(*, account_id: int, email: str, access_token: str, link_type: s
     try:
         if not db.mark_account_extract_running(account_id):
             return {"ok": False, "error": "账号已删除或提链状态已被重置"}
-        job = _create_extract_job(token=access_token, link_type=link_type, cdk=cdk)
+        job = _create_extract_job(token=access_token, email=email, link_type=link_type, cdk=cdk)
         job_id = str(job.get("job_id") or "")
         db.update_account_extract(account_id, {
             "ok": False,
@@ -330,7 +482,7 @@ def enqueue_account_extract(*, account_id: int, email: str, access_token: str, t
         return {"accepted": False, "busy": False, "error": "提链队列已满"}
     try:
         lt = _link_type(link_type)
-        code = _cdk(cdk)
+        code = "" if _api_mode() == "upi_native" else _cdk(cdk)
         if not db.claim_account_extract(account_id, trigger=trigger, link_type=lt):
             _QUEUE_SLOTS.release()
             return {"accepted": False, "busy": True, "error": "该账号正在提链中"}

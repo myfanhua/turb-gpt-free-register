@@ -239,6 +239,10 @@ EDITABLE_FIELDS = [
         "label": "创建环境使用代理池", "help": "创建 Roxy 环境时从配置页「代理池」随机取一个代理，写入 Roxy proxyInfo",
     },
     {
+        "key": "ROXY_CREATE_STAGGER_DELAY", "file": "roxybrowser.py", "type": "float", "group": "RoxyBrowser",
+        "label": "创建环境错峰间隔", "help": "并发注册时串行创建 Roxy Profile；两次创建请求之间至少等待的秒数",
+    },
+    {
         "key": "ROXY_PROXY_CHECK_CHANNEL", "file": "roxybrowser.py", "type": "str", "group": "RoxyBrowser",
         "label": "代理检测通道", "help": "写入 Roxy proxyInfo.checkChannel；留空则不传，默认 IPRust.io",
     },
@@ -472,11 +476,24 @@ EDITABLE_FIELDS = [
     # ---- 提链 ----
     {
         "key": "EXTRACT_LINK_API_BASE", "file": "extract_link.py", "type": "str", "group": "提链",
-        "label": "提链服务地址", "help": "填写提链服务 API 地址",
+        "label": "提链服务地址", "help": "填写提链服务 API 地址；8085 SSH 隧道使用 http://127.0.0.1:8085",
+    },
+    {
+        "key": "EXTRACT_LINK_API_MODE", "file": "extract_link.py", "type": "str", "group": "提链",
+        "label": "提链接口模式", "help": "8085 任务池选 upi_native；旧版 /api/extract 服务选 legacy",
+        "options": [
+            {"value": "upi_native", "label": "8085 UPI 任务池"},
+            {"value": "legacy", "label": "旧版提链服务"},
+        ],
+    },
+    {
+        "key": "EXTRACT_LINK_API_TOKEN", "file": "extract_link.py", "type": "str", "group": "提链",
+        "label": "提链 API Token", "help": "可选；作为 X-API-Token 发送给 8085 服务",
+        "storage": "env", "secret": True,
     },
     {
         "key": "EXTRACT_LINK_CDK", "file": "extract_link.py", "type": "str", "group": "提链",
-        "label": "提链 CDK", "help": "创建提链任务和监听任务事件使用；成功提链扣 1 次",
+        "label": "提链 CDK", "help": "仅 legacy 旧版提链服务使用；8085 UPI 任务池无需填写",
         "storage": "env", "secret": True,
     },
     {
@@ -486,6 +503,10 @@ EDITABLE_FIELDS = [
     {
         "key": "EXTRACT_LINK_WORKERS", "file": "extract_link.py", "type": "int", "group": "提链",
         "label": "提链并发数", "help": "批量提链后台线程数，建议 1-4",
+    },
+    {
+        "key": "EXTRACT_LINK_POLL_INTERVAL", "file": "extract_link.py", "type": "float", "group": "提链",
+        "label": "8085 轮询间隔(秒)", "help": "本地轮询 8085 任务状态的时间间隔，建议 1-3 秒",
     },
     # ---- Codex 配置 ----
     {
@@ -542,15 +563,26 @@ EDITABLE_FIELDS = [
 
     {
         "key": "SMS_PROVIDER", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "接码通道", "help": "grizzly / l / h；l 使用 L_API.md，h 使用 H_API.md 定义的本地取号服务",
+        "label": "接码通道", "help": "选择手机验证码的取号平台",
+        "options": [
+            {"value": "grizzly", "label": "GrizzlySMS"},
+            {"value": "hero", "label": "HeroSMS"},
+            {"value": "smsbower", "label": "SMSBower"},
+            {"value": "h", "label": "H 接码"},
+            {"value": "l", "label": "L 接码"},
+        ],
     },
     {
         "key": "SMS_COUNTRY", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "国家代码", "help": "传给接码平台的 country；GrizzlySMS 常用：美国=187；H 通道作为 H_API.md 的 country",
+        "label": "国家代码", "help": "传给接码平台的 country；GrizzlySMS/HeroSMS/SMSBower 常用：美国=187；H 通道作为 H_API.md 的 country",
     },
     {
         "key": "SMS_SERVICE", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "服务/项目代码", "help": "GrizzlySMS/L 作为 service；H 通道作为 H_API.md 的 projectId",
+        "label": "服务/项目代码", "help": "GrizzlySMS/HeroSMS/SMSBower 的 OpenAI 服务代码填 dr；L 作为 service；H 作为 projectId",
+    },
+    {
+        "key": "SMS_MAX_PRICE", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "最高价格", "help": "GrizzlySMS/SMSBower 单个号码最高价格；留空表示不限价",
     },
     {
         "key": "SMS_MAX_RETRIES", "file": "codex.py", "type": "int", "group": "接码平台",
@@ -564,6 +596,55 @@ EDITABLE_FIELDS = [
         "key": "SMS_API_KEY", "file": "codex.py", "type": "str", "group": "接码平台",
         "label": "GrizzlySMS API密钥", "help": "GrizzlySMS 平台 API Key，保存在 .env（SMS_API_KEY），不写回 config/*.py",
         "storage": "env", "secret": True,
+    },
+    {
+        "key": "SMSBOWER_API_BASE", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "SMSBower API 地址", "help": "官方 SMS-Activate 兼容接口，通常无需修改",
+    },
+    {
+        "key": "SMSBOWER_API_KEY", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "SMSBower API Key", "help": "SMSBower 账户 API Key，保存在 .env，不写回 config/*.py",
+        "storage": "env", "secret": True,
+    },
+    {
+        "key": "HERO_SMS_API_BASE", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "HeroSMS API 地址", "help": "官方 SMS-Activate 兼容接口，通常无需修改",
+    },
+    {
+        "key": "HERO_SMS_API_KEY", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "HeroSMS API Key", "help": "HeroSMS 账户 API Key，保存在 .env，不写回 config/*.py",
+        "storage": "env", "secret": True,
+    },
+    {
+        "key": "HERO_SMS_PRICE_MODE", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "价格模式", "help": "固定价严格购买指定价位；区间会先读取真实库存价位再购买",
+        "options": [
+            {"value": "any", "label": "不限价格"},
+            {"value": "max", "label": "不超过最高价"},
+            {"value": "fixed", "label": "固定价位"},
+            {"value": "range", "label": "价格区间"},
+        ],
+    },
+    {
+        "key": "HERO_SMS_MIN_PRICE", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "最低价格", "help": "价格区间模式使用；包含边界，例如 0.04",
+    },
+    {
+        "key": "HERO_SMS_MAX_PRICE", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "最高价 / 固定价", "help": "最高价、固定价和价格区间模式使用；包含边界",
+    },
+    {
+        "key": "HERO_SMS_RANGE_STRATEGY", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "区间选价策略", "help": "在区间内有多个真实可用价位时如何选择",
+        "options": [
+            {"value": "lowest", "label": "优先最低价"},
+            {"value": "highest", "label": "优先最高价"},
+            {"value": "random", "label": "随机价位"},
+        ],
+    },
+    {
+        "key": "HERO_SMS_OPERATOR", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "运营商", "help": "可选；多个运营商用英文逗号分隔且不要加空格",
     },
     {
         "key": "H_API_BASE", "file": "codex.py", "type": "str", "group": "接码平台",

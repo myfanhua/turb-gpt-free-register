@@ -17,6 +17,7 @@ from core.session import BrowserSession
 logger = logging.getLogger(__name__)
 
 ACCOUNTS_CHECK_PATH = "/backend-api/accounts/check/v4-2023-04-27"
+_SUPPORTED_PROXY_SCHEMES = {"http", "https", "socks4", "socks4a", "socks5", "socks5h"}
 
 
 def now_iso() -> str:
@@ -46,6 +47,28 @@ def _mask_proxy(proxy: str) -> str:
         return f"{scheme}{auth}{host}{port}" or "***"
     except Exception:
         return "***"
+
+
+def _proxy_address_error(proxy: str) -> str | None:
+    """Return a user-facing reason when a configured proxy is not an address."""
+    value = str(proxy or "").strip()
+    if not value:
+        return "代理地址为空"
+    try:
+        parsed = urlparse(value if "://" in value else f"//{value}")
+        if parsed.scheme and parsed.scheme.lower() not in _SUPPORTED_PROXY_SCHEMES:
+            return f"不支持代理协议 {parsed.scheme!r}"
+        if not parsed.hostname:
+            return "缺少代理主机"
+        try:
+            port = parsed.port
+        except ValueError:
+            return "代理端口无效"
+        if not port:
+            return "缺少代理端口"
+        return None
+    except Exception as exc:
+        return f"代理地址解析失败（{type(exc).__name__}）"
 
 
 def _local_proxy_status(proxy: str) -> tuple[bool, bool, str | None]:
@@ -82,6 +105,10 @@ def resolve_plan_check_route(explicit_proxy: Optional[str] = None) -> dict:
     """
     if explicit_proxy is not None:
         selected = str(explicit_proxy or "").strip()
+        if selected:
+            address_error = _proxy_address_error(selected)
+            if address_error:
+                raise ValueError(f"请求指定的代理格式无效：{address_error}")
         return {
             "proxy": selected,
             "proxy_mode": "request",
@@ -105,17 +132,31 @@ def resolve_plan_check_route(explicit_proxy: Optional[str] = None) -> dict:
         }
 
     selected = str(getattr(proxy_cfg, "PLAN_CHECK_PROXY", "") or "").strip()
+    fallback_reason = None
+    if selected:
+        address_error = _proxy_address_error(selected)
+        if address_error:
+            fallback_reason = f"PLAN_CHECK_PROXY 格式无效：{address_error}"
+            logger.warning("[Plan] %s，尝试回退代理池", fallback_reason)
+            selected = ""
     if not selected:
-        selected = str(proxy_cfg.pick_proxy() or "").strip()
+        pool_proxy = str(proxy_cfg.pick_proxy() or "").strip()
+        if pool_proxy:
+            address_error = _proxy_address_error(pool_proxy)
+            if address_error:
+                fallback_reason = f"PROXY_POOL 代理格式无效：{address_error}"
+                logger.warning("[Plan] %s", fallback_reason)
+            else:
+                selected = pool_proxy
     if not selected:
         if mode == "proxy":
-            raise ValueError("套餐查询网络模式为 proxy，但未配置 PLAN_CHECK_PROXY 或 PROXY_POOL")
+            raise ValueError(fallback_reason or "套餐查询网络模式为 proxy，但未配置 PLAN_CHECK_PROXY 或 PROXY_POOL")
         return {
             "proxy": "",
             "proxy_mode": mode,
             "network_route": "direct",
             "proxy_used": None,
-            "proxy_fallback_reason": "未配置套餐查询代理或代理池",
+            "proxy_fallback_reason": fallback_reason or "未配置套餐查询代理或代理池",
         }
 
     is_local, available, reason = _local_proxy_status(selected)
@@ -132,7 +173,7 @@ def resolve_plan_check_route(explicit_proxy: Optional[str] = None) -> dict:
         "proxy_mode": mode,
         "network_route": "proxy",
         "proxy_used": _mask_proxy(selected),
-        "proxy_fallback_reason": None,
+        "proxy_fallback_reason": fallback_reason,
     }
 
 

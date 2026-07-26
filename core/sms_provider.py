@@ -9,6 +9,8 @@
 
 当前支持：
     - GrizzlySMS：GET 文本接口，文档 https://api.grizzlysms.com
+    - HeroSMS：SMS-Activate 兼容接口，文档 https://hero-sms.com/cn/api
+    - SMSBower：SMS-Activate 兼容接口，文档 https://smsbower.app/api/?page=client
     - L：本地 JSON 管理接口，文档 L_API.md
     - H：本地 JSON 管理接口，文档 H_API.md
 
@@ -18,8 +20,10 @@
 """
 import json
 import logging
+import random
 import threading
 import time
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin
 
 from curl_cffi.requests import Session as CurlSession
@@ -66,37 +70,100 @@ def _provider() -> str:
     return str(getattr(_cfg, "SMS_PROVIDER", "grizzly") or "grizzly").strip().lower()
 
 
-def _request_grizzly(http: CurlSession, params: dict) -> str:
-    """
-    发一个 GrizzlySMS API 请求，返回去空白的响应文本。
-    统一识别公共错误码并抛对应异常。
-    """
-    base_params = {"api_key": _cfg.SMS_API_KEY}
-    base_params.update(params)
-    resp = http.get(_cfg.SMS_API_BASE, params=base_params)
-    if resp.status_code != 200:
-        raise SmsProviderError(
-            f"GrizzlySMS HTTP {resp.status_code}: {(resp.text or '')[:200]}"
+def _activate_api_config(provider: str) -> tuple[str, str, str]:
+    if provider == "hero":
+        return (
+            str(getattr(_cfg, "HERO_SMS_API_BASE", "") or "").strip(),
+            str(getattr(_cfg, "HERO_SMS_API_KEY", "") or "").strip(),
+            "HeroSMS",
         )
+    if provider == "smsbower":
+        return (
+            str(getattr(_cfg, "SMSBOWER_API_BASE", "") or "").strip(),
+            str(getattr(_cfg, "SMSBOWER_API_KEY", "") or "").strip(),
+            "SMSBower",
+        )
+    return (
+        str(getattr(_cfg, "SMS_API_BASE", "") or "").strip(),
+        str(getattr(_cfg, "SMS_API_KEY", "") or "").strip(),
+        "GrizzlySMS",
+    )
+
+
+def _request_sms_activate(http: CurlSession, params: dict, *, provider: str) -> str:
+    """请求 SMS-Activate 兼容接口，并统一映射公共错误。"""
+    api_base, api_key, label = _activate_api_config(provider)
+    if not api_base:
+        raise SmsProviderError(f"{label} API 地址不能为空")
+    if not api_key:
+        raise SmsProviderError(f"{label} API Key 不能为空")
+
+    base_params = {"api_key": api_key}
+    base_params.update(params)
+    resp = http.get(api_base, params=base_params)
     text = (resp.text or "").strip()
+    if resp.status_code != 200:
+        if resp.status_code == 401:
+            raise SmsProviderError(f"{label} API Key 无效（HTTP 401）")
+        if resp.status_code == 402:
+            raise SmsNoBalanceError(f"{label} 余额不足（HTTP 402），请充值")
+        if resp.status_code == 404 and str(params.get("action") or "").startswith("getNumber"):
+            raise SmsNoNumbersError(f"{label} 当前条件暂无可用号码（HTTP 404）")
+        raise SmsProviderError(
+            f"{label} HTTP {resp.status_code}: {text[:200]}"
+        )
 
     # 公共错误码（任何 action 都可能返回）
     if text == "BAD_KEY":
-        raise SmsProviderError("接码平台 API key 无效（BAD_KEY）")
+        raise SmsProviderError(f"{label} API Key 无效（BAD_KEY）")
     if text == "NO_BALANCE":
-        raise SmsNoBalanceError("接码平台余额不足（NO_BALANCE），请充值")
+        raise SmsNoBalanceError(f"{label} 余额不足（NO_BALANCE），请充值")
     if text == "NO_NUMBERS":
-        raise SmsNoNumbersError("接码平台暂无可用号码（NO_NUMBERS）")
+        raise SmsNoNumbersError(f"{label} 当前条件暂无可用号码（NO_NUMBERS）")
     if text == "SERVICE_UNAVAILABLE_REGION":
-        raise SmsProviderError("接码平台地区受限（SERVICE_UNAVAILABLE_REGION），请换 IP")
-    if text in ("BAD_ACTION", "BAD_SERVICE", "BAD_STATUS"):
-        raise SmsProviderError(f"接码平台请求参数错误：{text}")
+        raise SmsProviderError(f"{label} 地区受限（SERVICE_UNAVAILABLE_REGION），请换 IP")
+    if text in ("BAD_ACTION", "BAD_SERVICE", "BAD_STATUS", "BAD_COUNTRY"):
+        raise SmsProviderError(f"{label} 请求参数错误：{text}")
+    if text == "EARLY_CANCEL_DENIED":
+        raise SmsProviderError(f"{label} 取号两分钟内不能取消（EARLY_CANCEL_DENIED）")
     if text == "NO_ACTIVATION":
-        raise SmsProviderError("激活 ID 不存在（NO_ACTIVATION）")
+        raise SmsProviderError(f"{label} 激活 ID 不存在（NO_ACTIVATION）")
     if text.startswith("The service is prohibited"):
-        raise SmsProviderError(f"该服务被平台禁售：{text}")
+        raise SmsProviderError(f"{label} 禁售该服务：{text}")
 
     return text
+
+
+def _request_grizzly(http: CurlSession, params: dict) -> str:
+    return _request_sms_activate(http, params, provider="grizzly")
+
+
+def _request_hero(http: CurlSession, params: dict) -> str:
+    return _request_sms_activate(http, params, provider="hero")
+
+
+def _request_smsbower(http: CurlSession, params: dict) -> str:
+    return _request_sms_activate(http, params, provider="smsbower")
+
+
+def _request_for_provider(provider: str):
+    requests = {
+        "grizzly": _request_grizzly,
+        "hero": _request_hero,
+        "smsbower": _request_smsbower,
+    }
+    try:
+        return requests[provider]
+    except KeyError as exc:
+        raise SmsProviderError(f"不支持的接码通道：{provider}") from exc
+
+
+def _request_hero_json(http: CurlSession, params: dict):
+    text = _request_hero(http, params)
+    try:
+        return json.loads(text)
+    except Exception as exc:
+        raise SmsProviderError(f"HeroSMS 返回的不是有效 JSON：{text[:200]}") from exc
 
 
 def _l_url(path: str) -> str:
@@ -301,6 +368,166 @@ def _h_phone_acquire_mode() -> str:
     return "reusable"
 
 
+def _decimal_price(value, field_name: str, *, allow_zero: bool = False) -> Decimal:
+    try:
+        price = Decimal(str(value or "").strip())
+    except (InvalidOperation, ValueError) as exc:
+        raise SmsProviderError(f"{field_name} 必须是有效数字") from exc
+    if not price.is_finite() or price < 0 or (price == 0 and not allow_zero):
+        qualifier = "大于等于 0" if allow_zero else "大于 0"
+        raise SmsProviderError(f"{field_name} 必须{qualifier}")
+    return price
+
+
+def _price_text(price: Decimal) -> str:
+    text = format(price, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _hero_price_mode() -> str:
+    raw = str(getattr(_cfg, "HERO_SMS_PRICE_MODE", "any") or "any").strip().lower()
+    aliases = {
+        "none": "any", "unlimited": "any", "不限": "any",
+        "maximum": "max", "最高价": "max",
+        "exact": "fixed", "固定价": "fixed",
+        "interval": "range", "区间": "range",
+    }
+    mode = aliases.get(raw, raw)
+    if mode not in {"any", "max", "fixed", "range"}:
+        raise SmsProviderError("HeroSMS 价格模式必须是 any / max / fixed / range")
+    return mode
+
+
+def _hero_service(value: str) -> str:
+    raw = str(value or "").strip()
+    aliases = {
+        "openai": "dr",
+        "open-ai": "dr",
+        "chatgpt": "dr",
+        "chat-gpt": "dr",
+    }
+    normalized = aliases.get(raw.lower(), raw)
+    if normalized != raw:
+        logger.warning(
+            "[SMS:HeroSMS] service=%s is a display name; using HeroSMS code %s",
+            raw,
+            normalized,
+        )
+    return normalized
+
+
+def _hero_available_price_map(data, country: str) -> dict[Decimal, int]:
+    """从热门国家响应中提取目标国家的实时价格库存。"""
+    wanted_country = str(country).strip()
+    result: dict[Decimal, int] = {}
+
+    def visit(value) -> None:
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+            return
+        if not isinstance(value, dict):
+            return
+
+        # HeroSMS 当前接口返回 freePriceMap；保留 physicalPriceMap 兼容旧响应。
+        price_map = value.get("freePriceMap")
+        if not isinstance(price_map, dict):
+            price_map = value.get("physicalPriceMap")
+        item_country = str(value.get("country", "")).strip()
+        if isinstance(price_map, dict) and item_country == wanted_country:
+            for raw_price, raw_count in price_map.items():
+                try:
+                    price = Decimal(str(raw_price))
+                    count = int(raw_count or 0)
+                except (InvalidOperation, TypeError, ValueError):
+                    continue
+                if price.is_finite() and price >= 0 and count > 0:
+                    result[price] = result.get(price, 0) + count
+        for child in value.values():
+            if child is not price_map:
+                visit(child)
+
+    visit(data)
+    return result
+
+
+def _select_hero_range_price(
+    http: CurlSession,
+    *,
+    service: str,
+    country: str,
+) -> Decimal:
+    minimum = _decimal_price(
+        getattr(_cfg, "HERO_SMS_MIN_PRICE", ""),
+        "HeroSMS 最低价格",
+        allow_zero=True,
+    )
+    maximum = _decimal_price(
+        getattr(_cfg, "HERO_SMS_MAX_PRICE", ""),
+        "HeroSMS 最高价格",
+    )
+    if minimum > maximum:
+        raise SmsProviderError("HeroSMS 价格区间无效：最低价格不能大于最高价格")
+
+    data = _request_hero_json(http, {
+        "action": "getTopCountriesByServiceRank",
+        "service": service,
+        "freePrice": "true",
+    })
+    price_map = _hero_available_price_map(data, country)
+    choices = sorted(price for price, count in price_map.items() if count > 0 and minimum <= price <= maximum)
+    if not choices:
+        available = ", ".join(_price_text(price) for price in sorted(price_map)) or "无"
+        raise SmsNoNumbersError(
+            f"HeroSMS 在 {_price_text(minimum)} - {_price_text(maximum)} 区间没有可用价位；"
+            f"当前国家可用价位：{available}"
+        )
+
+    strategy = str(getattr(_cfg, "HERO_SMS_RANGE_STRATEGY", "lowest") or "lowest").strip().lower()
+    if strategy in {"highest", "max", "最高"}:
+        selected = choices[-1]
+    elif strategy in {"random", "随机"}:
+        selected = random.choice(choices)
+    elif strategy in {"lowest", "min", "最低"}:
+        selected = choices[0]
+    else:
+        raise SmsProviderError("HeroSMS 区间策略必须是 lowest / highest / random")
+
+    logger.info(
+        f"[SMS:HeroSMS] 区间 {_price_text(minimum)} - {_price_text(maximum)} "
+        f"按 {strategy} 选择价位 {_price_text(selected)}（该价位库存 {price_map[selected]}）"
+    )
+    return selected
+
+
+def _hero_number_params(http: CurlSession, *, service: str, country: str) -> tuple[dict, Decimal | None]:
+    params = {
+        "action": "getNumberV2",
+        "service": service,
+        "country": country,
+    }
+    operator = str(getattr(_cfg, "HERO_SMS_OPERATOR", "") or "").strip()
+    if operator:
+        params["operator"] = operator
+
+    mode = _hero_price_mode()
+    selected_price: Decimal | None = None
+    if mode == "max":
+        selected_price = _decimal_price(getattr(_cfg, "HERO_SMS_MAX_PRICE", ""), "HeroSMS 最高价格")
+        params["maxPrice"] = _price_text(selected_price)
+    elif mode == "fixed":
+        selected_price = _decimal_price(getattr(_cfg, "HERO_SMS_MAX_PRICE", ""), "HeroSMS 固定价格")
+        params["maxPrice"] = _price_text(selected_price)
+        params["fixedPrice"] = "true"
+    elif mode == "range":
+        selected_price = _select_hero_range_price(http, service=service, country=country)
+        params["maxPrice"] = _price_text(selected_price)
+        params["fixedPrice"] = "true"
+    return params, selected_price
+
+
 # ============================================================
 # 取号
 # ============================================================
@@ -322,7 +549,8 @@ def acquire_number(
     own_http = http is None
     http = http or _http()
     try:
-        if _provider() == "l":
+        provider = _provider()
+        if provider == "l":
             payload = {
                 "service": service or _cfg.SMS_SERVICE,
                 "country": country or _cfg.SMS_COUNTRY,
@@ -347,7 +575,7 @@ def acquire_number(
             logger.info(f"[SMS:L] 取号成功：id={activation_id}, phone=+{phone}")
             return activation_id, phone
 
-        if _provider() == "h":
+        if provider == "h":
             # H_API 使用 projectId + country；统一复用 SMS_SERVICE / SMS_COUNTRY，
             # 避免接码平台之间出现重复的“服务/国家”配置。
             project_id = str(service or _cfg.SMS_SERVICE).strip()
@@ -382,6 +610,40 @@ def acquire_number(
             )
             return activation_id, phone
 
+        if provider == "hero":
+            hero_service = _hero_service(service or _cfg.SMS_SERVICE or "")
+            hero_country = str(country or _cfg.SMS_COUNTRY or "").strip()
+            if not hero_service:
+                raise SmsProviderError("HeroSMS service 不能为空：请填写 SMS_SERVICE")
+            if not hero_country:
+                raise SmsProviderError("HeroSMS country 不能为空：请填写 SMS_COUNTRY")
+
+            params, selected_price = _hero_number_params(
+                http,
+                service=hero_service,
+                country=hero_country,
+            )
+            data = _request_hero_json(http, params)
+            if not isinstance(data, dict):
+                raise SmsProviderError(f"HeroSMS getNumberV2 响应不是 JSON 对象：{str(data)[:200]}")
+            activation_id = str(data.get("activationId") or "").strip()
+            phone = _normalize_phone_digits(data.get("phoneNumber") or "")
+            if not activation_id or not phone:
+                raise SmsProviderError(
+                    f"HeroSMS getNumberV2 响应缺少 activationId/phoneNumber：{str(data)[:200]}"
+                )
+            _ACQUIRED_AT[activation_id] = time.time()
+            actual_price = str(data.get("activationCost") or "").strip()
+            requested = _price_text(selected_price) if selected_price is not None else "不限"
+            logger.info(
+                f"[SMS:HeroSMS] 取号成功：activation_id={activation_id}, phone=+{phone}, "
+                f"price={actual_price or '未知'}, requested={requested}, mode={_hero_price_mode()}"
+            )
+            return activation_id, phone
+
+        if provider not in {"grizzly", "smsbower"}:
+            raise SmsProviderError(f"不支持的接码通道：{provider}")
+
         params = {
             "action": "getNumber",
             "service": service or _cfg.SMS_SERVICE,
@@ -390,7 +652,7 @@ def acquire_number(
         if _cfg.SMS_MAX_PRICE:
             params["maxPrice"] = _cfg.SMS_MAX_PRICE
 
-        text = _request_grizzly(http, params)
+        text = _request_for_provider(provider)(http, params)
         # 成功格式：ACCESS_NUMBER:激活ID:号码
         if not text.startswith("ACCESS_NUMBER:"):
             raise SmsProviderError(f"getNumber 非预期响应：{text[:200]}")
@@ -398,9 +660,11 @@ def acquire_number(
         if len(parts) < 3:
             raise SmsProviderError(f"getNumber 响应格式异常：{text[:200]}")
         activation_id = parts[1].strip()
-        phone = parts[2].strip()
+        phone = _normalize_phone_digits(parts[2])
+        if not activation_id or not phone:
+            raise SmsProviderError(f"getNumber 响应缺少激活 ID 或号码：{text[:200]}")
         _ACQUIRED_AT[activation_id] = time.time()
-        logger.info(f"[SMS] 取号成功：activation_id={activation_id}, phone=+{phone}")
+        logger.info(f"[SMS:{provider}] 取号成功：activation_id={activation_id}, phone=+{phone}")
         return activation_id, phone
     finally:
         if own_http:
@@ -481,7 +745,8 @@ def wait_for_sms_code(
                 time.sleep(interval)
                 continue
 
-            text = _request_grizzly(http, {"action": "getStatus", "id": activation_id})
+            request_status = _request_for_provider(provider)
+            text = request_status(http, {"action": "getStatus", "id": activation_id})
 
             if text.startswith("STATUS_OK:"):
                 code = text.split(":", 1)[1].strip()
@@ -504,7 +769,13 @@ def wait_for_sms_code(
 # 改状态
 # ============================================================
 
-def set_status(activation_id: str, status: int, http: CurlSession | None = None) -> str:
+def set_status(
+    activation_id: str,
+    status: int,
+    http: CurlSession | None = None,
+    *,
+    provider: str | None = None,
+) -> str:
     """
     设置激活状态（setStatus）。
         1 = 号码已就绪（短信已发出）
@@ -515,10 +786,15 @@ def set_status(activation_id: str, status: int, http: CurlSession | None = None)
     own_http = http is None
     http = http or _http()
     try:
-        if _provider() == "l":
+        provider_name = provider or _provider()
+        if provider_name == "l":
             logger.debug(f"[SMS:L] 忽略状态设置 id={activation_id}, status={status}")
             return "OK"
-        return _request_grizzly(http, {"action": "setStatus", "status": str(status), "id": activation_id})
+        if provider_name == "h":
+            logger.debug(f"[SMS:H] 忽略状态设置 id={activation_id}, status={status}")
+            return "OK"
+        request_status = _request_for_provider(provider_name)
+        return request_status(http, {"action": "setStatus", "status": str(status), "id": activation_id})
     finally:
         if own_http:
             http.close()
@@ -526,27 +802,28 @@ def set_status(activation_id: str, status: int, http: CurlSession | None = None)
 
 def complete(activation_id: str, http: CurlSession | None = None) -> None:
     """标记激活完成（status=6）。失败只告警不抛，避免影响主流程。"""
-    if _provider() == "l":
+    provider = _provider()
+    if provider == "l":
         logger.info(f"[SMS:L] 已完成 id={activation_id}")
         _ACQUIRED_AT.pop(activation_id, None)
         return
-    if _provider() == "h":
+    if provider == "h":
         # H 成功 fetch-code 后后台会自动按多次收码策略重取；这里不 release。
         logger.info(f"[SMS:H] 已完成 id={activation_id}")
         _ACQUIRED_AT.pop(activation_id, None)
         return
     try:
-        set_status(activation_id, 6, http=http)
+        set_status(activation_id, 6, http=http, provider=provider)
         logger.info(f"[SMS] 已标记完成 activation_id={activation_id}")
         _ACQUIRED_AT.pop(activation_id, None)
     except Exception as exc:
         logger.warning(f"[SMS] 标记完成失败（不影响结果）：{exc}")
 
 
-def _do_cancel_sync(activation_id: str, http_factory) -> None:
-    """实际的同步取消逻辑：等够 2 分钟限制 → 发请求 → 失败重试一次。"""
+def _do_cancel_sync(activation_id: str, http_factory, provider: str) -> None:
+    """同步取消；GrizzlySMS/SMSBower 需等待两分钟，HeroSMS 可立即取消。"""
     acquired_at = _ACQUIRED_AT.get(activation_id)
-    if acquired_at is not None:
+    if provider in {"grizzly", "smsbower"} and acquired_at is not None:
         elapsed = time.time() - acquired_at
         if elapsed < _MIN_CANCEL_DELAY:
             wait = _MIN_CANCEL_DELAY - elapsed
@@ -561,7 +838,7 @@ def _do_cancel_sync(activation_id: str, http_factory) -> None:
     try:
         for attempt in range(1, 3):
             try:
-                set_status(activation_id, 8, http=http)
+                set_status(activation_id, 8, http=http, provider=provider)
                 logger.info(f"[SMS] 已取消 activation_id={activation_id}")
                 _ACQUIRED_AT.pop(activation_id, None)
                 return
@@ -592,14 +869,15 @@ def cancel(activation_id: str, http: CurlSession | None = None, background: bool
 
     失败只告警不抛，不影响主流程。
     """
-    if _provider() == "l":
+    provider = _provider()
+    if provider == "l":
         try:
             _release_l_number(activation_id, http=http)
         except Exception as exc:
             logger.warning(f"[SMS:L] 释放号码失败（不影响主流程）：id={activation_id}, {type(exc).__name__}: {exc}")
             _ACQUIRED_AT.pop(activation_id, None)
         return
-    if _provider() == "h":
+    if provider == "h":
         try:
             _release_h_number(activation_id, http=http)
         except Exception as exc:
@@ -608,12 +886,12 @@ def cancel(activation_id: str, http: CurlSession | None = None, background: bool
         return
 
     if not background:
-        _do_cancel_sync(activation_id, _http)
+        _do_cancel_sync(activation_id, _http, provider)
         return
 
     t = threading.Thread(
         target=_do_cancel_sync,
-        args=(activation_id, _http),
+        args=(activation_id, _http, provider),
         name=f"sms-cancel-{activation_id}",
         daemon=True,
     )

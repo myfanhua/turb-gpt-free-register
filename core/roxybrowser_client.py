@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from urllib.parse import unquote, urljoin, urlparse
@@ -13,6 +14,9 @@ import requests
 from config import roxybrowser as _cfg
 
 logger = logging.getLogger(__name__)
+
+_ROXY_CREATE_LOCK = threading.Lock()
+_ROXY_CREATE_LAST_FINISHED_AT = 0.0
 
 
 @dataclass
@@ -392,7 +396,20 @@ class RoxyBrowserClient:
                 "或直接在 ROXY_PROFILE_CREATE_PAYLOAD 里加入 {'workspaceId': '你的工作区ID'}。"
             )
         logger.info("[Roxy] 创建环境参数：workspaceId=%s projectId=%s os=%s osVersion=%s", body.get("workspaceId"), body.get("projectId") or "-", body.get("os") or "-", body.get("osVersion") or "-")
-        result = self.request(_cfg.ROXY_CREATE_METHOD, _cfg.ROXY_CREATE_PATH, json_body=body)
+        # Roxy only accepts one profile creation at a time. Serialize create
+        # requests and leave a configurable gap after each completed request.
+        global _ROXY_CREATE_LAST_FINISHED_AT
+        create_gap = max(0.0, float(getattr(_cfg, "ROXY_CREATE_STAGGER_DELAY", 3.0) or 0.0))
+        with _ROXY_CREATE_LOCK:
+            elapsed = time.monotonic() - _ROXY_CREATE_LAST_FINISHED_AT
+            wait_seconds = max(0.0, create_gap - elapsed)
+            if wait_seconds > 0:
+                logger.info("[Roxy] waiting %.1fs before creating the next profile", wait_seconds)
+                time.sleep(wait_seconds)
+            try:
+                result = self.request(_cfg.ROXY_CREATE_METHOD, _cfg.ROXY_CREATE_PATH, json_body=body)
+            finally:
+                _ROXY_CREATE_LAST_FINISHED_AT = time.monotonic()
         profile_id = _first(result, [
             ("id",), ("dirId",), ("dir_id",), ("profile_id",), ("profileId",), ("browser_id",),
             ("data", "id"), ("data", "dirId"), ("data", "dir_id"),

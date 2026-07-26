@@ -69,6 +69,8 @@ EMAIL_SOURCE = "outlook,generic_api"
 - 支持 CPA 管理接口生成授权 URL，并提交 OAuth callback。
 - 支持接码平台：
   - GrizzlySMS
+  - HeroSMS（支持不限价、最高价、固定价和真实库存价格区间）
+  - SMSBower（SMS-Activate 兼容 API）
   - 本地 L 取号服务，见 `L_API.md`
 - 手机验证支持自动取号、填号、收码、提交、失败换号重试。
 - Codex 凭证落盘到 `codex_accounts/`。
@@ -123,6 +125,7 @@ cp .env.example .env
 - `CLOUDFLARE_API_KEY` / `CLOUDFLARE_CUSTOM_AUTH`（`EMAIL_SOURCE=cloudflare` 时）
 - `CPA_MANAGEMENT_KEY`
 - `SMS_API_KEY`
+- `HERO_SMS_API_KEY`
 - `L_ADMIN_AUTH_CODE`
 - `H_ADMIN_AUTH_CODE`
 
@@ -258,6 +261,7 @@ ROXY_PROJECT_ID = "你的projectId"
 ROXY_ONE_PROFILE_PER_ACCOUNT = True
 ROXY_DELETE_PROFILE_AFTER_RUN = True
 ROXY_CREATE_USE_PROXY_POOL = True
+ROXY_CREATE_STAGGER_DELAY = 3.0
 ```
 
 如要无头：
@@ -395,9 +399,9 @@ CODEX_OAUTH_DRIVER = "browser_use"  # 可选 protocol / roxy / cloak / browser_u
 接码配置在 `config/codex.py`：
 
 ```python
-SMS_PROVIDER = "l"        # 可选 grizzly / l / h
+SMS_PROVIDER = "l"        # 可选 grizzly / hero / smsbower / l / h
 SMS_API_KEY = "你的 GrizzlySMS key"  # 仅 GrizzlySMS 需要
-SMS_SERVICE = "openai"
+SMS_SERVICE = "dr"                  # OpenAI service code on HeroSMS/GrizzlySMS/SMSBower
 SMS_COUNTRY = "国家代码"
 SMS_MAX_RETRIES = 10
 SMS_CODE_WAIT = 120
@@ -408,6 +412,31 @@ SMS_POLL_INTERVAL = 5
 #   SMS_COUNTRY -> H country
 H_API_BASE = "http://localhost:8788"
 H_ADMIN_AUTH_CODE = "你的H后台授权码"
+```
+
+HeroSMS 使用独立 API Key，并复用 `SMS_SERVICE` / `SMS_COUNTRY`：
+
+```python
+SMS_PROVIDER = "hero"
+SMS_SERVICE = "dr"                 # OpenAI
+SMS_COUNTRY = "187"                # 示例：美国
+HERO_SMS_API_KEY = "你的 HeroSMS API Key"
+HERO_SMS_PRICE_MODE = "range"       # any / max / fixed / range
+HERO_SMS_MIN_PRICE = "0.04"
+HERO_SMS_MAX_PRICE = "0.10"
+HERO_SMS_RANGE_STRATEGY = "lowest"  # lowest / highest / random
+```
+
+区间模式会先读取 HeroSMS 的 `physicalPriceMap`，只从区间内有库存的真实价位中选择，再用 `fixedPrice=true` 购买。
+
+SMSBower 使用独立 API Key，并复用 `SMS_SERVICE` / `SMS_COUNTRY` / `SMS_MAX_PRICE`：
+
+```python
+SMS_PROVIDER = "smsbower"
+SMS_SERVICE = "dr"
+SMS_COUNTRY = "187"
+SMS_MAX_PRICE = "0.20"  # 留空表示不限价
+SMSBOWER_API_KEY = "你的 SMSBower API Key"
 ```
 
 CPA 授权地址来源：
