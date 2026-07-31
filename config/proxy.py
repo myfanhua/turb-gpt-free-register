@@ -11,6 +11,7 @@
 """
 from config.env_loader import apply_env_overrides
 import random
+import secrets
 
 
 # 本地代理入口；实际出口地区以代理/分流规则为准。
@@ -48,8 +49,13 @@ PLAN_CHECK_JITTER = 0.3
 
 
 def pick_proxy() -> str:
-    """从代理池中随机抽取一个代理 URL；池为空时返回空串（即不使用代理）。"""
-    return random.choice(PROXY_POOL) if PROXY_POOL else ""
+    """从代理池抽取代理；URL 中的 ``{sid}`` 每次替换为新会话 ID。"""
+    if not PROXY_POOL:
+        return ""
+    value = str(random.choice(PROXY_POOL) or "").strip()
+    if "{sid}" in value:
+        value = value.replace("{sid}", secrets.token_hex(6))
+    return value
 
 
 # 兼容入口：默认每次进程启动随机选一个，作为本次注册全程的固定代理
