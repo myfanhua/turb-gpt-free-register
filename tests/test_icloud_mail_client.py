@@ -28,13 +28,206 @@ def response(status=200, *, email="one@icloud.com", to="one@icloud.com", subject
     return item
 
 
+def profile_response(
+    status=200,
+    *,
+    account="one@icloud.com",
+    to="one@icloud.com",
+    subject="OpenAI code 654321",
+    preview="Your code is 654321",
+):
+    item = Mock(status_code=status, headers={})
+    item.json.return_value = {
+        "mode": "reset",
+        "cursor": "103595",
+        "hasMore": False,
+        "changes": [
+            {
+                "operation": "upsert",
+                "account": account,
+                "mailbox": "INBOX",
+                "uid": 4295037043,
+                "detailDeferred": True,
+                "summary": {
+                    "account": account,
+                    "mailbox": "INBOX",
+                    "uid": 4295037043,
+                    "date": MESSAGE_DATE,
+                    "from": "ChatGPT <noreply@tm.openai.com>",
+                    "to": to,
+                    "subject": subject,
+                    "preview": preview,
+                },
+            }
+        ],
+    }
+    return item
+
+
 class ICloudMailClientTests(unittest.TestCase):
     def setUp(self):
+        self.profile_token = getattr(client._email_cfg, "ICLOUD_PROFILE_TOKEN", "")
+        self.profile_api_base = getattr(client._email_cfg, "ICLOUD_PROFILE_API_BASE", "")
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = ""
+        client._email_cfg.ICLOUD_PROFILE_API_BASE = "https://icloud.flysms.top/icloud/api"
+        client._reset_profile_sync_cache()
         client._CONTEXT_CACHE.clear()
         client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
             email="one@icloud.com",
             token="tok_one_1234",
         )
+
+    def tearDown(self):
+        client._reset_profile_sync_cache()
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = self.profile_token
+        client._email_cfg.ICLOUD_PROFILE_API_BASE = self.profile_api_base
+
+    @patch("core.icloud_mail_client.db.release_icloud_email")
+    @patch("core.icloud_mail_client.db.list_icloud_email_pool")
+    @patch("core.icloud_mail_client.db.claim_next_icloud_email")
+    def test_pick_account_restores_pickup_disabled_mailbox_for_profile_mode(
+        self,
+        claim,
+        list_pool,
+        release,
+    ):
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
+        claim.side_effect = [None, {
+            "id": 7,
+            "email": "one@icloud.com",
+            "token": "tok_one_1234",
+            "pickup_url": "",
+        }]
+        list_pool.return_value = [{
+            "email": "one@icloud.com",
+            "status": "disabled",
+            "note": "iCloud Pickup HTTP 401",
+        }]
+
+        account = client.pick_account()
+
+        self.assertEqual(account.email, "one@icloud.com")
+        release.assert_called_once_with(
+            "one@icloud.com",
+            status="available",
+            note="已切换到 iCloud Profile 同步",
+        )
+        self.assertEqual(claim.call_count, 2)
+
+    @patch("core.icloud_mail_client.requests.post")
+    @patch("core.icloud_mail_client.requests.get")
+    def test_fetch_uses_profile_sync_when_profile_token_is_configured(self, get, post):
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
+        post.return_value = profile_response()
+
+        code = client.fetch_latest_otp(
+            "one@icloud.com",
+            after_ts=AFTER_TS,
+            max_wait=1,
+            poll_interval=1,
+            settle_seconds=0,
+        )
+
+        self.assertEqual(code, "654321")
+        get.assert_not_called()
+        post.assert_called_once_with(
+            "https://icloud.flysms.top/icloud/api/mail/sync",
+            headers={
+                "Accept": "application/json",
+                "X-Profile-Token": "profile_secret_1234",
+                "User-Agent": "Mozilla/5.0 (compatible; turb-gpt-register/1.0)",
+            },
+            json={},
+            timeout=15,
+        )
+
+    @patch("core.icloud_mail_client.requests.post")
+    def test_profile_sync_selects_otp_when_newer_message_is_unrelated(self, post):
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
+        item = profile_response()
+        item.json.return_value["changes"].append({
+            "operation": "upsert",
+            "account": "one@icloud.com",
+            "mailbox": "INBOX",
+            "uid": 4295037044,
+            "summary": {
+                "account": "one@icloud.com",
+                "mailbox": "INBOX",
+                "uid": 4295037044,
+                "date": "2026-07-31T03:11:00.000Z",
+                "from": "newsletter@example.com",
+                "to": "one@icloud.com",
+                "subject": "Daily newsletter",
+                "preview": "No verification code here",
+            },
+        })
+        post.return_value = item
+
+        self.assertEqual(
+            client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0),
+            "654321",
+        )
+
+    @patch("core.icloud_mail_client.requests.post")
+    def test_profile_sync_skips_incomplete_newer_candidate(self, post):
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
+        item = profile_response()
+        item.json.return_value["changes"].append({
+            "operation": "upsert",
+            "account": "one@icloud.com",
+            "mailbox": "INBOX",
+            "uid": 4295037044,
+            "summary": {
+                "account": "one@icloud.com",
+                "mailbox": "INBOX",
+                "uid": 4295037044,
+                "date": "2026-07-31T03:11:00.000Z",
+                "from": "ChatGPT <noreply@tm.openai.com>",
+                "to": None,
+                "subject": "OpenAI code 777777",
+                "preview": "Your code is 777777",
+            },
+        })
+        post.return_value = item
+
+        self.assertEqual(
+            client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0),
+            "654321",
+        )
+
+    @patch("core.icloud_mail_client.requests.post")
+    def test_profile_sync_follows_cursor_until_target_message(self, post):
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
+        first = Mock(status_code=200, headers={})
+        first.json.return_value = {
+            "mode": "reset",
+            "cursor": "page-2",
+            "hasMore": True,
+            "changes": [],
+        }
+        second = profile_response()
+        post.side_effect = [first, second]
+
+        self.assertEqual(
+            client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0),
+            "654321",
+        )
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(post.call_args_list[0].kwargs["json"], {})
+        self.assertEqual(post.call_args_list[1].kwargs["json"], {"cursor": "page-2"})
+
+    @patch("core.icloud_mail_client.requests.post")
+    def test_profile_network_error_hides_profile_token(self, post):
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
+        post.side_effect = requests.ConnectionError("network down for profile_secret_1234")
+
+        with self.assertRaisesRegex(
+            client.ICloudMailError,
+            r"ConnectionError: network down for \*\*\*",
+        ) as raised:
+            client.fetch_latest_otp("one@icloud.com", AFTER_TS, 0, 1, 0)
+
+        self.assertNotIn("profile_secret_1234", str(raised.exception))
 
     @patch("core.icloud_mail_client.requests.get")
     def test_fetch_sends_mailbox_specific_headers(self, get):

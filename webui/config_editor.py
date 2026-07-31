@@ -304,6 +304,16 @@ EDITABLE_FIELDS = [
         "label": "iCloud Pickup 请求超时(秒)", "help": "单次读取最新邮件请求的超时时间",
     },
     {
+        "key": "ICLOUD_PROFILE_API_BASE", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
+        "label": "iCloud Profile API 地址", "help": "浏览器资料同步接口；默认使用 iCloud Mail Search 当前站点",
+        "storage": "env",
+    },
+    {
+        "key": "ICLOUD_PROFILE_TOKEN", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
+        "label": "iCloud 恢复 Token", "help": "填写后优先从浏览器资料同步已导入邮箱；保存在 .env",
+        "storage": "env", "secret": True,
+    },
+    {
         "key": "GPTMAIL_API_KEY", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
         "label": "GPTMail API Key", "help": "选择 gptmail 邮箱来源时必填；保存在 .env，不会写入 config 源码",
         "storage": "env", "secret": True,
@@ -794,7 +804,11 @@ def get_config() -> list[dict]:
             value = _normalize_config_value(value, field["type"])
         item = dict(field)
         item["storage"] = "env"
-        item["value"] = value
+        if field.get("secret"):
+            item["configured"] = bool(value)
+            item["value"] = ""
+        else:
+            item["value"] = value
         out.append(item)
     return out
 

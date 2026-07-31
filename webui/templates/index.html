@@ -2727,7 +2727,9 @@ function renderConfigField(f) {
     // 空字符串/占位符 '-' 都显示为空输入框，避免误保存成真实值
     const shown = isPlaceholderEmpty(fv) ? '' : fv;
     const inputType = f.secret ? 'password' : 'text';
-    const ph = f.secret ? '保存在 .env，可留空' : '可留空';
+    const ph = f.secret
+      ? (f.configured ? '已配置，留空保持不变' : '保存在 .env，可留空')
+      : '可留空';
     html += `<input type="${inputType}" data-key="${attrEsc(f.key)}" value="${attrEsc(shown)}" placeholder="${ph}" autocomplete="off" spellcheck="false">`;
   }
   return html + `</label>`;
@@ -3117,6 +3119,8 @@ $('#btnSaveConfig').addEventListener('click', async () => {
   $$('#tab-config [data-key]').forEach(el => {
     const f = CONFIG.find(x => x.key === el.dataset.key);
     if (!f) return;
+    const touched = Object.prototype.hasOwnProperty.call(CONFIG_PENDING_UPDATES, f.key);
+    if (f.secret && f.configured && !touched && !String(el.value || '').trim()) return;
     updates[f.key] = readConfigElementValue(el, f);
   });
   $('#btnSaveConfig').disabled = true;
@@ -3129,7 +3133,18 @@ $('#btnSaveConfig').addEventListener('click', async () => {
       $('#configBanner').className = 'banner warn';
       $('#configBanner').innerHTML = `已保存 ${r.updated.length} 项，但<b>热加载失败</b>（${esc(r.note||'')}），请重启 Web 服务后生效。`;
     }
-    for (const [k, v] of Object.entries(updates)) { const f = CONFIG.find(x => x.key === k); if (f) f.value = v; delete CONFIG_PENDING_UPDATES[k]; }
+    for (const [k, v] of Object.entries(updates)) {
+      const f = CONFIG.find(x => x.key === k);
+      if (f) {
+        if (f.secret) {
+          f.configured = !isPlaceholderEmpty(v);
+          f.value = '';
+        } else {
+          f.value = v;
+        }
+      }
+      delete CONFIG_PENDING_UPDATES[k];
+    }
     showToast(r.reloaded ? '配置已生效' : '配置已保存（需重启）');
   } catch(e) { showToast('保存失败: ' + e.message); }
   finally { $('#btnSaveConfig').disabled = false; }

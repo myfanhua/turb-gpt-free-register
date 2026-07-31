@@ -30,6 +30,7 @@ SECRET_ENV_KEYS: dict[str, str] = {
     "PLAN_CHECK_PROXY": "套餐查询专用代理（可能包含认证信息）",
     "QQ_IMAP_PASSWORD": "QQ 邮箱 IMAP 授权码（不是 QQ 密码）",
     "GPTMAIL_API_KEY": "GPTMail API Key",
+    "ICLOUD_PROFILE_TOKEN": "iCloud Mail Search 浏览器资料恢复 Token",
     "CLOUDFLARE_API_KEY": "Cloudflare Worker 临时邮箱 API Key / ADMIN_PASSWORD",
     "CLOUDFLARE_CUSTOM_AUTH": "Cloudflare Worker 全局密码 x-custom-auth",
     "MAIL_NEST_API_KEY": "MailNest API Key",
