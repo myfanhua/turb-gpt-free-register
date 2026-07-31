@@ -7,6 +7,7 @@ import random
 import string
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from config import roxybrowser as _cfg
 from config import twofa as _twofa_cfg
@@ -355,13 +356,41 @@ def _submit_nearest_form_for_active_input(driver) -> bool:
     const target = safe[0].el;
     target.scrollIntoView({block:'center'});
     window.__roxy_email_submit_debug = {at: Date.now(), targetAttrs: safe[0].attrs.slice(0,240), buttonCount: rawButtons.length, primary:safe[0].isPrimarySubmit};
-    target.dispatchEvent(new MouseEvent('pointerdown', {bubbles:true, cancelable:true, view:window}));
-    target.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, view:window}));
-    target.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, cancelable:true, view:window}));
-    target.click();
-    return {ok:true, reason:safe[0].isPrimarySubmit ? 'clicked_primary_submit' : 'clicked_safe_submit', targetAttrs:safe[0].attrs.slice(0,160), primary:safe[0].isPrimarySubmit};
+    return {
+      ok:true,
+      reason:safe[0].isPrimarySubmit ? 'selected_primary_submit' : 'selected_safe_submit',
+      targetAttrs:safe[0].attrs.slice(0,160),
+      primary:safe[0].isPrimarySubmit,
+      target,
+      input
+    };
     """) or {}
     if result.get("ok"):
+        target = result.pop("target", None)
+        input_el = result.pop("input", None)
+        click_error = None
+        try:
+            if target is None:
+                raise RuntimeError("selected submit element missing")
+            # Selenium 原生点击会产生浏览器信任事件；ChatGPT 新版登录页可能忽略
+            # execute_script 内的 element.click()，表现为输入框清空后又恢复。
+            target.click()
+            result["click_mode"] = "native"
+        except Exception as exc:
+            click_error = exc
+            try:
+                if input_el is None:
+                    raise RuntimeError("email input element missing")
+                from selenium.webdriver.common.keys import Keys
+
+                input_el.send_keys(Keys.ENTER)
+                result["click_mode"] = "enter"
+            except Exception:
+                logger.warning(
+                    "%s 邮箱提交按钮原生点击失败：%s: %s",
+                    _log_prefix(driver), type(click_error).__name__, str(click_error)[:180],
+                )
+                return False
         logger.info("%s 邮箱表单安全提交：%s", _log_prefix(driver), result)
         time.sleep(0.8)
         _assert_not_external_idp(driver, "提交邮箱后")
@@ -433,16 +462,15 @@ def _wait_email_submit_next_state(driver, email: str, timeout: int = 18) -> str:
                 now = time.time()
                 if cleared_seen_at is None:
                     cleared_seen_at = now
-                # URL 已带 email 查询参数时更像是提交后的中间态，给它更长观察窗口。
-                debounce = 6.0 if ("/auth/login" in url and "email=" in url) else 3.5
                 if now - cleared_last_log_at > 2.0:
                     logger.info(
-                        "%s 邮箱提交后检测到输入框短暂清空，继续等待跳转：elapsed=%.1fs debounce=%.1fs url=%s",
-                        _log_prefix(driver), now - cleared_seen_at, debounce, url[:180],
+                        "%s 邮箱提交后检测到输入框短暂清空，继续等待跳转：elapsed=%.1fs url=%s",
+                        _log_prefix(driver), now - cleared_seen_at, url[:180],
                     )
                     cleared_last_log_at = now
-                if now - cleared_seen_at >= debounce:
-                    return "email_cleared"
+                # 不在短暂清空后立即返回重填。新版 ChatGPT 会先更新
+                # /auth/login?email=...，再异步跳到 auth.openai.com；过早重填会
+                # 打断这次跳转，用户看到的现象就是邮箱被反复输入。
             else:
                 cleared_seen_at = None
             # 仍是当前邮箱页，继续短等。
@@ -451,9 +479,70 @@ def _wait_email_submit_next_state(driver, email: str, timeout: int = 18) -> str:
     return "email_page" if _is_email_login_page_still_present(driver) else "unknown"
 
 
+def _navigate_auth_via_nextauth(driver, email: str) -> bool:
+    """从 ChatGPT 同源接口取得 authorize URL，绕过登录页前端空白/卡住。"""
+    script = r"""
+    const email = String(arguments[0] || '');
+    const done = arguments[1];
+    fetch('/api/auth/csrf', {credentials:'include'})
+      .then(async r => ({status:r.status, data:await r.json()}))
+      .then(async csrf => {
+        const token = String(csrf.data?.csrfToken || '');
+        if (!token) throw new Error(`csrf_missing_http_${csrf.status}`);
+        const query = new URLSearchParams({
+          prompt:'login', screen_hint:'login_or_signup', login_hint:email
+        });
+        const body = new URLSearchParams({
+          callbackUrl:'https://chatgpt.com/', csrfToken:token, json:'true'
+        });
+        const response = await fetch('/api/auth/signin/openai?' + query.toString(), {
+          method:'POST', credentials:'include',
+          headers:{'content-type':'application/x-www-form-urlencoded'},
+          body:body.toString()
+        });
+        const data = await response.json();
+        done({ok:!!data?.url, status:response.status, url:String(data?.url || '')});
+      })
+      .catch(error => done({ok:false, error:String(error)}));
+    """
+    try:
+        try:
+            driver.set_script_timeout(30)
+        except Exception:
+            pass
+        result = driver.execute_async_script(script, email) or {}
+        authorize_url = str(result.get("url") or "").strip()
+        parsed = urlparse(authorize_url)
+        if not result.get("ok") or parsed.scheme != "https" or parsed.hostname != "auth.openai.com":
+            logger.warning(
+                "%s NextAuth 登录跳转获取失败：status=%s error=%s",
+                _log_prefix(driver), result.get("status"), str(result.get("error") or "invalid_authorize_url")[:180],
+            )
+            return False
+        logger.info("%s 登录页前端卡住，已通过 NextAuth 同源接口进入 auth.openai.com", _log_prefix(driver))
+        try:
+            driver.get(authorize_url)
+        except Exception as exc:
+            current = str(getattr(driver, "current_url", "") or "")
+            if "auth.openai.com" not in current:
+                logger.warning(
+                    "%s NextAuth authorize 导航失败：%s: %s",
+                    _log_prefix(driver), type(exc).__name__, str(exc)[:180],
+                )
+                return False
+        return True
+    except Exception as exc:
+        logger.warning(
+            "%s NextAuth 登录兜底失败：%s: %s",
+            _log_prefix(driver), type(exc).__name__, str(exc)[:180],
+        )
+        return False
+
+
 def _submit_email_and_wait_next(driver, email: str, attempts: int = 3) -> str:
     """填写并提交邮箱，必须确认进入 password/otp/logged_in 才返回。"""
     last_state = None
+    nextauth_fallback_used = False
     for attempt in range(1, attempts + 1):
         _type_email_address(driver, email, timeout=20)
         state = _email_input_value_state(driver)
@@ -467,12 +556,21 @@ def _submit_email_and_wait_next(driver, email: str, attempts: int = 3) -> str:
         human_delay("form")
         _submit_email_step(driver)
         logger.info("%s 已提交邮箱，等待进入密码页或验证码页（%s/%s）", _log_prefix(driver), attempt, attempts)
-        state_name = _wait_email_submit_next_state(driver, email, timeout=20)
+        state_name = _wait_email_submit_next_state(driver, email, timeout=12)
         if state_name == "login_password":
             raise RuntimeError(f"邮箱提交后进入登录密码页，按已注册/不可用邮箱处理并停用: url={getattr(driver, 'current_url', '') or 'https://auth.openai.com/log-in/password'}")
         if state_name in ("password", "otp", "logged_in"):
             logger.info("%s 邮箱提交后已进入下一步：%s", _log_prefix(driver), state_name)
             return state_name
+        if not nextauth_fallback_used and state_name in ("email_page", "unknown"):
+            nextauth_fallback_used = True
+            if _navigate_auth_via_nextauth(driver, email):
+                state_name = _wait_email_submit_next_state(driver, email, timeout=30)
+                if state_name == "login_password":
+                    raise RuntimeError(f"邮箱提交后进入登录密码页，按已注册/不可用邮箱处理并停用: url={getattr(driver, 'current_url', '') or 'https://auth.openai.com/log-in/password'}")
+                if state_name in ("password", "otp", "logged_in"):
+                    logger.info("%s NextAuth 兜底后已进入下一步：%s", _log_prefix(driver), state_name)
+                    return state_name
         logger.warning("%s 邮箱提交后仍未进入下一步：%s，准备重填重试 state=%s", _log_prefix(driver), state_name, _email_input_value_state(driver))
         time.sleep(1.0)
     raise RuntimeError(f"邮箱提交后未进入密码页/验证码页，最后状态={last_state}")
