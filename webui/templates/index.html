@@ -2226,9 +2226,23 @@ async function retrySelectedCodex() {
 
 $('#qAccounts').addEventListener('input', debounce(() => { ACCOUNT_SELECTED.clear(); PAGERS.accounts.page = 1; loadAccounts(); }, 250));
 $('#copyAllTokens').addEventListener('click', async () => {
-  const ids = ACCOUNTS.filter(r => r.has_access_token).map(r => Number(r.id));
-  if (!ids.length) { showToast('当前页没有 Token'); return; }
-  try { copyText((await fetchAccountSecrets(ids, 'access_token')).join('\n')); } catch(e) { showToast('复制失败: ' + e.message); }
+  const selectedIds = Array.from(ACCOUNT_SELECTED).map(Number);
+  const ids = selectedIds.length ? selectedIds : ACCOUNTS.filter(r => r.has_access_token).map(r => Number(r.id));
+  if (!ids.length) {
+    showToast(selectedIds.length ? '选中账号没有 Token' : '当前页没有 Token');
+    return;
+  }
+  try {
+    const tokens = await fetchAccountSecrets(ids, 'access_token');
+    if (!tokens.length) {
+      showToast(selectedIds.length ? '选中账号没有 Token' : '当前页没有 Token');
+      return;
+    }
+    await copyText(tokens.join('\n'));
+    showToast(`已复制 ${tokens.length} 个 Token`);
+  } catch(e) {
+    showToast('复制失败: ' + e.message);
+  }
 });
 $('#copyAllLines').addEventListener('click', async () => {
   const ids = ACCOUNTS.map(r => Number(r.id));
