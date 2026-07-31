@@ -23,6 +23,7 @@ class ICloudMailError(RuntimeError):
 class ICloudMailAccount:
     email: str
     token: str
+    pickup_url: str = ""
 
 
 _CONTEXT_CACHE: dict[str, ICloudMailAccount] = {}
@@ -36,7 +37,11 @@ def pick_account() -> ICloudMailAccount:
     row = db.claim_next_icloud_email()
     if row is None:
         raise ICloudMailError(f"iCloud 邮箱池没有可用邮箱: {db.icloud_email_pool_summary()}")
-    account = ICloudMailAccount(email=row["email"], token=row["token"])
+    account = ICloudMailAccount(
+        email=row["email"],
+        token=row["token"],
+        pickup_url=str(row.get("pickup_url") or row.get("pickupUrl") or "").strip(),
+    )
     _CONTEXT_CACHE[_cache_key(account.email)] = account
     logger.info("[iCloud] 已领取邮箱: %s（DB id=%s）", account.email, row.get("id"))
     return account
@@ -50,7 +55,11 @@ def get_account_context(email: str) -> ICloudMailAccount | None:
     row = db.get_icloud_email_by_email(key, include_token=True)
     if row is None:
         return None
-    account = ICloudMailAccount(email=row["email"], token=row["token"])
+    account = ICloudMailAccount(
+        email=row["email"],
+        token=row["token"],
+        pickup_url=str(row.get("pickup_url") or row.get("pickupUrl") or "").strip(),
+    )
     _CONTEXT_CACHE[key] = account
     return account
 
@@ -63,7 +72,10 @@ def release_account(email: str, status: str = "available", note: str | None = No
     _CONTEXT_CACHE.pop(_cache_key(email), None)
 
 
-def _api_url() -> str:
+def _api_url(pickup_url: str = "") -> str:
+    custom = str(pickup_url or "").strip()
+    if custom.startswith(("http://", "https://")):
+        return custom.rstrip("/")
     base = str(getattr(_email_cfg, "ICLOUD_PICKUP_API_BASE", "") or "").strip().rstrip("/")
     if not base:
         raise ICloudMailError("请填写 iCloud Pickup API 地址")
@@ -135,7 +147,7 @@ def _request_latest(account: ICloudMailAccount):
         "User-Agent": "Mozilla/5.0 (compatible; turb-gpt-register/1.0)",
     }
     timeout = max(1, int(getattr(_email_cfg, "ICLOUD_PICKUP_TIMEOUT", 15) or 15))
-    return requests.get(_api_url(), headers=headers, timeout=timeout)
+    return requests.get(_api_url(account.pickup_url), headers=headers, timeout=timeout)
 
 
 def fetch_latest_otp(

@@ -573,7 +573,7 @@
   <!-- ============ 邮箱池 ============ -->
   <div id="tab-outlook" class="hidden">
     <section class="card">
-      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址；iCloud API：邮箱----Token，也兼容制表符、竖线、逗号或空格分隔。</p></div>
+      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址；iCloud API：邮箱----Token----PickupURL（建议保留导出里的专属地址），也兼容制表符、竖线、逗号或空格分隔。</p></div>
       <div class="body">
         <div id="importResult"></div>
         <label class="fld">导入类型
@@ -590,7 +590,7 @@
         </label>
         <textarea id="importText" placeholder="Outlook: email----password----clientId----refreshToken
 通用API: email----取码地址
-iCloud API: email----Token"></textarea>
+iCloud API: email----Token----PickupURL"></textarea>
         <div style="margin-top:10px;"><button class="btn primary" id="btnImport">导入</button></div>
       </div>
     </section>

@@ -50,6 +50,17 @@ class ICloudPoolTests(unittest.TestCase):
         self.assertEqual(one["token_masked"], "tok_****9999")
         self.assertNotIn("tok_new_9999", str(rows))
 
+    def test_import_preserves_pickup_url_and_returns_it_for_claim(self):
+        pickup_url = "https://pickup.example/messages/latest?mail=one%40icloud.com"
+        db.import_icloud_emails([
+            {"email": "one@icloud.com", "token": "tok_one_1234", "pickup_url": pickup_url},
+        ])
+
+        claimed = db.claim_next_icloud_email()
+        self.assertEqual(claimed["pickup_url"], pickup_url)
+        row = db.get_icloud_email_by_email("one@icloud.com", include_token=True)
+        self.assertEqual(row["pickup_url"], pickup_url)
+
     def test_short_tokens_are_never_echoed_in_full(self):
         for token in ("a", "abcd", "tok_", "tok_a"):
             with self.subTest(token=token):

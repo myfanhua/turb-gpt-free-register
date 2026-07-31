@@ -58,7 +58,11 @@ class ICloudWebUiTests(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 200)
         import_icloud.assert_called_once_with([
-            {"email": "one@icloud.com", "token": "tok_one"},
+            {
+                "email": "one@icloud.com",
+                "token": "tok_one",
+                "pickup_url": "https://pickup.example/messages?mail=one%40icloud.com",
+            },
         ])
 
     @patch("webui.app.db.list_icloud_email_pool")

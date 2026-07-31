@@ -104,7 +104,11 @@ def _generic_api_email_line(row: dict) -> str:
 
 
 def _icloud_email_line(row: dict) -> str:
-    return "----".join([row.get("email") or "", row.get("token") or ""])
+    values = [row.get("email") or "", row.get("token") or ""]
+    pickup_url = str(row.get("pickup_url") or "").strip()
+    if pickup_url:
+        values.append(pickup_url)
+    return "----".join(values)
 
 
 def _mask_icloud_token(token: str) -> str:
@@ -538,7 +542,8 @@ def _decorate_icloud_email(row: dict, *, include_token: bool = False) -> dict:
     token = str(out.pop("token", "") or "")
     out["token_masked"] = _mask_icloud_token(token)
     # copy_line is intentionally email-only; the raw mailbox token should not
-    # be exposed through list endpoints or normal task output.
+    # be exposed through list endpoints or normal task output. The per-mailbox
+    # Pickup URL is safe to preserve because it is an endpoint, not a secret.
     out["copy_line"] = out.get("email") or ""
     if include_token:
         out["token"] = token
@@ -1693,21 +1698,24 @@ def import_icloud_emails(records: list[dict]) -> dict[str, int]:
     with _LOCK:
         rows = _load_icloud_emails()
         result = {"inserted": 0, "updated": 0, "skipped": 0, "invalid": 0}
-        collapsed: dict[str, str] = {}
+        collapsed: dict[str, dict[str, str]] = {}
         for raw in records or []:
             if not isinstance(raw, dict):
                 result["invalid"] += 1
                 continue
             email = str(raw.get("email") or "").strip().lower()
             token = str(raw.get("token") or "").strip()
+            pickup_url = str(raw.get("pickup_url") or raw.get("pickupUrl") or "").strip()
             if not email or "@" not in email or not token:
                 result["invalid"] += 1
                 continue
             if email in collapsed:
                 result["skipped"] += 1
-            collapsed[email] = token
+            collapsed[email] = {"token": token, "pickup_url": pickup_url}
 
-        for email, token in collapsed.items():
+        for email, material in collapsed.items():
+            token = material["token"]
+            pickup_url = material["pickup_url"]
             row = _find_by_email(rows, email)
             now = _now()
             if row is None:
@@ -1715,6 +1723,7 @@ def import_icloud_emails(records: list[dict]) -> dict[str, int]:
                     "id": _next_id(rows),
                     "email": email,
                     "token": token,
+                    "pickup_url": pickup_url,
                     "status": "available",
                     "used_at": None,
                     "note": None,
@@ -1723,10 +1732,15 @@ def import_icloud_emails(records: list[dict]) -> dict[str, int]:
                 })
                 result["inserted"] += 1
                 continue
-            if row.get("token") == token:
+            changed = row.get("token") != token
+            if pickup_url and row.get("pickup_url") != pickup_url:
+                changed = True
+            if not changed:
                 result["skipped"] += 1
                 continue
             row["token"] = token
+            if pickup_url:
+                row["pickup_url"] = pickup_url
             row["updated_at"] = now
             if row.get("status") in {"available", "failed", "disabled"}:
                 row["status"] = "available"

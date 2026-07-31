@@ -61,6 +61,18 @@ class ICloudMailClientTests(unittest.TestCase):
         )
 
     @patch("core.icloud_mail_client.requests.get")
+    def test_fetch_uses_mailbox_pickup_url_when_present(self, get):
+        get.return_value = response(text="Your code is 654321")
+        client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
+            email="one@icloud.com",
+            token="tok_one_1234",
+            pickup_url="https://pickup.example/messages/latest?mail=one%40icloud.com",
+        )
+
+        self.assertEqual(client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0), "654321")
+        self.assertEqual(get.call_args.args[0], "https://pickup.example/messages/latest?mail=one%40icloud.com")
+
+    @patch("core.icloud_mail_client.requests.get")
     def test_each_mailbox_uses_its_own_headers(self, get):
         client._CONTEXT_CACHE["two@icloud.com"] = client.ICloudMailAccount(
             email="two@icloud.com",

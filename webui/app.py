@@ -1248,7 +1248,7 @@ def create_app(auth_code: str | None = None) -> Flask:
                         # iCloud Pickup 导出常见格式：email---token---pickup_url。
                         # 必须先识别三横线，否则会误把 URL 的 ``https:`` 当分隔符，
                         # 导致整段 email---token---https 被保存成邮箱地址。
-                        parts = line.split(separator) if separator == "---" else line.split(separator, 1)
+                        parts = line.split(separator, 2)
                         break
                 if parts is None:
                     parts = line.split(None, 1)
@@ -1256,10 +1256,13 @@ def create_app(auth_code: str | None = None) -> Flask:
                 parts = line.split("----") if "----" in line else line.split("====")
             parts = [p.strip() for p in parts]
             if source == "icloud_api":
-                records.append({
+                record = {
                     "email": parts[0] if parts else "",
                     "token": parts[1] if len(parts) > 1 else "",
-                })
+                }
+                if len(parts) > 2 and parts[2]:
+                    record["pickup_url"] = parts[2]
+                records.append(record)
                 continue
             if source == "generic_api":
                 if len(parts) < 2:
