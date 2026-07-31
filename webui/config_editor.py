@@ -293,7 +293,15 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "EMAIL_SOURCE", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
-        "label": "邮箱来源", "help": "可填单个或多个，逗号分隔并按顺序兜底：outlook,generic_api,cloudflare_domain,cloudflare,gptmail,mailnest,cloudmail",
+        "label": "邮箱来源", "help": "可填单个或多个，逗号分隔并按顺序兜底：outlook,generic_api,cloudflare_domain,cloudflare,gptmail,mailnest,cloudmail,icloud_api",
+    },
+    {
+        "key": "ICLOUD_PICKUP_API_BASE", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
+        "label": "iCloud Pickup API 地址", "help": "icloud_api 邮箱来源使用；默认指向 iCloud Mail Search 的只读取件 API",
+    },
+    {
+        "key": "ICLOUD_PICKUP_TIMEOUT", "file": "email.py", "type": "int", "group": "邮箱 / OTP",
+        "label": "iCloud Pickup 请求超时(秒)", "help": "单次读取最新邮件请求的超时时间",
     },
     {
         "key": "GPTMAIL_API_KEY", "file": "email.py", "type": "str", "group": "邮箱 / OTP",
