@@ -49,6 +49,18 @@ class ICloudWebUiTests(unittest.TestCase):
             {"email": "space@icloud.com", "token": "tok_space"},
         ])
 
+    @patch("webui.app.db.import_icloud_emails")
+    def test_import_accepts_pickup_export_with_triple_dash_and_url(self, import_icloud):
+        import_icloud.return_value = {"inserted": 1, "updated": 0, "skipped": 0, "invalid": 0}
+        response = self.client.post("/api/outlook/import", json={
+            "source": "icloud_api",
+            "text": "one@icloud.com---tok_one---https://pickup.example/messages?mail=one%40icloud.com",
+        })
+        self.assertEqual(response.status_code, 200)
+        import_icloud.assert_called_once_with([
+            {"email": "one@icloud.com", "token": "tok_one"},
+        ])
+
     @patch("webui.app.db.list_icloud_email_pool")
     def test_list_icloud_pool_returns_only_masked_token(self, list_pool):
         list_pool.return_value = [{"id": 1, "email": "one@icloud.com", "status": "available", "token_masked": "tok_****1234"}]
