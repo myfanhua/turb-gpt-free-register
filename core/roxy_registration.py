@@ -668,6 +668,9 @@ def _click_resend_email_otp(driver, timeout: int = 20) -> dict:
     end = time.time() + timeout
     last = None
     while time.time() < end:
+        if _is_profile_page(driver):
+            logger.info("%s[OTP] 页面已进入资料页，停止重新发送验证码", _log_prefix(driver))
+            return {"ok": False, "advanced": True}
         try:
             btn = driver.execute_script(r"""
             const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
@@ -696,15 +699,22 @@ def _click_resend_email_otp(driver, timeout: int = 20) -> dict:
                 return {"ok": True, "text": text}
         except Exception as exc:
             last = exc
+            if _is_profile_page(driver):
+                logger.info("%s[OTP] 重发按钮已失效且页面已进入资料页，按验证码已接受处理", _log_prefix(driver))
+                return {"ok": False, "advanced": True}
         time.sleep(0.5)
+    if _is_profile_page(driver):
+        return {"ok": False, "advanced": True}
     raise RuntimeError(f"找不到可点击的重新发送验证码按钮: last={last}, state={_email_otp_page_state(driver)}")
 
 
-def _wait_after_email_otp_submit(driver, timeout: int = 10) -> str:
+def _wait_after_email_otp_submit(driver, timeout: int = 30) -> str:
     """提交 OTP 后等待页面离开验证码页；仍在验证码页且有错误/输入框则认为验证码无效。"""
     end = time.time() + timeout
     last = {}
     while time.time() < end:
+        if _is_profile_page(driver):
+            return 'accepted'
         time.sleep(0.5)
         if not _is_email_verification_page(driver):
             return 'accepted'
@@ -712,6 +722,8 @@ def _wait_after_email_otp_submit(driver, timeout: int = 10) -> str:
         invalid = any(str(i.get('ariaInvalid') or '').lower() == 'true' for i in (last.get('inputs') or []))
         if invalid or (last.get('errors') or []):
             return 'invalid'
+    if _is_profile_page(driver):
+        return 'accepted'
     if _is_email_verification_page(driver):
         logger.warning("%s[OTP] 提交后仍停留验证码页，按验证码无效/过期处理 snapshot=%s", _log_prefix(driver), _email_otp_page_state(driver))
         return 'invalid'
@@ -816,6 +828,17 @@ def _is_profile_like(snapshot: dict) -> bool:
     ))
     # about-you/profile URL 本身已经足够强；部分新版页面会用无 name 的 React Aria 控件。
     return has_profile_url and (has_name_field or has_age_or_birth_field or bool(inputs) or bool(widgets))
+
+
+def _is_profile_page(driver) -> bool:
+    """快速识别 OTP 后的 about-you/profile 跳转，兼容页面 DOM 尚未稳定的窗口期。"""
+    try:
+        url = str(driver.current_url or '').lower()
+    except Exception:
+        url = ''
+    if any(x in url for x in ('about-you', 'signup/profile', 'create-account/profile')):
+        return True
+    return _is_profile_like(_page_snapshot(driver))
 
 
 def _set_element_value(driver, el, value: str) -> None:
@@ -1566,7 +1589,9 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
                         str(exc)[:180],
                     )
                     otp_after_ts = time.time()
-                    _click_resend_email_otp(driver, timeout=25)
+                    resend = _click_resend_email_otp(driver, timeout=25)
+                    if resend.get("advanced"):
+                        break
                     human_delay("api")
                     current_otp = None
                     continue
@@ -1582,14 +1607,16 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
             except Exception as exc:
                 logger.info("[Roxy注册][OTP] 未找到显式提交按钮，继续等待页面状态：%s", str(exc)[:120])
 
-            outcome = _wait_after_email_otp_submit(driver, timeout=10)
+            outcome = _wait_after_email_otp_submit(driver, timeout=30)
             if outcome == 'accepted':
                 break
             if otp_attempt >= max_otp_attempts:
                 raise RuntimeError("邮箱验证码连续错误/过期，已达到最大重试次数")
             logger.warning("[Roxy注册][OTP] 验证码错误/过期，准备重新发送并重新获取验证码（%s/%s）", otp_attempt + 1, max_otp_attempts)
             otp_after_ts = time.time()
-            _click_resend_email_otp(driver, timeout=25)
+            resend = _click_resend_email_otp(driver, timeout=25)
+            if resend.get("advanced"):
+                break
             human_delay("api")
             current_otp = None
 
