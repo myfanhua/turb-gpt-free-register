@@ -10,15 +10,25 @@ EMAIL_SOURCE 支持单个或多个来源：
     "gptmail"
     "mailnest"
     "cloudmail"
-    "outlook,generic_api,mailnest,cloudmail"          # 按顺序兜底
-    ["outlook", "generic_api", "mailnest", "cloudmail"]  # 也兼容列表写法
+    "icloud_api"        # iCloud Pickup 邮箱 + 专属 Token
+    "icloud_api,outlook,generic_api,mailnest,cloudmail"          # 按顺序兜底
+    ["icloud_api", "outlook", "generic_api", "mailnest", "cloudmail"]  # 也兼容列表写法
 """
 import logging
 from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
-_VALID_SOURCES = ("outlook", "generic_api", "cloudflare_domain", "cloudflare", "gptmail", "mailnest", "cloudmail")
+_VALID_SOURCES = (
+    "outlook",
+    "generic_api",
+    "cloudflare_domain",
+    "cloudflare",
+    "gptmail",
+    "mailnest",
+    "cloudmail",
+    "icloud_api",
+)
 
 
 def parse_email_sources(value=None) -> list[str]:
@@ -65,6 +75,9 @@ def _pick_from_source(source: str) -> str:
     if source == "cloudmail":
         from core.cloudmail_client import pick_account
         return pick_account().email
+    if source == "icloud_api":
+        from core.icloud_mail_client import pick_account
+        return pick_account().email
     from core.outlook_client import pick_account
     return pick_account().email
 
@@ -101,6 +114,8 @@ def resolve_email_source(email: str) -> str:
         return "cloudmail"
 
     from core import db
+    if db.get_icloud_email_by_email(email):
+        return "icloud_api"
     if db.get_generic_api_email_by_email(email):
         return "generic_api"
     if db.get_outlook_by_email(email):
@@ -175,6 +190,9 @@ def wait_for_otp(
     if source == "cloudmail":
         from core.cloudmail_client import fetch_latest_otp
         return fetch_latest_otp(email, after_ts=after_ts, **extra_kwargs)
+    if source == "icloud_api":
+        from core.icloud_mail_client import fetch_latest_otp
+        return fetch_latest_otp(email, after_ts=after_ts, **extra_kwargs)
     from core.outlook_client import fetch_latest_otp
     return fetch_latest_otp(email, after_ts=after_ts, **extra_kwargs)
 
@@ -200,6 +218,9 @@ def release_email(email: str, status: str = "available", note: str | None = None
     elif source == "cloudmail":
         from core.cloudmail_client import release_account
         release_account(email, status=status, note=note)
+    elif source == "icloud_api":
+        from core.icloud_mail_client import release_account
+        release_account(email, status=status, note=note)
     else:
         from core.outlook_client import release_account
         release_account(email, status=status, note=note)
@@ -216,6 +237,8 @@ def release_email_if_unconsumed(email: str, note: str | None = None) -> bool:
 
     if source == "outlook":
         changed = db.release_unconsumed_outlook(email, note=note)
+    elif source == "icloud_api":
+        changed = db.release_unconsumed_icloud_email(email, note=note)
     elif source == "generic_api":
         changed = db.release_unconsumed_generic_api_email(email, note=note)
     elif source == "cloudflare_domain":
