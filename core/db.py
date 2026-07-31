@@ -30,6 +30,9 @@ _OUTLOOK_JSON = _PROJECT_ROOT / "用于注册的邮箱.json"
 _OUTLOOK_TXT = _PROJECT_ROOT / "用于注册的邮箱.txt"
 _GENERIC_API_EMAIL_JSON = _PROJECT_ROOT / "用于注册的API邮箱.json"
 _GENERIC_API_EMAIL_TXT = _PROJECT_ROOT / "用于注册的API邮箱.txt"
+# iCloud Pickup 邮箱池（每条记录绑定一个邮箱专属 Token）
+_ICLOUD_EMAIL_JSON = _PROJECT_ROOT / "用于注册的iCloud邮箱.json"
+_ICLOUD_EMAIL_TXT = _PROJECT_ROOT / "用于注册的iCloud邮箱.txt"
 _ACCOUNTS_JSON = _PROJECT_ROOT / "注册成功的邮箱.json"
 _ACCOUNTS_TXT = _PROJECT_ROOT / "注册成功的邮箱.txt"
 _TOKENS_TXT = _PROJECT_ROOT / "注册成功的token.txt"
@@ -97,6 +100,19 @@ def _generic_api_email_line(row: dict) -> str:
     ])
 
 
+def _icloud_email_line(row: dict) -> str:
+    return "----".join([row.get("email") or "", row.get("token") or ""])
+
+
+def _mask_icloud_token(token: str) -> str:
+    value = str(token or "")
+    if not value:
+        return ""
+    suffix = value[-4:] if len(value) >= 4 else value
+    prefix = "tok_" if value.startswith("tok_") else ""
+    return f"{prefix}****{suffix}"
+
+
 def _account_line(row: dict) -> str:
     base = row.get("original_email_line") or row.get("email") or ""
     token = row.get("access_token") or ""
@@ -119,6 +135,15 @@ def _sync_generic_api_email_txt(rows: list[dict]) -> None:
     available_rows = [r for r in rows if r.get("status") == "available"]
     lines = [_generic_api_email_line(r) for r in sorted(available_rows, key=lambda x: int(x.get("id") or 0))]
     _GENERIC_API_EMAIL_TXT.write_text(("\n".join(lines) + ("\n" if lines else "")), encoding="utf-8")
+
+
+def _sync_icloud_email_txt(rows: list[dict]) -> None:
+    available = [row for row in rows if row.get("status") == "available"]
+    lines = [_icloud_email_line(row) for row in sorted(available, key=lambda item: int(item.get("id") or 0))]
+    _ICLOUD_EMAIL_TXT.write_text(
+        "\n".join(lines) + ("\n" if lines else ""),
+        encoding="utf-8",
+    )
 
 
 def _sync_accounts_txt(rows: list[dict]) -> None:
@@ -483,6 +508,28 @@ def _save_generic_api_emails(rows: list[dict]) -> None:
     _sync_generic_api_email_txt(rows)
 
 
+def _load_icloud_emails() -> list[dict]:
+    rows = _read_json(_ICLOUD_EMAIL_JSON, [])
+    return rows if isinstance(rows, list) else []
+
+
+def _save_icloud_emails(rows: list[dict]) -> None:
+    _write_json(_ICLOUD_EMAIL_JSON, rows)
+    _sync_icloud_email_txt(rows)
+
+
+def _decorate_icloud_email(row: dict, *, include_token: bool = False) -> dict:
+    out = dict(row)
+    token = str(out.pop("token", "") or "")
+    out["token_masked"] = _mask_icloud_token(token)
+    # copy_line is intentionally email-only; the raw mailbox token should not
+    # be exposed through list endpoints or normal task output.
+    out["copy_line"] = out.get("email") or ""
+    if include_token:
+        out["token"] = token
+    return out
+
+
 def _load_accounts() -> list[dict]:
     rows = _read_json(_ACCOUNTS_JSON, None)
     if not isinstance(rows, list):
@@ -627,8 +674,10 @@ def insert_account(
     with _LOCK:
         accounts = _load_accounts()
         outlook_rows = _load_outlook()
+        icloud_rows = _load_icloud_emails()
         existing = _find_by_email(accounts, email)
         outlook_row = _find_by_email(outlook_rows, email)
+        icloud_row = _find_by_email(icloud_rows, email)
         extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
 
         if existing is None:
@@ -672,9 +721,22 @@ def insert_account(
             if totp_secret:
                 outlook_row["totp_secret"] = totp_secret
 
+        # iCloud mailbox credentials remain confined to the dedicated pool.
+        # A successful account insert only records the consumed mailbox state;
+        # it never copies the mailbox Token into the registered account row.
+        if icloud_row:
+            icloud_row["status"] = "registered"
+            icloud_row["used_at"] = icloud_row.get("used_at") or _now()
+            icloud_row["registered_account_id"] = row_id
+            icloud_row["completed_at"] = _now()
+            icloud_row["updated_at"] = _now()
+            row["original_email_line"] = email
+
         row["copy_line"] = _account_line(row)
         _save_accounts(accounts)
         _save_outlook(outlook_rows)
+        if icloud_row is not None or icloud_rows:
+            _save_icloud_emails(icloud_rows)
         return row_id
 
 
@@ -1597,6 +1659,155 @@ def get_outlook_by_email(email: str) -> dict | None:
     with _LOCK:
         row = _find_by_email(_load_outlook(), email)
         return _decorate_outlook(row) if row else None
+
+
+# ============================================================
+# icloud_api email pool
+# ============================================================
+
+def import_icloud_emails(records: list[dict]) -> dict[str, int]:
+    """批量导入 iCloud 邮箱及其专属 Pickup Token。
+
+    邮箱按小写地址去重；同一批中后出现的 Token 覆盖前一条。已有
+    ``used``/``registered`` 记录不会被重置，避免覆盖正在运行的任务。
+    """
+    with _LOCK:
+        rows = _load_icloud_emails()
+        result = {"inserted": 0, "updated": 0, "skipped": 0, "invalid": 0}
+        collapsed: dict[str, str] = {}
+        for raw in records or []:
+            if not isinstance(raw, dict):
+                result["invalid"] += 1
+                continue
+            email = str(raw.get("email") or "").strip().lower()
+            token = str(raw.get("token") or "").strip()
+            if not email or "@" not in email or not token:
+                result["invalid"] += 1
+                continue
+            if email in collapsed:
+                result["skipped"] += 1
+            collapsed[email] = token
+
+        for email, token in collapsed.items():
+            row = _find_by_email(rows, email)
+            now = _now()
+            if row is None:
+                rows.append({
+                    "id": _next_id(rows),
+                    "email": email,
+                    "token": token,
+                    "status": "available",
+                    "used_at": None,
+                    "note": None,
+                    "created_at": now,
+                    "updated_at": now,
+                })
+                result["inserted"] += 1
+                continue
+            if row.get("token") == token:
+                result["skipped"] += 1
+                continue
+            row["token"] = token
+            row["updated_at"] = now
+            if row.get("status") in {"available", "failed", "disabled"}:
+                row["status"] = "available"
+                row["used_at"] = None
+                row["note"] = None
+            result["updated"] += 1
+
+        _save_icloud_emails(rows)
+        return result
+
+
+def claim_next_icloud_email() -> dict | None:
+    """原子领取一条可用 iCloud 邮箱，并返回包含 Token 的任务上下文。"""
+    with _LOCK:
+        rows = sorted(_load_icloud_emails(), key=lambda item: int(item.get("id") or 0))
+        row = next((item for item in rows if item.get("status") == "available"), None)
+        if row is None:
+            return None
+        now = _now()
+        row["status"] = "used"
+        row["used_at"] = now
+        row["updated_at"] = now
+        row["note"] = None
+        _save_icloud_emails(rows)
+        return _decorate_icloud_email(row, include_token=True)
+
+
+def release_icloud_email(email: str, status: str = "available", note: str | None = None) -> None:
+    """更新 iCloud 邮箱池状态。"""
+    with _LOCK:
+        rows = _load_icloud_emails()
+        row = _find_by_email(rows, email)
+        if row is None:
+            return
+        status = str(status or "available")
+        row["status"] = status
+        row["updated_at"] = _now()
+        if status == "available":
+            row["used_at"] = None
+        else:
+            row["used_at"] = row.get("used_at") or _now()
+        if note is not None:
+            row["note"] = note
+        _save_icloud_emails(rows)
+
+
+def release_unconsumed_icloud_email(email: str, note: str | None = None) -> bool:
+    """回收未生成本地账号、仍处于 ``used`` 的 iCloud 邮箱。"""
+    with _LOCK:
+        if _find_by_email(_load_accounts(), email) is not None:
+            return False
+        rows = _load_icloud_emails()
+        row = _find_by_email(rows, email)
+        if row is None or row.get("status") != "used":
+            return False
+        row["status"] = "available"
+        row["used_at"] = None
+        row["updated_at"] = _now()
+        if note is not None:
+            row["note"] = note
+        _save_icloud_emails(rows)
+        return True
+
+
+def delete_icloud_email(email: str) -> bool:
+    """删除 iCloud 邮箱；运行中的 ``used`` 记录不可删除。"""
+    with _LOCK:
+        rows = _load_icloud_emails()
+        row = _find_by_email(rows, email)
+        if row is None or row.get("status") == "used":
+            return False
+        rows.remove(row)
+        _save_icloud_emails(rows)
+        return True
+
+
+def list_icloud_email_pool(status: str | None = None, limit: int = 500) -> list[dict]:
+    """列出脱敏后的 iCloud 邮箱池记录。"""
+    with _LOCK:
+        rows = _load_icloud_emails()
+        if status:
+            rows = [row for row in rows if row.get("status") == status]
+        rows = sorted(rows, key=lambda item: int(item.get("id") or 0), reverse=True)
+        return [_decorate_icloud_email(row) for row in rows[:limit]]
+
+
+def icloud_email_pool_summary() -> dict:
+    with _LOCK:
+        result = {"available": 0, "used": 0, "registered": 0, "failed": 0, "disabled": 0}
+        for row in _load_icloud_emails():
+            status = row.get("status") or "available"
+            result[status] = result.get(status, 0) + 1
+        result["total"] = sum(result.values())
+        return result
+
+
+def get_icloud_email_by_email(email: str, *, include_token: bool = False) -> dict | None:
+    with _LOCK:
+        row = _find_by_email(_load_icloud_emails(), email)
+        return _decorate_icloud_email(row, include_token=include_token) if row else None
 
 
 # ============================================================

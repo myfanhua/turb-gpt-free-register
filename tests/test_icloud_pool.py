@@ -1,0 +1,90 @@
+# -*- coding: utf-8 -*-
+import tempfile
+import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from unittest.mock import patch
+
+from core import db
+
+
+class ICloudPoolTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        root = Path(self.tempdir.name)
+        self.patchers = [
+            patch.object(db, "_ICLOUD_EMAIL_JSON", root / "icloud.json"),
+            patch.object(db, "_ICLOUD_EMAIL_TXT", root / "icloud.txt"),
+            patch.object(db, "_ACCOUNTS_JSON", root / "accounts.json"),
+            patch.object(db, "_ACCOUNTS_TXT", root / "accounts.txt"),
+            patch.object(db, "_TOKENS_TXT", root / "tokens.txt"),
+            patch.object(db, "_OUTLOOK_JSON", root / "outlook.json"),
+            patch.object(db, "_OUTLOOK_TXT", root / "outlook.txt"),
+            patch.object(db, "_LEGACY_ACCOUNTS_JSON", root / "legacy-accounts.json"),
+            patch.object(db, "_LEGACY_OUTLOOK_JSON", root / "legacy-outlook.json"),
+            patch.object(db, "_VIEWER_HTML", root / "viewer.html"),
+        ]
+        for patcher in self.patchers:
+            patcher.start()
+
+    def tearDown(self):
+        for patcher in reversed(self.patchers):
+            patcher.stop()
+        self.tempdir.cleanup()
+
+    def test_import_inserts_updates_and_masks_tokens(self):
+        first = db.import_icloud_emails([
+            {"email": "One@icloud.com", "token": "tok_first_1234"},
+            {"email": "two@icloud.com", "token": "tok_second_5678"},
+        ])
+        second = db.import_icloud_emails([
+            {"email": "one@icloud.com", "token": "tok_new_9999"},
+            {"email": "broken@icloud.com", "token": ""},
+        ])
+
+        self.assertEqual(first, {"inserted": 2, "updated": 0, "skipped": 0, "invalid": 0})
+        self.assertEqual(second, {"inserted": 0, "updated": 1, "skipped": 0, "invalid": 1})
+        rows = db.list_icloud_email_pool()
+        one = next(row for row in rows if row["email"] == "one@icloud.com")
+        self.assertNotIn("token", one)
+        self.assertEqual(one["token_masked"], "tok_****9999")
+        self.assertNotIn("tok_new_9999", str(rows))
+
+    def test_concurrent_claims_return_unique_mailboxes(self):
+        db.import_icloud_emails([
+            {"email": f"mail{i}@icloud.com", "token": f"tok_{i:04d}"}
+            for i in range(8)
+        ])
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            claimed = list(executor.map(lambda _: db.claim_next_icloud_email(), range(8)))
+
+        emails = [row["email"] for row in claimed]
+        self.assertEqual(len(set(emails)), 8)
+        self.assertEqual(db.icloud_email_pool_summary()["used"], 8)
+
+    def test_unconsumed_used_mailbox_returns_to_available(self):
+        db.import_icloud_emails([{"email": "one@icloud.com", "token": "tok_one_1234"}])
+        db.claim_next_icloud_email()
+        self.assertTrue(db.release_unconsumed_icloud_email("one@icloud.com", note="retry"))
+        row = db.get_icloud_email_by_email("one@icloud.com", include_token=True)
+        self.assertEqual(row["status"], "available")
+        self.assertIsNone(row["used_at"])
+
+    def test_used_mailbox_cannot_be_deleted(self):
+        db.import_icloud_emails([{"email": "one@icloud.com", "token": "tok_one_1234"}])
+        db.claim_next_icloud_email()
+        self.assertFalse(db.delete_icloud_email("one@icloud.com"))
+
+    def test_insert_account_marks_icloud_mailbox_registered_without_copying_token(self):
+        db.import_icloud_emails([{"email": "one@icloud.com", "token": "tok_one_1234"}])
+        db.claim_next_icloud_email()
+        db.insert_account(email="one@icloud.com", access_token="access-123", email_source="icloud_api")
+        pool_row = db.get_icloud_email_by_email("one@icloud.com", include_token=True)
+        self.assertEqual(pool_row["status"], "registered")
+        account = db.get_account_by_email("one@icloud.com")
+        self.assertNotIn("tok_one_1234", str(account))
+
+
+if __name__ == "__main__":
+    unittest.main()
