@@ -19,6 +19,9 @@ class ICloudTemplateTests(unittest.TestCase):
     def test_icloud_import_never_uses_registered_account_mode(self):
         self.assertIn("source === 'icloud_api' ? false", self.html)
 
+    def test_all_invalid_import_keeps_text_for_correction(self):
+        self.assertIn("(r.inserted || 0) + (r.updated || 0) > 0", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

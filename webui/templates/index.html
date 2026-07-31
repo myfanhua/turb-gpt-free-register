@@ -573,7 +573,7 @@
   <!-- ============ 邮箱池 ============ -->
   <div id="tab-outlook" class="hidden">
     <section class="card">
-      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址；iCloud API：邮箱----Token（---- 或 ==== 分隔均可）。</p></div>
+      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址；iCloud API：邮箱----Token，也兼容制表符、竖线、逗号或空格分隔。</p></div>
       <div class="body">
         <div id="importResult"></div>
         <label class="fld">导入类型
@@ -2440,8 +2440,12 @@ $('#btnImport').addEventListener('click', async () => {
     const summary = source === 'icloud_api'
       ? `解析 ${r.parsed} 行，新增 ${r.inserted || 0}，更新 ${r.updated || 0}，重复 ${r.skipped || 0}，无效 ${r.invalid || 0}`
       : `按 ${mode} 导入：解析 ${r.parsed} 行，新增 ${r.inserted}，跳过 ${r.skipped}${r.as_registered ? '；可到“账号”页选择后批量补跑 Codex' : ''}`;
-    $('#importResult').innerHTML = `<div class="banner info">${esc(summary)}</div>`;
-    $('#importText').value = '';
+    const importedCount = (r.inserted || 0) + (r.updated || 0) > 0;
+    const hint = source === 'icloud_api' && !importedCount
+      ? '；请保留原文检查格式，推荐每行：邮箱----Token'
+      : '';
+    $('#importResult').innerHTML = `<div class="banner ${importedCount ? 'info' : 'warn'}">${esc(summary + hint)}</div>`;
+    if (importedCount) $('#importText').value = '';
     $('#poolSource').value = source;
     loadOutlook(); loadAccounts(); loadSummary();
   } catch(e) { $('#importResult').innerHTML = `<div class="banner warn">${esc(e.message)}</div>`; }

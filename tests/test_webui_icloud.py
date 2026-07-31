@@ -29,6 +29,26 @@ class ICloudWebUiTests(unittest.TestCase):
             {"email": "broken", "token": ""},
         ])
 
+    @patch("webui.app.db.import_icloud_emails")
+    def test_import_accepts_common_copied_separators(self, import_icloud):
+        import_icloud.return_value = {"inserted": 4, "updated": 0, "skipped": 0, "invalid": 0}
+        response = self.client.post("/api/outlook/import", json={
+            "source": "icloud_api",
+            "text": (
+                "tab@icloud.com\ttok_tab\n"
+                "pipe@icloud.com|tok_pipe\n"
+                "comma@icloud.com,tok_comma\n"
+                "space@icloud.com tok_space"
+            ),
+        })
+        self.assertEqual(response.status_code, 200)
+        import_icloud.assert_called_once_with([
+            {"email": "tab@icloud.com", "token": "tok_tab"},
+            {"email": "pipe@icloud.com", "token": "tok_pipe"},
+            {"email": "comma@icloud.com", "token": "tok_comma"},
+            {"email": "space@icloud.com", "token": "tok_space"},
+        ])
+
     @patch("webui.app.db.list_icloud_email_pool")
     def test_list_icloud_pool_returns_only_masked_token(self, list_pool):
         list_pool.return_value = [{"id": 1, "email": "one@icloud.com", "status": "available", "token_masked": "tok_****1234"}]

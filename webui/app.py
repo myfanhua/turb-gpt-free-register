@@ -1241,7 +1241,16 @@ def create_app(auth_code: str | None = None) -> Flask:
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            parts = line.split("----") if "----" in line else line.split("====")
+            if source == "icloud_api":
+                parts = None
+                for separator in ("----", "====", "\t", "|", "，", ",", "：", ":"):
+                    if separator in line:
+                        parts = line.split(separator, 1)
+                        break
+                if parts is None:
+                    parts = line.split(None, 1)
+            else:
+                parts = line.split("----") if "----" in line else line.split("====")
             parts = [p.strip() for p in parts]
             if source == "icloud_api":
                 records.append({
