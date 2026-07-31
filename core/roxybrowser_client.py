@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import threading
 import time
 from dataclasses import dataclass
 from urllib.parse import unquote, urljoin, urlparse
@@ -13,6 +15,10 @@ import requests
 from config import roxybrowser as _cfg
 
 logger = logging.getLogger(__name__)
+
+_PROXY_CHAIN_LOCK = threading.Lock()
+_PROXY_CHAIN_SERVER = None
+_PROXY_CHAIN_TEMPLATE = ""
 
 
 @dataclass
@@ -40,6 +46,57 @@ def _mask_proxy(proxy_url: str) -> str:
         port = f":{parsed.port}" if parsed.port else ""
         return f"{parsed.scheme}://***:***@{host}{port}"
     return str(proxy_url or "").strip()
+
+
+def prepare_proxy_for_roxy(proxy_url: str) -> str:
+    """Return the Roxy-facing proxy URL, optionally backed by the Clash bridge."""
+    value = str(proxy_url or "").strip()
+    from config import proxy as _proxy_cfg
+
+    if not bool(getattr(_proxy_cfg, "PROXY_CHAIN_ENABLED", False)):
+        return value
+    parsed = urlparse(value)
+    username = unquote(parsed.username or "")
+    match = re.search(r"(?:^|-)sid-([A-Za-z0-9]+)(?:-|$)", username)
+    if not match:
+        raise RuntimeError("PROXY_CHAIN_SID_MISSING: 上游代理用户名未包含 sid")
+    sid = match.group(1)
+    template = str(getattr(_proxy_cfg, "PROXY_CHAIN_UPSTREAM", "") or value).strip()
+    if "{sid}" not in template:
+        template = re.sub(r"sid-[A-Za-z0-9]+", "sid-{sid}", template, count=1)
+    if "{sid}" not in template:
+        raise RuntimeError("PROXY_CHAIN_UPSTREAM_MISSING_SID: 上游代理模板必须包含 {sid}")
+
+    global _PROXY_CHAIN_SERVER, _PROXY_CHAIN_TEMPLATE
+    with _PROXY_CHAIN_LOCK:
+        if _PROXY_CHAIN_SERVER is None:
+            from tools.proxy_chain_bridge import start_bridge
+
+            _PROXY_CHAIN_SERVER = start_bridge(
+                str(getattr(_proxy_cfg, "PROXY_CHAIN_LISTEN_HOST", "127.0.0.1")),
+                int(getattr(_proxy_cfg, "PROXY_CHAIN_LISTEN_PORT", 25001) or 25001),
+                preproxy=str(getattr(_proxy_cfg, "PROXY_CHAIN_PREPROXY", "http://127.0.0.1:7897")),
+                upstream_template=template,
+                connect_timeout=float(getattr(_proxy_cfg, "PROXY_CHAIN_CONNECT_TIMEOUT", 20.0) or 20.0),
+                idle_timeout=float(getattr(_proxy_cfg, "PROXY_CHAIN_IDLE_TIMEOUT", 180.0) or 180.0),
+            )
+            _PROXY_CHAIN_TEMPLATE = template
+            logger.info(
+                "[ProxyChain] 已启动本地桥接：%s:%s -> Clash %s",
+                getattr(_proxy_cfg, "PROXY_CHAIN_LISTEN_HOST", "127.0.0.1"),
+                getattr(_proxy_cfg, "PROXY_CHAIN_LISTEN_PORT", 25001),
+                _mask_proxy(str(getattr(_proxy_cfg, "PROXY_CHAIN_PREPROXY", ""))),
+            )
+        elif _PROXY_CHAIN_TEMPLATE != template:
+            raise RuntimeError("PROXY_CHAIN_TEMPLATE_MISMATCH: 同一进程不能混用不同上游代理模板")
+
+    from tools.proxy_chain_bridge import local_proxy_url
+
+    return local_proxy_url(
+        str(getattr(_proxy_cfg, "PROXY_CHAIN_LISTEN_HOST", "127.0.0.1")),
+        int(getattr(_proxy_cfg, "PROXY_CHAIN_LISTEN_PORT", 25001) or 25001),
+        sid,
+    )
 
 
 def _proxy_url_to_roxy_info(proxy_url: str) -> dict:
@@ -373,6 +430,7 @@ class RoxyBrowserClient:
 
             proxy_url = _proxy_cfg.pick_proxy()
             if proxy_url:
+                proxy_url = prepare_proxy_for_roxy(proxy_url)
                 proxy_info = _proxy_url_to_roxy_info(proxy_url)
                 body["proxyInfo"] = proxy_info
                 logger.info(

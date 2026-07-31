@@ -47,12 +47,23 @@ PLAN_CHECK_QUEUE_LIMIT = 500
 PLAN_CHECK_MIN_INTERVAL = 0.4
 PLAN_CHECK_JITTER = 0.3
 
+# RoxyBrowser 链式代理：Roxy -> 本地桥接 -> Clash -> 上游账密代理。
+# 默认关闭以保留现有代理池行为；启用后由 core.roxybrowser_client 在创建环境时接入。
+PROXY_CHAIN_ENABLED = False
+PROXY_CHAIN_LISTEN_HOST = "127.0.0.1"
+PROXY_CHAIN_LISTEN_PORT = 25001
+PROXY_CHAIN_PREPROXY = "http://127.0.0.1:7897"
+PROXY_CHAIN_UPSTREAM = ""
+PROXY_CHAIN_CONNECT_TIMEOUT = 20.0
+PROXY_CHAIN_IDLE_TIMEOUT = 180.0
+
 
 def pick_proxy() -> str:
     """从代理池抽取代理；URL 中的 ``{sid}`` 每次替换为新会话 ID。"""
-    if not PROXY_POOL:
+    pool = [PROXY_CHAIN_UPSTREAM] if PROXY_CHAIN_ENABLED and PROXY_CHAIN_UPSTREAM else PROXY_POOL
+    if not pool:
         return ""
-    value = str(random.choice(PROXY_POOL) or "").strip()
+    value = str(random.choice(pool) or "").strip()
     if "{sid}" in value:
         value = value.replace("{sid}", secrets.token_hex(6))
     return value
@@ -74,5 +85,12 @@ apply_env_overrides(globals(), {
     'PLAN_CHECK_QUEUE_LIMIT': 'int',
     'PLAN_CHECK_MIN_INTERVAL': 'float',
     'PLAN_CHECK_JITTER': 'float',
+    'PROXY_CHAIN_ENABLED': 'bool',
+    'PROXY_CHAIN_LISTEN_HOST': 'str',
+    'PROXY_CHAIN_LISTEN_PORT': 'int',
+    'PROXY_CHAIN_PREPROXY': 'str',
+    'PROXY_CHAIN_UPSTREAM': 'str',
+    'PROXY_CHAIN_CONNECT_TIMEOUT': 'float',
+    'PROXY_CHAIN_IDLE_TIMEOUT': 'float',
 })
 PROXY = pick_proxy()

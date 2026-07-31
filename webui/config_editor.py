@@ -437,6 +437,25 @@ EDITABLE_FIELDS = [
         "label": "代理池(每行一个)", "help": "每行一个代理 URL，留空行会被忽略；为空则不使用代理",
     },
     {
+        "key": "PROXY_CHAIN_ENABLED", "file": "proxy.py", "type": "bool", "group": "代理池",
+        "label": "启用 Clash 链式代理", "help": "RoxyBrowser 通过本地桥接和 Clash 连接上游账密代理",
+    },
+    {
+        "key": "PROXY_CHAIN_PREPROXY", "file": "proxy.py", "type": "str", "group": "代理池",
+        "label": "Clash 前置代理", "help": "例如 http://127.0.0.1:7897",
+        "storage": "env",
+    },
+    {
+        "key": "PROXY_CHAIN_UPSTREAM", "file": "proxy.py", "type": "str", "group": "代理池",
+        "label": "链式上游代理模板", "help": "使用 {sid} 占位符；凭据仅保存到 .env",
+        "storage": "env", "secret": True,
+    },
+    {
+        "key": "PROXY_CHAIN_LISTEN_PORT", "file": "proxy.py", "type": "int", "group": "代理池",
+        "label": "链式桥接端口", "help": "本地桥接 HTTP 代理监听端口，默认 25001",
+        "storage": "env",
+    },
+    {
         "key": "PLAN_CHECK_PROXY_MODE", "file": "proxy.py", "type": "str", "group": "代理池",
         "label": "套餐/Agent网络模式", "help": "用于查套餐和生成 Agent Token；auto=本地代理可用则走代理、未监听则直连；proxy=强制代理；direct=强制直连",
     },
