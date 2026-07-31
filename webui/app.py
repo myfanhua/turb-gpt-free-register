@@ -30,7 +30,7 @@ def _pool_source_arg(default: str = "outlook") -> str:
     if not src and request.method == "POST":
         data = request.get_json(silent=True) or {}
         src = (data.get("source") or data.get("type") or "").strip()
-    return src if src in ("all", "outlook", "generic_api", "cloudflare_domain") else default
+    return src if src in ("all", "outlook", "generic_api", "icloud_api", "cloudflare_domain") else default
 
 
 def _with_pool_source(rows: list[dict], source: str) -> list[dict]:
@@ -239,6 +239,7 @@ def create_app(auth_code: str | None = None) -> Flask:
                 continue
             one = (
                 db.generic_api_email_pool_summary() if src == "generic_api"
+                else db.icloud_email_pool_summary() if src == "icloud_api"
                 else db.domain_email_pool_summary() if src == "cloudflare_domain"
                 else db.outlook_pool_summary()
             )
@@ -1202,10 +1203,13 @@ def create_app(auth_code: str | None = None) -> Flask:
             rows = []
             rows += _with_pool_source(db.list_outlook_pool(status=status, limit=fetch_limit), "outlook")
             rows += _with_pool_source(db.list_generic_api_email_pool(status=status, limit=fetch_limit), "generic_api")
+            rows += _with_pool_source(db.list_icloud_email_pool(status=status, limit=fetch_limit), "icloud_api")
             rows += _with_pool_source(db.list_domain_email_pool(status=status, limit=fetch_limit), "cloudflare_domain")
             rows = sorted(rows, key=lambda x: str(x.get("created_at") or x.get("imported_at") or x.get("used_at") or ""), reverse=True)
         elif source == "generic_api":
             rows = _with_pool_source(db.list_generic_api_email_pool(status=status, limit=fetch_limit), "generic_api")
+        elif source == "icloud_api":
+            rows = _with_pool_source(db.list_icloud_email_pool(status=status, limit=fetch_limit), "icloud_api")
         elif source == "cloudflare_domain":
             rows = _with_pool_source(db.list_domain_email_pool(status=status, limit=fetch_limit), "cloudflare_domain")
         else:
@@ -1228,8 +1232,8 @@ def create_app(auth_code: str | None = None) -> Flask:
         """
         data = request.get_json(silent=True) or {}
         source = (data.get("source") or data.get("type") or "").strip()
-        if source not in ("outlook", "generic_api"):
-            return jsonify({"ok": False, "error": "导入时请选择具体类型：Outlook 或 通用 API"}), 400
+        if source not in ("outlook", "generic_api", "icloud_api"):
+            return jsonify({"ok": False, "error": "导入时请选择 Outlook、通用 API 或 iCloud API"}), 400
         text = data.get("text") or ""
         as_registered = bool(data.get("as_registered", False))
         records = []
@@ -1239,6 +1243,12 @@ def create_app(auth_code: str | None = None) -> Flask:
                 continue
             parts = line.split("----") if "----" in line else line.split("====")
             parts = [p.strip() for p in parts]
+            if source == "icloud_api":
+                records.append({
+                    "email": parts[0] if parts else "",
+                    "token": parts[1] if len(parts) > 1 else "",
+                })
+                continue
             if source == "generic_api":
                 if len(parts) < 2:
                     continue
@@ -1262,6 +1272,9 @@ def create_app(auth_code: str | None = None) -> Flask:
         if not records:
             need = "2 段：邮箱----取码地址" if source == "generic_api" else "4 段：email----password----clientId----refreshToken"
             return jsonify({"ok": False, "error": f"未解析到有效邮箱行（需 {need}，---- 或 ==== 分隔）"}), 400
+        if source == "icloud_api":
+            result = db.import_icloud_emails(records)
+            return jsonify({"ok": True, "parsed": len(records), "as_registered": False, **result})
         if as_registered:
             inserted, skipped = db.import_registered_email_accounts(records, source=source)
         elif source == "generic_api":
@@ -1289,6 +1302,8 @@ def create_app(auth_code: str | None = None) -> Flask:
             source = "outlook"
         if source == "generic_api":
             db.release_generic_api_email(email, status=status, note=data.get("note"))
+        elif source == "icloud_api":
+            db.release_icloud_email(email, status=status, note=data.get("note"))
         elif source == "cloudflare_domain":
             db.release_domain_email(email, status=status, note=data.get("note"))
         else:
@@ -1332,6 +1347,8 @@ def create_app(auth_code: str | None = None) -> Flask:
             try:
                 if item_source == "generic_api":
                     db.release_generic_api_email(email, status=status, note=note)
+                elif item_source == "icloud_api":
+                    db.release_icloud_email(email, status=status, note=note)
                 elif item_source == "cloudflare_domain":
                     db.release_domain_email(email, status=status, note=note)
                 else:
@@ -1357,7 +1374,9 @@ def create_app(auth_code: str | None = None) -> Flask:
         if source == "all":
             source = "outlook"
         deleted = (
-            db.delete_generic_api_email(email)
+            db.delete_icloud_email(email)
+            if source == "icloud_api"
+            else db.delete_generic_api_email(email)
             if source == "generic_api"
             else db.delete_domain_email(email)
             if source == "cloudflare_domain"
@@ -1396,7 +1415,9 @@ def create_app(auth_code: str | None = None) -> Flask:
                 continue
             seen.add(key)
             deleted_ok = (
-                db.delete_generic_api_email(email)
+                db.delete_icloud_email(email)
+                if item_source == "icloud_api"
+                else db.delete_generic_api_email(email)
                 if item_source == "generic_api"
                 else db.delete_domain_email(email)
                 if item_source == "cloudflare_domain"
@@ -2055,12 +2076,19 @@ def create_app(auth_code: str | None = None) -> Flask:
             warning = ""
             if pool.get("available", 0) < count:
                 warning = f"通用 API 邮箱池仅 {pool.get('available', 0)} 个可用，少于任务数 {count}，不足的会失败"
+        elif sources == ["icloud_api"]:
+            pool = db.icloud_email_pool_summary()
+            warning = ""
+            if pool.get("available", 0) < count:
+                warning = f"iCloud 邮箱池仅 {pool.get('available', 0)} 个可用，少于任务数 {count}，不足的会失败"
         elif len(sources) > 1:
             available = 0
             if "outlook" in sources:
                 available += db.outlook_pool_summary().get("available", 0)
             if "generic_api" in sources:
                 available += db.generic_api_email_pool_summary().get("available", 0)
+            if "icloud_api" in sources:
+                available += db.icloud_email_pool_summary().get("available", 0)
             warning = ""
             if available < count:
                 warning = f"多个邮箱池合计仅 {available} 个可用，少于任务数 {count}，不足的会失败"
