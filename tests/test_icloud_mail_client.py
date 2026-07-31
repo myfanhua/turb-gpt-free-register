@@ -116,8 +116,28 @@ class ICloudMailClientTests(unittest.TestCase):
 
     @patch("core.icloud_mail_client.requests.post")
     @patch("core.icloud_mail_client.requests.get")
-    def test_fetch_uses_profile_sync_when_profile_token_is_configured(self, get, post):
+    def test_fetch_prefers_direct_pickup_when_profile_token_is_configured(self, get, post):
         client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
+        get.return_value = response(text="Your code is 654321")
+
+        code = client.fetch_latest_otp(
+            "one@icloud.com",
+            after_ts=AFTER_TS,
+            max_wait=1,
+            poll_interval=1,
+            settle_seconds=0,
+        )
+
+        self.assertEqual(code, "654321")
+        get.assert_called_once()
+        post.assert_not_called()
+
+    @patch("core.icloud_mail_client.db.release_icloud_email")
+    @patch("core.icloud_mail_client.requests.post")
+    @patch("core.icloud_mail_client.requests.get")
+    def test_fetch_falls_back_to_profile_when_direct_credentials_fail(self, get, post, release):
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
+        get.return_value = Mock(status_code=401, headers={})
         post.return_value = profile_response()
 
         code = client.fetch_latest_otp(
@@ -129,7 +149,7 @@ class ICloudMailClientTests(unittest.TestCase):
         )
 
         self.assertEqual(code, "654321")
-        get.assert_not_called()
+        release.assert_not_called()
         post.assert_called_once_with(
             "https://icloud.flysms.top/icloud/api/mail/sync",
             headers={
@@ -141,8 +161,9 @@ class ICloudMailClientTests(unittest.TestCase):
             timeout=15,
         )
 
+    @patch("core.icloud_mail_client.requests.get", return_value=Mock(status_code=401, headers={}))
     @patch("core.icloud_mail_client.requests.post")
-    def test_profile_sync_selects_otp_when_newer_message_is_unrelated(self, post):
+    def test_profile_sync_selects_otp_when_newer_message_is_unrelated(self, post, get):
         client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
         item = profile_response()
         item.json.return_value["changes"].append({
@@ -168,8 +189,9 @@ class ICloudMailClientTests(unittest.TestCase):
             "654321",
         )
 
+    @patch("core.icloud_mail_client.requests.get", return_value=Mock(status_code=401, headers={}))
     @patch("core.icloud_mail_client.requests.post")
-    def test_profile_sync_skips_incomplete_newer_candidate(self, post):
+    def test_profile_sync_skips_incomplete_newer_candidate(self, post, get):
         client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
         item = profile_response()
         item.json.return_value["changes"].append({
@@ -195,8 +217,9 @@ class ICloudMailClientTests(unittest.TestCase):
             "654321",
         )
 
+    @patch("core.icloud_mail_client.requests.get", return_value=Mock(status_code=401, headers={}))
     @patch("core.icloud_mail_client.requests.post")
-    def test_profile_sync_follows_cursor_until_target_message(self, post):
+    def test_profile_sync_follows_cursor_until_target_message(self, post, get):
         client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
         first = Mock(status_code=200, headers={})
         first.json.return_value = {
@@ -216,8 +239,9 @@ class ICloudMailClientTests(unittest.TestCase):
         self.assertEqual(post.call_args_list[0].kwargs["json"], {})
         self.assertEqual(post.call_args_list[1].kwargs["json"], {"cursor": "page-2"})
 
+    @patch("core.icloud_mail_client.requests.get", return_value=Mock(status_code=401, headers={}))
     @patch("core.icloud_mail_client.requests.post")
-    def test_profile_network_error_hides_profile_token(self, post):
+    def test_profile_network_error_hides_profile_token(self, post, get):
         client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
         post.side_effect = requests.ConnectionError("network down for profile_secret_1234")
 
@@ -264,6 +288,21 @@ class ICloudMailClientTests(unittest.TestCase):
 
         self.assertEqual(client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0), "654321")
         self.assertEqual(get.call_args.args[0], "https://pickup.example/messages/latest?mail=one%40icloud.com")
+
+    @patch("core.icloud_mail_client.requests.get")
+    def test_fetch_ignores_browser_render_pickup_url(self, get):
+        get.return_value = response(text="Your code is 654321")
+        client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
+            email="one@icloud.com",
+            token="tok_one_1234",
+            pickup_url="https://flysms.xyz/icloud/pickup#mailbox=one%40icloud.com&token=secret",
+        )
+
+        self.assertEqual(client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0), "654321")
+        self.assertEqual(
+            get.call_args.args[0],
+            "https://icloud.flysms.top/icloud/api/pickup/messages/latest",
+        )
 
     @patch("core.icloud_mail_client.requests.get")
     def test_each_mailbox_uses_its_own_headers(self, get):

@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import urlparse
 
 import requests
 
@@ -110,7 +111,14 @@ def release_account(email: str, status: str = "available", note: str | None = No
 def _api_url(pickup_url: str = "") -> str:
     custom = str(pickup_url or "").strip()
     if custom.startswith(("http://", "https://")):
-        return custom.rstrip("/")
+        parsed = urlparse(custom)
+        path = parsed.path.rstrip("/").lower()
+        # 浏览器取件页把凭据放在 URL Fragment 中并返回 HTML，不是 JSON API。
+        # 只接受明确的 API endpoint/base，其他链接回退到全局 Pickup API。
+        if not parsed.fragment and path.endswith("/messages/latest"):
+            return custom.rstrip("/")
+        if not parsed.fragment and "/api/" in path and path.endswith("/pickup"):
+            return f"{custom.rstrip('/')}/messages/latest"
     base = str(getattr(_email_cfg, "ICLOUD_PICKUP_API_BASE", "") or "").strip().rstrip("/")
     if not base:
         raise ICloudMailError("请填写 iCloud Pickup API 地址")
@@ -325,68 +333,99 @@ def fetch_latest_otp(
     # single-shot callers and deterministic status/identity error reporting.
     while first_attempt or time.monotonic() <= deadline:
         first_attempt = False
-        try:
-            using_profile = bool(_profile_token())
-            response = _request_profile_sync() if using_profile else _request_latest(account)
-            source_name = "iCloud Profile" if using_profile else "iCloud Pickup"
-            status = int(response.status_code)
-            if status in {401, 403}:
-                if not using_profile:
-                    db.release_icloud_email(
-                        account.email,
-                        status="disabled",
-                        note=f"iCloud Pickup HTTP {status}",
-                    )
-                raise ICloudMailError(f"{source_name} HTTP {status}: 凭据无效、到期或停用")
-            if status == 404:
-                last_error = "当前邮箱没有可读取的邮件"
-            elif status == 429:
-                retry_after = response.headers.get("Retry-After", "")
-                try:
-                    interval = max(interval, min(30, int(float(retry_after))))
-                except (TypeError, ValueError):
-                    interval = max(interval, 3)
-                last_error = "请求过于频繁"
-            elif status == 503:
-                last_error = "邮箱正在初始化或暂时无法刷新"
-            elif status >= 500:
-                last_error = f"服务暂时异常: HTTP {status}"
-            elif status != 200:
-                raise ICloudMailError(f"{source_name} HTTP {status}: email={account.email}")
-            else:
-                result = (
-                    _profile_response_message(response.json(), account.email, after_ts)
-                    if using_profile
-                    else _response_message(response.json(), account.email, after_ts)
-                )
-                if result is None:
-                    last_error = "浏览器资料中尚未出现该邮箱的新邮件"
+        has_profile = bool(_profile_token())
+        sources = [
+            (False, "iCloud Pickup", lambda: _request_latest(account)),
+        ]
+        if has_profile:
+            sources.append((True, "iCloud Profile", _request_profile_sync))
+
+        for using_profile, source_name, request_source in sources:
+            try:
+                response = request_source()
+                status = int(response.status_code)
+                if status in {401, 403}:
+                    if not using_profile and has_profile:
+                        last_error = f"{source_name} HTTP {status}: 尝试 Profile 同步"
+                        continue
+                    if not using_profile:
+                        db.release_icloud_email(
+                            account.email,
+                            status="disabled",
+                            note=f"iCloud Pickup HTTP {status}",
+                        )
+                    raise ICloudMailError(f"{source_name} HTTP {status}: 凭据无效、到期或停用")
+                if status == 404:
+                    last_error = "当前邮箱没有可读取的邮件"
+                    if not using_profile and has_profile:
+                        continue
+                elif status == 429:
+                    retry_after = response.headers.get("Retry-After", "")
+                    try:
+                        interval = max(interval, min(30, int(float(retry_after))))
+                    except (TypeError, ValueError):
+                        interval = max(interval, 3)
+                    last_error = "请求过于频繁"
+                    if not using_profile and has_profile:
+                        continue
+                elif status == 503:
+                    last_error = "邮箱正在初始化或暂时无法刷新"
+                    if not using_profile and has_profile:
+                        continue
+                elif status >= 500:
+                    last_error = f"服务暂时异常: HTTP {status}"
+                    if not using_profile and has_profile:
+                        continue
+                elif status != 200:
+                    if not using_profile and has_profile:
+                        last_error = f"{source_name} HTTP {status}: 尝试 Profile 同步"
+                        continue
+                    raise ICloudMailError(f"{source_name} HTTP {status}: email={account.email}")
                 else:
-                    message, stamp, freshness = result
-                    if freshness == "old":
-                        last_error = "最新邮件早于本次验证码请求"
-                    elif not looks_like_openai_email(message):
-                        last_error = "最新邮件不是 OpenAI 验证邮件"
+                    result = (
+                        _profile_response_message(response.json(), account.email, after_ts)
+                        if using_profile
+                        else _response_message(response.json(), account.email, after_ts)
+                    )
+                    if result is None:
+                        last_error = "浏览器资料中尚未出现该邮箱的新邮件"
+                        if not using_profile and has_profile:
+                            continue
                     else:
-                        code = extract_otp(message)
-                        if code:
-                            key = f"{message.get('uid') or ''}:{stamp}:{code}"
-                            if key != best_key:
-                                best_key = key
-                                best_otp = code
-                                settle_until = time.monotonic() + settle
-        except ICloudMailError:
-            raise
-        except Exception as exc:
-            # Keep diagnostic context useful while ensuring the mailbox Token
-            # is never included in error strings or logs.
-            detail = str(exc)
-            if account.token:
-                detail = detail.replace(account.token, "***")
-            profile_token = _profile_token()
-            if profile_token:
-                detail = detail.replace(profile_token, "***")
-            last_error = f"{type(exc).__name__}: {detail}"
+                        message, stamp, freshness = result
+                        if freshness == "old":
+                            last_error = "最新邮件早于本次验证码请求"
+                            if not using_profile and has_profile:
+                                continue
+                        elif not looks_like_openai_email(message):
+                            last_error = "最新邮件不是 OpenAI 验证邮件"
+                            if not using_profile and has_profile:
+                                continue
+                        else:
+                            code = extract_otp(message)
+                            if code:
+                                key = f"{message.get('uid') or ''}:{stamp}:{code}"
+                                if key != best_key:
+                                    best_key = key
+                                    best_otp = code
+                                    settle_until = time.monotonic() + settle
+                                break
+            except ICloudMailError:
+                if not using_profile and has_profile:
+                    continue
+                raise
+            except Exception as exc:
+                # Keep diagnostic context useful while ensuring mailbox and
+                # profile credentials are never included in errors or logs.
+                detail = str(exc)
+                if account.token:
+                    detail = detail.replace(account.token, "***")
+                profile_token = _profile_token()
+                if profile_token:
+                    detail = detail.replace(profile_token, "***")
+                last_error = f"{type(exc).__name__}: {detail}"
+                if not using_profile and has_profile:
+                    continue
 
         now = time.monotonic()
         if best_otp and settle_until is not None and now >= settle_until:
