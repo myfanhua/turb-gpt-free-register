@@ -11,6 +11,7 @@
 """
 import hashlib
 import json
+import logging
 import sqlite3
 import threading
 import uuid
@@ -18,6 +19,8 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _DATA_DIR = _PROJECT_ROOT
@@ -108,8 +111,14 @@ def _mask_icloud_token(token: str) -> str:
     value = str(token or "")
     if not value:
         return ""
-    suffix = value[-4:] if len(value) >= 4 else value
+    if len(value) <= 4:
+        return "****"
     prefix = "tok_" if value.startswith("tok_") else ""
+    # Very short tok_* credentials do not expose their suffix because the
+    # visible prefix plus suffix would reveal the complete Token.
+    if prefix and len(value) <= 8:
+        return "tok_****"
+    suffix = value[-4:]
     return f"{prefix}****{suffix}"
 
 
@@ -515,7 +524,13 @@ def _load_icloud_emails() -> list[dict]:
 
 def _save_icloud_emails(rows: list[dict]) -> None:
     _write_json(_ICLOUD_EMAIL_JSON, rows)
-    _sync_icloud_email_txt(rows)
+    try:
+        _sync_icloud_email_txt(rows)
+    except OSError as exc:
+        # JSON is the source of truth. The TXT file is a derived convenience
+        # export, so a temporary file lock must not make a successful atomic
+        # claim lose the mailbox context returned to its caller.
+        logger.warning("iCloud 邮箱池 TXT 派生文件同步失败: %s", exc)
 
 
 def _decorate_icloud_email(row: dict, *, include_token: bool = False) -> dict:
@@ -724,7 +739,11 @@ def insert_account(
         # iCloud mailbox credentials remain confined to the dedicated pool.
         # A successful account insert only records the consumed mailbox state;
         # it never copies the mailbox Token into the registered account row.
-        if icloud_row:
+        if (
+            icloud_row
+            and str(email_source or "").strip().lower() == "icloud_api"
+            and icloud_row.get("status") == "used"
+        ):
             icloud_row["status"] = "registered"
             icloud_row["used_at"] = icloud_row.get("used_at") or _now()
             icloud_row["registered_account_id"] = row_id

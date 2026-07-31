@@ -50,6 +50,13 @@ class ICloudPoolTests(unittest.TestCase):
         self.assertEqual(one["token_masked"], "tok_****9999")
         self.assertNotIn("tok_new_9999", str(rows))
 
+    def test_short_tokens_are_never_echoed_in_full(self):
+        for token in ("a", "abcd", "tok_", "tok_a"):
+            with self.subTest(token=token):
+                masked = db._mask_icloud_token(token)
+                self.assertNotEqual(masked, token)
+                self.assertNotIn(token, masked)
+
     def test_concurrent_claims_return_unique_mailboxes(self):
         db.import_icloud_emails([
             {"email": f"mail{i}@icloud.com", "token": f"tok_{i:04d}"}
@@ -84,6 +91,34 @@ class ICloudPoolTests(unittest.TestCase):
         self.assertEqual(pool_row["status"], "registered")
         account = db.get_account_by_email("one@icloud.com")
         self.assertNotIn("tok_one_1234", str(account))
+
+    def test_insert_account_does_not_consume_unclaimed_icloud_mailbox(self):
+        db.import_icloud_emails([{"email": "one@icloud.com", "token": "tok_one_1234"}])
+
+        db.insert_account(email="one@icloud.com", access_token="access-123", email_source="icloud_api")
+
+        pool_row = db.get_icloud_email_by_email("one@icloud.com", include_token=True)
+        self.assertEqual(pool_row["status"], "available")
+
+    def test_insert_account_from_another_source_does_not_consume_claimed_icloud_mailbox(self):
+        db.import_icloud_emails([{"email": "one@icloud.com", "token": "tok_one_1234"}])
+        db.claim_next_icloud_email()
+
+        db.insert_account(email="one@icloud.com", access_token="access-123", email_source="outlook")
+
+        pool_row = db.get_icloud_email_by_email("one@icloud.com", include_token=True)
+        self.assertEqual(pool_row["status"], "used")
+
+    def test_claim_returns_context_when_derived_txt_sync_fails(self):
+        db.import_icloud_emails([{"email": "one@icloud.com", "token": "tok_one_1234"}])
+
+        with patch.object(db, "_sync_icloud_email_txt", side_effect=OSError("txt locked")):
+            claimed = db.claim_next_icloud_email()
+
+        self.assertEqual(claimed["email"], "one@icloud.com")
+        self.assertEqual(claimed["token"], "tok_one_1234")
+        row = db.get_icloud_email_by_email("one@icloud.com", include_token=True)
+        self.assertEqual(row["status"], "used")
 
 
 if __name__ == "__main__":
