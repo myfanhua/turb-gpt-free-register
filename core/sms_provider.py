@@ -8,7 +8,7 @@
     3. complete() / cancel()  setStatus 标记完成(6) / 取消(8)
 
 当前支持：
-    - GrizzlySMS：GET 文本接口，文档 https://api.grizzlysms.com
+    - GrizzlySMS / SMS-Activate / HeroSMS：兼容 GET 文本接口
     - L：本地 JSON 管理接口，文档 L_API.md
     - H：本地 JSON 管理接口，文档 H_API.md
 
@@ -63,12 +63,27 @@ def _http() -> CurlSession:
 
 
 def _provider() -> str:
-    return str(getattr(_cfg, "SMS_PROVIDER", "grizzly") or "grizzly").strip().lower()
+    raw = str(getattr(_cfg, "SMS_PROVIDER", "grizzly") or "grizzly").strip().lower()
+    normalized = raw.replace("-", "_")
+    if normalized in {"smsactivate", "hero_sms"}:
+        return "sms_activate"
+    return normalized
 
 
-def _request_grizzly(http: CurlSession, params: dict) -> str:
+def _cancel_delay_seconds() -> int:
+    """返回当前接码平台取消号码前需要等待的秒数。"""
+    try:
+        configured = int(getattr(_cfg, "SMS_CANCEL_DELAY", -1))
+    except (TypeError, ValueError):
+        configured = -1
+    if configured >= 0:
+        return configured
+    return _MIN_CANCEL_DELAY if _provider() == "grizzly" else 0
+
+
+def _request_handler(http: CurlSession, params: dict) -> str:
     """
-    发一个 GrizzlySMS API 请求，返回去空白的响应文本。
+    发一个 SMS-Activate 兼容 handler 请求，返回去空白的响应文本。
     统一识别公共错误码并抛对应异常。
     """
     base_params = {"api_key": _cfg.SMS_API_KEY}
@@ -76,7 +91,7 @@ def _request_grizzly(http: CurlSession, params: dict) -> str:
     resp = http.get(_cfg.SMS_API_BASE, params=base_params)
     if resp.status_code != 200:
         raise SmsProviderError(
-            f"GrizzlySMS HTTP {resp.status_code}: {(resp.text or '')[:200]}"
+            f"接码平台 HTTP {resp.status_code}: {(resp.text or '')[:200]}"
         )
     text = (resp.text or "").strip()
 
@@ -97,6 +112,10 @@ def _request_grizzly(http: CurlSession, params: dict) -> str:
         raise SmsProviderError(f"该服务被平台禁售：{text}")
 
     return text
+
+
+# 兼容可能引用旧私有名称的项目内工具。
+_request_grizzly = _request_handler
 
 
 def _l_url(path: str) -> str:
@@ -390,7 +409,7 @@ def acquire_number(
         if _cfg.SMS_MAX_PRICE:
             params["maxPrice"] = _cfg.SMS_MAX_PRICE
 
-        text = _request_grizzly(http, params)
+        text = _request_handler(http, params)
         # 成功格式：ACCESS_NUMBER:激活ID:号码
         if not text.startswith("ACCESS_NUMBER:"):
             raise SmsProviderError(f"getNumber 非预期响应：{text[:200]}")
@@ -481,7 +500,7 @@ def wait_for_sms_code(
                 time.sleep(interval)
                 continue
 
-            text = _request_grizzly(http, {"action": "getStatus", "id": activation_id})
+            text = _request_handler(http, {"action": "getStatus", "id": activation_id})
 
             if text.startswith("STATUS_OK:"):
                 code = text.split(":", 1)[1].strip()
@@ -518,7 +537,7 @@ def set_status(activation_id: str, status: int, http: CurlSession | None = None)
         if _provider() == "l":
             logger.debug(f"[SMS:L] 忽略状态设置 id={activation_id}, status={status}")
             return "OK"
-        return _request_grizzly(http, {"action": "setStatus", "status": str(status), "id": activation_id})
+        return _request_handler(http, {"action": "setStatus", "status": str(status), "id": activation_id})
     finally:
         if own_http:
             http.close()
@@ -544,14 +563,15 @@ def complete(activation_id: str, http: CurlSession | None = None) -> None:
 
 
 def _do_cancel_sync(activation_id: str, http_factory) -> None:
-    """实际的同步取消逻辑：等够 2 分钟限制 → 发请求 → 失败重试一次。"""
+    """实际的同步取消逻辑：按平台等待 → 发请求 → 失败重试一次。"""
     acquired_at = _ACQUIRED_AT.get(activation_id)
-    if acquired_at is not None:
+    cancel_delay = _cancel_delay_seconds()
+    if acquired_at is not None and cancel_delay > 0:
         elapsed = time.time() - acquired_at
-        if elapsed < _MIN_CANCEL_DELAY:
-            wait = _MIN_CANCEL_DELAY - elapsed
+        if elapsed < cancel_delay:
+            wait = cancel_delay - elapsed
             logger.info(
-                f"[SMS] 取消等待 GrizzlySMS 2 分钟限制：activation_id={activation_id}，"
+                f"[SMS] 取消前等待平台限制：provider={_provider()}，activation_id={activation_id}，"
                 f"还需等 {wait:.0f}s..."
             )
             time.sleep(wait)
@@ -584,9 +604,9 @@ def cancel(activation_id: str, http: CurlSession | None = None, background: bool
     """
     取消激活（status=8），释放号码避免白扣费。
 
-    GrizzlySMS 规则：号码取出后约 2 分钟内不允许取消。本函数默认 background=True，
-    把"等 2 分钟+取消"放到后台守护线程里执行，主流程立刻返回继续走（如换下一个号），
-    避免被这 2 分钟阻塞。
+    GrizzlySMS 默认需要等待约 2 分钟；SMS-Activate/HeroSMS 默认立即取消。
+    本函数默认 background=True，把"等待+取消"放到后台守护线程里执行，
+    主流程立刻返回继续走（如换下一个号）。
 
     background=False 时同步等够时间再返回（少数场景需要确认取消完成时用）。
 

@@ -6,7 +6,7 @@
 参数来源：CLIProxyAPI 源码 internal/auth/codex/openai_auth.go + pkce.go，
 对照 https://github.com/router-for-me/CLIProxyAPI 逐行确认。
 """
-from config.env_loader import env_str, apply_env_overrides
+from config.env_loader import env_int, env_str, apply_env_overrides
 
 
 # 是否启用 Codex OAuth 授权（False = 跳过，不影响注册结果）
@@ -98,8 +98,11 @@ CPA_SAVE_CALLBACK_RECEIPT: bool = True
 
 SMS_PROVIDER: str = "l"
 
-# 接码 API 基址（GET handler）
-SMS_API_BASE: str = "https://api.grizzlysms.com/stubs/handler_api.php"
+# 接码 API 基址（SMS-Activate 兼容 GET handler）
+SMS_API_BASE: str = env_str(
+    "SMS_API_BASE",
+    "https://api.grizzlysms.com/stubs/handler_api.php",
+)
 
 # 接码 API 密钥（在 GrizzlySMS 后台 → 设置 获取）
 # 留空时 Codex 授权的手机验证步会失败；如不需要 Codex 自动授权，把 ENABLE_CODEX_AUTO=False。
@@ -125,6 +128,10 @@ SMS_POLL_INTERVAL: int = 5
 
 # 接码平台 HTTP 请求超时（秒）
 SMS_REQUEST_TIMEOUT: int = 30
+
+# 取消号码前等待秒数。-1=按平台自动选择：GrizzlySMS 125 秒，
+# SMS-Activate/HeroSMS 立即取消；其他非本地兼容平台也默认立即取消。
+SMS_CANCEL_DELAY: int = env_int("SMS_CANCEL_DELAY", -1)
 
 
 # ============================================================
@@ -161,4 +168,4 @@ L_ADMIN_AUTH_CODE: str = env_str("L_ADMIN_AUTH_CODE", "")
 L_PHONE_PREFIX: str = ""
 
 # ---- .env overrides for WebUI editable fields ----
-apply_env_overrides(globals(), {'ENABLE_CODEX_AUTO': 'bool', 'CODEX_OAUTH_DRIVER': 'str', 'CODEX_AUTH_URL_SOURCE': 'str', 'CPA_MANAGEMENT_URL': 'str', 'CPA_MANAGEMENT_KEY': 'str', 'CPA_REQUEST_TIMEOUT': 'int', 'CPA_CALLBACK_SUBMIT_RETRIES': 'int', 'CPA_CALLBACK_SUBMIT_RETRY_DELAY': 'int', 'CPA_SAVE_CALLBACK_RECEIPT': 'bool', 'SMS_PROVIDER': 'str', 'SMS_COUNTRY': 'str', 'SMS_SERVICE': 'str', 'SMS_MAX_RETRIES': 'int', 'SMS_CODE_WAIT': 'int', 'SMS_API_KEY': 'str', 'H_API_BASE': 'str', 'H_ADMIN_AUTH_CODE': 'str', 'H_PHONE_PREFIX': 'str', 'H_PHONE_ACQUIRE_MODE': 'str', 'L_API_BASE': 'str', 'L_ADMIN_AUTH_CODE': 'str', 'L_PHONE_PREFIX': 'str'})
+apply_env_overrides(globals(), {'ENABLE_CODEX_AUTO': 'bool', 'CODEX_OAUTH_DRIVER': 'str', 'CODEX_AUTH_URL_SOURCE': 'str', 'CPA_MANAGEMENT_URL': 'str', 'CPA_MANAGEMENT_KEY': 'str', 'CPA_REQUEST_TIMEOUT': 'int', 'CPA_CALLBACK_SUBMIT_RETRIES': 'int', 'CPA_CALLBACK_SUBMIT_RETRY_DELAY': 'int', 'CPA_SAVE_CALLBACK_RECEIPT': 'bool', 'SMS_PROVIDER': 'str', 'SMS_API_BASE': 'str', 'SMS_COUNTRY': 'str', 'SMS_SERVICE': 'str', 'SMS_MAX_RETRIES': 'int', 'SMS_CODE_WAIT': 'int', 'SMS_API_KEY': 'str', 'SMS_CANCEL_DELAY': 'int', 'H_API_BASE': 'str', 'H_ADMIN_AUTH_CODE': 'str', 'H_PHONE_PREFIX': 'str', 'H_PHONE_ACQUIRE_MODE': 'str', 'L_API_BASE': 'str', 'L_ADMIN_AUTH_CODE': 'str', 'L_PHONE_PREFIX': 'str'})

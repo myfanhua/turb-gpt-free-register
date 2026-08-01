@@ -579,7 +579,12 @@ EDITABLE_FIELDS = [
 
     {
         "key": "SMS_PROVIDER", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "接码通道", "help": "grizzly / l / h；l 使用 L_API.md，h 使用 H_API.md 定义的本地取号服务",
+        "label": "接码通道", "help": "grizzly / sms_activate / hero_sms / l / h；HeroSMS 使用 SMS-Activate 兼容协议",
+    },
+    {
+        "key": "SMS_API_BASE", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "接码 API 地址", "help": "SMS-Activate 兼容 handler 地址；HeroSMS 填 https://hero-sms.com/stubs/handler_api.php",
+        "storage": "env",
     },
     {
         "key": "SMS_COUNTRY", "file": "codex.py", "type": "str", "group": "接码平台",
@@ -599,8 +604,13 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "SMS_API_KEY", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "GrizzlySMS API密钥", "help": "GrizzlySMS 平台 API Key，保存在 .env（SMS_API_KEY），不写回 config/*.py",
+        "label": "接码平台 API密钥", "help": "GrizzlySMS / SMS-Activate / HeroSMS API Key，保存在 .env（SMS_API_KEY）",
         "storage": "env", "secret": True,
+    },
+    {
+        "key": "SMS_CANCEL_DELAY", "file": "codex.py", "type": "int", "group": "接码平台",
+        "label": "取消前等待(秒)", "help": "-1=按平台自动；GrizzlySMS 125 秒，SMS-Activate/HeroSMS 立即取消",
+        "storage": "env",
     },
     {
         "key": "H_API_BASE", "file": "codex.py", "type": "str", "group": "接码平台",
