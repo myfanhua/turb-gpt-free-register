@@ -92,6 +92,7 @@ CPA_SAVE_CALLBACK_RECEIPT: bool = True
 # 接码平台（手机短信验证用）
 # SMS_PROVIDER:
 #   "grizzly" = GrizzlySMS，接口说明见 https://api.grizzlysms.com
+#   "sms_activate" / "hero_sms" = SMS-Activate 兼容接口；HeroSMS 可直接使用
 #   "l"       = 本地 L 取号服务，接口说明见 L_API.md
 #   "h"       = 本地 H 取号服务，接口说明见 H_API.md
 # ============================================================
@@ -104,7 +105,7 @@ SMS_API_BASE: str = env_str(
     "https://api.grizzlysms.com/stubs/handler_api.php",
 )
 
-# 接码 API 密钥（在 GrizzlySMS 后台 → 设置 获取）
+# 接码 API 密钥（在 GrizzlySMS / SMS-Activate / HeroSMS 后台获取）
 # 留空时 Codex 授权的手机验证步会失败；如不需要 Codex 自动授权，把 ENABLE_CODEX_AUTO=False。
 SMS_API_KEY: str = env_str("SMS_API_KEY", "")
 

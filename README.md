@@ -395,8 +395,8 @@ CODEX_OAUTH_DRIVER = "browser_use"  # 可选 protocol / roxy / cloak / browser_u
 接码配置在 `config/codex.py`：
 
 ```python
-SMS_PROVIDER = "l"        # 可选 grizzly / l / h
-SMS_API_KEY = "你的 GrizzlySMS key"  # 仅 GrizzlySMS 需要
+SMS_PROVIDER = "l"        # 可选 grizzly / sms_activate / hero_sms / l / h
+SMS_API_KEY = "你的接码平台 key"  # GrizzlySMS / SMS-Activate / HeroSMS 使用
 SMS_SERVICE = "openai"
 SMS_COUNTRY = "国家代码"
 SMS_MAX_RETRIES = 10
@@ -409,6 +409,28 @@ SMS_POLL_INTERVAL = 5
 H_API_BASE = "http://localhost:8788"
 H_ADMIN_AUTH_CODE = "你的H后台授权码"
 ```
+
+#### 使用 HeroSMS / SMS-Activate 兼容接口
+
+HeroSMS 提供与 SMS-Activate 相同的 `getNumber / getStatus / setStatus`
+文本协议，本项目直接复用现有接码流程。在 WebUI「配置 → 接码平台」或 `.env`
+填写：
+
+```dotenv
+SMS_PROVIDER=sms_activate
+SMS_API_BASE=https://hero-sms.com/stubs/handler_api.php
+SMS_API_KEY=你的_HeroSMS_API_Key
+SMS_SERVICE=dr
+SMS_COUNTRY=国家数字ID
+SMS_CANCEL_DELAY=-1
+```
+
+- `hero_sms`、`hero-sms`、`sms-activate` 也会自动归一为 `sms_activate`。
+- `SMS_SERVICE` 和 `SMS_COUNTRY` 以 HeroSMS 当前服务列表、国家列表为准；
+  SMS-Activate 兼容目录中 OpenAI 常见服务代码为 `dr`。
+- `SMS_CANCEL_DELAY=-1` 表示自动选择平台规则：GrizzlySMS 默认等待 125 秒，
+  HeroSMS/SMS-Activate 默认立即发送取消状态 `8`。
+- 如平台另有取消等待要求，可把 `SMS_CANCEL_DELAY` 改为指定秒数。
 
 CPA 授权地址来源：
 
