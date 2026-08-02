@@ -138,6 +138,57 @@ class ICloudMailClientTests(unittest.TestCase):
         )
         self.assertEqual(claim.call_count, 2)
 
+    @patch("core.icloud_mail_client.db.claim_next_icloud_email")
+    def test_pick_account_passes_requested_claim_selection(self, claim):
+        claim.return_value = {
+            "id": 7,
+            "email": "one@icloud.com",
+            "token": "tok_one",
+            "pickup_url": "",
+            "pickup_mode": "api_token",
+            "claimed_pickup_mode": "api_token",
+        }
+
+        account = client.pick_account(selection="token")
+
+        claim.assert_called_once_with(pickup_filter="token")
+        self.assertEqual(account.pickup_mode, "api_token")
+
+    @patch("core.icloud_mail_client.db.get_icloud_email_by_email")
+    def test_context_restores_forced_api_mode_without_browser_url(self, get_row):
+        get_row.return_value = {
+            "email": "mixed@icloud.com",
+            "token": "tok_mixed",
+            "pickup_url": "https://pickup.example/show/secret/mixed@icloud.com",
+            "pickup_mode": "independent_url_with_token",
+            "claimed_pickup_mode": "api_token",
+        }
+        client._CONTEXT_CACHE.clear()
+
+        account = client.get_account_context("mixed@icloud.com")
+
+        self.assertEqual(account.token, "tok_mixed")
+        self.assertEqual(account.pickup_url, "")
+        self.assertEqual(account.pickup_mode, "api_token")
+
+    @patch("core.icloud_mail_client.db.get_icloud_email_by_email")
+    def test_context_restores_forced_url_mode_without_api_token(self, get_row):
+        pickup_url = "https://pickup.example/show/secret/mixed@icloud.com"
+        get_row.return_value = {
+            "email": "mixed@icloud.com",
+            "token": "tok_mixed",
+            "pickup_url": pickup_url,
+            "pickup_mode": "independent_url_with_token",
+            "claimed_pickup_mode": "independent_url",
+        }
+        client._CONTEXT_CACHE.clear()
+
+        account = client.get_account_context("mixed@icloud.com")
+
+        self.assertEqual(account.token, "")
+        self.assertEqual(account.pickup_url, pickup_url)
+        self.assertEqual(account.pickup_mode, "independent_url")
+
     @patch("core.icloud_mail_client.requests.post")
     @patch("core.icloud_mail_client.requests.get")
     def test_fetch_prefers_direct_pickup_when_profile_token_is_configured(self, get, post):

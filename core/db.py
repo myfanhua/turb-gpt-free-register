@@ -1798,11 +1798,32 @@ def import_icloud_emails(records: list[dict]) -> dict[str, int]:
         return result
 
 
-def claim_next_icloud_email() -> dict | None:
+def _icloud_row_pickup_url(row: dict) -> str:
+    return str(row.get("pickup_url") or row.get("pickupUrl") or "").strip()
+
+
+def _icloud_row_matches_filter(row: dict, pickup_filter: str) -> bool:
+    mode = str(pickup_filter or "all").strip().lower()
+    if mode == "token":
+        return bool(str(row.get("token") or "").strip())
+    if mode == "url":
+        return bool(_icloud_row_pickup_url(row))
+    if mode != "all":
+        raise ValueError(f"未知 iCloud 领取过滤器: {mode}")
+    return True
+
+
+def claim_next_icloud_email(pickup_filter: str = "all") -> dict | None:
     """原子领取一条可用 iCloud 邮箱，并返回包含 Token 的任务上下文。"""
+    pickup_filter = str(pickup_filter or "all").strip().lower()
     with _LOCK:
         rows = sorted(_load_icloud_emails(), key=lambda item: int(item.get("id") or 0))
-        row = next((item for item in rows if item.get("status") == "available"), None)
+        row = next((
+            item
+            for item in rows
+            if item.get("status") == "available"
+            and _icloud_row_matches_filter(item, pickup_filter)
+        ), None)
         if row is None:
             return None
         now = _now()
@@ -1810,6 +1831,15 @@ def claim_next_icloud_email() -> dict | None:
         row["used_at"] = now
         row["updated_at"] = now
         row["note"] = None
+        if pickup_filter == "token":
+            row["claimed_pickup_mode"] = "api_token"
+        elif pickup_filter == "url":
+            row["claimed_pickup_mode"] = "independent_url"
+        else:
+            row["claimed_pickup_mode"] = _icloud_pickup_mode(
+                str(row.get("token") or "").strip(),
+                _icloud_row_pickup_url(row),
+            )
         _save_icloud_emails(rows)
         return _decorate_icloud_email(row, include_token=True)
 
@@ -1824,6 +1854,8 @@ def release_icloud_email(email: str, status: str = "available", note: str | None
         status = str(status or "available")
         row["status"] = status
         row["updated_at"] = _now()
+        if status != "used":
+            row.pop("claimed_pickup_mode", None)
         if status == "available":
             row["used_at"] = None
         else:
@@ -1845,6 +1877,7 @@ def release_unconsumed_icloud_email(email: str, note: str | None = None) -> bool
         row["status"] = "available"
         row["used_at"] = None
         row["updated_at"] = _now()
+        row.pop("claimed_pickup_mode", None)
         if note is not None:
             row["note"] = note
         _save_icloud_emails(rows)
@@ -1873,10 +1906,13 @@ def list_icloud_email_pool(status: str | None = None, limit: int = 500) -> list[
         return [_decorate_icloud_email(row) for row in rows[:limit]]
 
 
-def icloud_email_pool_summary() -> dict:
+def icloud_email_pool_summary(pickup_filter: str = "all") -> dict:
+    pickup_filter = str(pickup_filter or "all").strip().lower()
     with _LOCK:
         result = {"available": 0, "used": 0, "registered": 0, "failed": 0, "disabled": 0}
         for row in _load_icloud_emails():
+            if not _icloud_row_matches_filter(row, pickup_filter):
+                continue
             status = row.get("status") or "available"
             result[status] = result.get(status, 0) + 1
         result["total"] = sum(result.values())

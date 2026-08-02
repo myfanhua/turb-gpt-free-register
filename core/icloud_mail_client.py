@@ -73,9 +73,38 @@ def _cache_key(email: str) -> str:
     return str(email or "").strip().lower()
 
 
-def pick_account() -> ICloudMailAccount:
-    row = db.claim_next_icloud_email()
-    if row is None and _profile_token():
+def _is_json_pickup_url(pickup_url: str) -> bool:
+    parsed = urlparse(str(pickup_url or "").strip())
+    path = parsed.path.rstrip("/").lower()
+    return path.endswith("/messages/latest") or (
+        "/api/" in path and path.endswith("/pickup")
+    )
+
+
+def _account_from_row(row: dict) -> ICloudMailAccount:
+    token = str(row.get("token") or "").strip()
+    pickup_url = str(row.get("pickup_url") or row.get("pickupUrl") or "").strip()
+    pickup_mode = str(
+        row.get("claimed_pickup_mode")
+        or row.get("pickup_mode")
+        or "api_token"
+    ).strip()
+    if pickup_mode == "independent_url":
+        token = ""
+    elif pickup_mode == "api_token" and pickup_url and not _is_json_pickup_url(pickup_url):
+        pickup_url = ""
+    return ICloudMailAccount(
+        email=row["email"],
+        token=token,
+        pickup_url=pickup_url,
+        pickup_mode=pickup_mode,
+    )
+
+
+def pick_account(selection: str = "all") -> ICloudMailAccount:
+    selection = str(selection or "all").strip().lower()
+    row = db.claim_next_icloud_email(pickup_filter=selection)
+    if row is None and selection in {"all", "token"} and _profile_token():
         disabled = db.list_icloud_email_pool(status="disabled", limit=5000)
         for item in disabled:
             note = str(item.get("note") or "")
@@ -85,15 +114,13 @@ def pick_account() -> ICloudMailAccount:
                     status="available",
                     note="已切换到 iCloud Profile 同步",
                 )
-        row = db.claim_next_icloud_email()
+        row = db.claim_next_icloud_email(pickup_filter=selection)
     if row is None:
-        raise ICloudMailError(f"iCloud 邮箱池没有可用邮箱: {db.icloud_email_pool_summary()}")
-    account = ICloudMailAccount(
-        email=row["email"],
-        token=row["token"],
-        pickup_url=str(row.get("pickup_url") or row.get("pickupUrl") or "").strip(),
-        pickup_mode=str(row.get("pickup_mode") or "api_token").strip(),
-    )
+        raise ICloudMailError(
+            f"iCloud 邮箱池没有可用邮箱: "
+            f"{db.icloud_email_pool_summary(pickup_filter=selection)}"
+        )
+    account = _account_from_row(row)
     _CONTEXT_CACHE[_cache_key(account.email)] = account
     logger.info("[iCloud] 已领取邮箱: %s（DB id=%s）", account.email, row.get("id"))
     return account
@@ -107,12 +134,7 @@ def get_account_context(email: str) -> ICloudMailAccount | None:
     row = db.get_icloud_email_by_email(key, include_token=True)
     if row is None:
         return None
-    account = ICloudMailAccount(
-        email=row["email"],
-        token=row["token"],
-        pickup_url=str(row.get("pickup_url") or row.get("pickupUrl") or "").strip(),
-        pickup_mode=str(row.get("pickup_mode") or "api_token").strip(),
-    )
+    account = _account_from_row(row)
     _CONTEXT_CACHE[key] = account
     return account
 

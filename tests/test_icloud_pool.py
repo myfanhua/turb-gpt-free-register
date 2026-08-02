@@ -163,6 +163,105 @@ class ICloudPoolTests(unittest.TestCase):
         self.assertEqual(len(set(emails)), 8)
         self.assertEqual(db.icloud_email_pool_summary()["used"], 8)
 
+    def test_token_filter_skips_url_only_mailboxes(self):
+        db.import_icloud_emails([
+            {
+                "email": "url@icloud.com",
+                "token": "",
+                "pickup_url": "https://pickup.example/show/secret/url@icloud.com",
+            },
+            {"email": "token@icloud.com", "token": "tok_only"},
+        ])
+
+        claimed = db.claim_next_icloud_email(pickup_filter="token")
+
+        self.assertEqual(claimed["email"], "token@icloud.com")
+        self.assertEqual(claimed["claimed_pickup_mode"], "api_token")
+
+    def test_url_filter_skips_token_only_mailboxes(self):
+        db.import_icloud_emails([
+            {"email": "token@icloud.com", "token": "tok_only"},
+            {
+                "email": "url@icloud.com",
+                "token": "",
+                "pickup_url": "https://pickup.example/show/secret/url@icloud.com",
+            },
+        ])
+
+        claimed = db.claim_next_icloud_email(pickup_filter="url")
+
+        self.assertEqual(claimed["email"], "url@icloud.com")
+        self.assertEqual(claimed["claimed_pickup_mode"], "independent_url")
+
+    def test_mixed_mailbox_can_be_forced_to_either_channel(self):
+        material = {
+            "email": "mixed@icloud.com",
+            "token": "tok_mixed",
+            "pickup_url": "https://pickup.example/show/secret/mixed@icloud.com",
+        }
+        db.import_icloud_emails([material])
+
+        token_claim = db.claim_next_icloud_email(pickup_filter="token")
+        self.assertEqual(token_claim["claimed_pickup_mode"], "api_token")
+        db.release_icloud_email("mixed@icloud.com", status="available")
+
+        url_claim = db.claim_next_icloud_email(pickup_filter="url")
+        self.assertEqual(url_claim["claimed_pickup_mode"], "independent_url")
+
+    def test_release_clears_claimed_pickup_mode(self):
+        db.import_icloud_emails([{"email": "one@icloud.com", "token": "tok_one"}])
+        db.claim_next_icloud_email(pickup_filter="token")
+
+        db.release_icloud_email("one@icloud.com", status="available")
+
+        row = db.get_icloud_email_by_email("one@icloud.com", include_token=True)
+        self.assertNotIn("claimed_pickup_mode", row)
+
+    def test_filtered_summary_counts_only_eligible_available_mailboxes(self):
+        db.import_icloud_emails([
+            {"email": "token@icloud.com", "token": "tok_only"},
+            {
+                "email": "url@icloud.com",
+                "token": "",
+                "pickup_url": "https://pickup.example/show/secret/url@icloud.com",
+            },
+            {
+                "email": "mixed@icloud.com",
+                "token": "tok_mixed",
+                "pickup_url": "https://pickup.example/show/secret/mixed@icloud.com",
+            },
+        ])
+
+        self.assertEqual(db.icloud_email_pool_summary(pickup_filter="token")["available"], 2)
+        self.assertEqual(db.icloud_email_pool_summary(pickup_filter="url")["available"], 2)
+        self.assertEqual(db.icloud_email_pool_summary(pickup_filter="all")["available"], 3)
+
+    def test_concurrent_token_and_url_filters_do_not_double_claim_mixed_mailbox(self):
+        db.import_icloud_emails([{
+            "email": "mixed@icloud.com",
+            "token": "tok_mixed",
+            "pickup_url": "https://pickup.example/show/secret/mixed@icloud.com",
+        }])
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            claims = list(executor.map(db.claim_next_icloud_email, ["token", "url"]))
+
+        self.assertEqual(sum(item is not None for item in claims), 1)
+
+    def test_legacy_camel_case_url_is_eligible_for_url_filter(self):
+        pickup_url = "https://pickup.example/show/legacy/one@icloud.com"
+        db._ICLOUD_EMAIL_JSON.write_text(
+            '[{"id":1,"email":"one@icloud.com","token":"","pickupUrl":"'
+            + pickup_url
+            + '","status":"available"}]',
+            encoding="utf-8",
+        )
+
+        claimed = db.claim_next_icloud_email(pickup_filter="url")
+
+        self.assertEqual(claimed["email"], "one@icloud.com")
+        self.assertEqual(claimed["pickup_url"], pickup_url)
+
     def test_unconsumed_used_mailbox_returns_to_available(self):
         db.import_icloud_emails([{"email": "one@icloud.com", "token": "tok_one_1234"}])
         db.claim_next_icloud_email()
