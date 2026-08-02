@@ -57,6 +57,126 @@ class KakaoBatchResult:
     remaining_count: int | None = None
 
 
+@dataclass(frozen=True)
+class KakaoBatchPlan:
+    batch_number: int
+    batch_total: int
+    tokens: list[str]
+    account_ids_by_result_index: dict[int, list[int]]
+
+
+def build_kakao_batches(items: list[dict], batch_size: int) -> list[KakaoBatchPlan]:
+    try:
+        size = int(batch_size)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Kakao 每批数量必须为 1-5") from exc
+    if not 1 <= size <= 5:
+        raise ValueError("Kakao 每批数量必须为 1-5")
+
+    unique_tokens: list[str] = []
+    account_ids_by_token: dict[str, list[int]] = {}
+    for item in items:
+        token = str((item or {}).get("access_token") or "").strip()
+        try:
+            account_id = int((item or {}).get("account_id") or (item or {}).get("id"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Kakao 批次账号 ID 无效") from exc
+        if not token:
+            raise ValueError(f"账号 {account_id} 缺少 access_token")
+        if token not in account_ids_by_token:
+            unique_tokens.append(token)
+            account_ids_by_token[token] = []
+        if account_id not in account_ids_by_token[token]:
+            account_ids_by_token[token].append(account_id)
+
+    if not unique_tokens:
+        return []
+
+    token_chunks = [
+        unique_tokens[offset:offset + size]
+        for offset in range(0, len(unique_tokens), size)
+    ]
+    total = len(token_chunks)
+    plans: list[KakaoBatchPlan] = []
+    for number, tokens in enumerate(token_chunks, start=1):
+        plans.append(KakaoBatchPlan(
+            batch_number=number,
+            batch_total=total,
+            tokens=list(tokens),
+            account_ids_by_result_index={
+                index: list(account_ids_by_token[token])
+                for index, token in enumerate(tokens)
+            },
+        ))
+    return plans
+
+
+def _result_error_message(item: dict) -> str:
+    raw_error = item.get("error")
+    if isinstance(raw_error, dict):
+        for key in ("message", "detail", "reason", "error", "code"):
+            value = raw_error.get(key)
+            if value:
+                return str(value).strip()
+    elif raw_error:
+        return str(raw_error).strip()
+    for key in ("message", "detail", "reason", "msg", "description"):
+        value = item.get(key)
+        if value:
+            return str(value).strip()
+    return "Kakao 提链失败"
+
+
+def map_kakao_results(
+    plan: KakaoBatchPlan,
+    results: list[dict],
+) -> dict[int, dict]:
+    mapped: dict[int, dict] = {}
+    safe_results = results if isinstance(results, list) else []
+    for result_index, account_ids in plan.account_ids_by_result_index.items():
+        if result_index >= len(safe_results):
+            one = {
+                "ok": False,
+                "status": "failed",
+                "link_type": "kakao_pay",
+                "error": "服务端结果数量与提交账号不一致",
+                "message": "服务端结果数量与提交账号不一致",
+            }
+        else:
+            raw = safe_results[result_index]
+            item = raw if isinstance(raw, dict) else {"error": str(raw)}
+            payment_link = str(item.get("paymentLink") or "").strip()
+            if bool(item.get("success")) and payment_link:
+                one = {
+                    "ok": True,
+                    "status": "success",
+                    "link_type": "kakao_pay",
+                    "result": {
+                        "long_url": payment_link,
+                        "copy_paste": payment_link,
+                        "payment_method": "kakao_pay",
+                        "payment_link_type": "kakao",
+                    },
+                    "message": "Kakao 提链成功",
+                }
+            else:
+                reason = (
+                    "Kakao 提链成功响应未返回 paymentLink"
+                    if bool(item.get("success"))
+                    else _result_error_message(item)
+                )
+                one = {
+                    "ok": False,
+                    "status": "failed",
+                    "link_type": "kakao_pay",
+                    "error": reason[:500],
+                    "message": reason[:500],
+                }
+        for account_id in account_ids:
+            mapped[int(account_id)] = dict(one)
+    return mapped
+
+
 Transport = Callable[[str, str, dict | None, float], tuple[int, dict]]
 
 

@@ -1,8 +1,10 @@
 import unittest
 
 from core.kakao_extract_link_provider import (
+    build_kakao_batches,
     KakaoExtractLinkClient,
     KakaoExtractLinkError,
+    map_kakao_results,
 )
 
 
@@ -134,6 +136,73 @@ class KakaoExtractLinkClientTests(unittest.TestCase):
         self.assertNotIn("TOKEN_SECRET", message)
         self.assertNotIn("KAKAO-CDK", message)
         self.assertNotIn("user:pass", message)
+
+
+class KakaoBatchPlanningTests(unittest.TestCase):
+    def test_build_batches_deduplicates_tokens_and_preserves_account_mapping(self):
+        batches = build_kakao_batches([
+            {"account_id": 1, "email": "a@example.com", "access_token": "TOKEN_A"},
+            {"account_id": 2, "email": "b@example.com", "access_token": "TOKEN_A"},
+            {"account_id": 3, "email": "c@example.com", "access_token": "TOKEN_C"},
+        ], batch_size=2)
+
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(batches[0].tokens, ["TOKEN_A", "TOKEN_C"])
+        self.assertEqual(batches[0].account_ids_by_result_index[0], [1, 2])
+        self.assertEqual(batches[0].account_ids_by_result_index[1], [3])
+
+    def test_twelve_unique_tokens_split_into_five_five_two(self):
+        batches = build_kakao_batches([
+            {
+                "account_id": index,
+                "email": f"user{index}@example.com",
+                "access_token": f"TOKEN_{index}",
+            }
+            for index in range(1, 13)
+        ], batch_size=5)
+
+        self.assertEqual([len(batch.tokens) for batch in batches], [5, 5, 2])
+        self.assertEqual([batch.batch_number for batch in batches], [1, 2, 3])
+        self.assertTrue(all(batch.batch_total == 3 for batch in batches))
+
+    def test_batch_size_must_be_between_one_and_five(self):
+        items = [{"account_id": 1, "access_token": "TOKEN_A"}]
+
+        for invalid in (0, 6):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "1-5"):
+                    build_kakao_batches(items, batch_size=invalid)
+
+    def test_map_results_keeps_partial_success_per_account(self):
+        plan = build_kakao_batches([
+            {"account_id": 1, "access_token": "TOKEN_A"},
+            {"account_id": 2, "access_token": "TOKEN_A"},
+            {"account_id": 3, "access_token": "TOKEN_B"},
+        ], batch_size=5)[0]
+
+        mapped = map_kakao_results(plan, [
+            {"success": True, "paymentLink": "https://pay.example/a"},
+            {"success": False, "error": "资格不符"},
+        ])
+
+        self.assertEqual(mapped[1]["result"]["long_url"], "https://pay.example/a")
+        self.assertEqual(mapped[2]["result"]["long_url"], "https://pay.example/a")
+        self.assertEqual(mapped[3]["status"], "failed")
+        self.assertEqual(mapped[3]["error"], "资格不符")
+
+    def test_result_count_mismatch_does_not_shift_or_succeed_missing_accounts(self):
+        plan = build_kakao_batches([
+            {"account_id": 10, "access_token": "TOKEN_A"},
+            {"account_id": 11, "access_token": "TOKEN_B"},
+        ], batch_size=5)[0]
+
+        mapped = map_kakao_results(plan, [
+            {"success": True, "paymentLink": "https://pay.example/a"},
+        ])
+
+        self.assertEqual(mapped[10]["status"], "success")
+        self.assertEqual(mapped[11]["status"], "failed")
+        self.assertIn("结果数量", mapped[11]["error"])
 
 
 if __name__ == "__main__":
