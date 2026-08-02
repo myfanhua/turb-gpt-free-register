@@ -83,6 +83,38 @@ def _with_pool_source(rows: list[dict], source: str) -> list[dict]:
     return out
 
 
+def _selected_registration_source(raw_value) -> str:
+    """Resolve an empty UI choice from config, while keeping explicit choices single-source."""
+    from core.email_provider import registration_source_options, snapshot_registration_source
+
+    raw = str(raw_value or "").strip()
+    if not raw:
+        return snapshot_registration_source()
+    if any(separator in raw for separator in (",", ";", "|")):
+        raise ValueError("前端每批注册只能选择一个邮箱来源")
+    valid = {str(item.get("value") or "") for item in registration_source_options()}
+    if raw not in valid:
+        raise ValueError("未知邮箱来源")
+    return raw
+
+
+def _registration_source_label(source: str) -> str:
+    from core.email_provider import parse_email_sources, registration_source_options
+
+    labels = {
+        str(item.get("value") or ""): str(item.get("label") or item.get("value") or "")
+        for item in registration_source_options()
+    }
+    return " + ".join(labels.get(value, value) for value in parse_email_sources(source))
+
+
+def _icloud_registration_pickup_filter(source: str) -> str:
+    return {
+        "icloud_api_token": "token",
+        "icloud_url": "url",
+    }.get(source, "all")
+
+
 
 
 def _matches_query(row: dict, q: str | None) -> bool:
@@ -1986,6 +2018,15 @@ def create_app(auth_code: str | None = None) -> Flask:
     # ----------------------------------------------------------
     # 注册任务
     # ----------------------------------------------------------
+    @app.get("/api/email-sources")
+    def api_email_sources():
+        from core.email_provider import registration_source_options, snapshot_registration_source
+
+        return jsonify({
+            "configured": snapshot_registration_source(),
+            "options": registration_source_options(),
+        })
+
     @app.get("/api/jobs")
     def api_jobs():
         limit = request.args.get("limit", default=100, type=int)
@@ -2011,7 +2052,7 @@ def create_app(auth_code: str | None = None) -> Flask:
 
     @app.post("/api/jobs")
     def api_jobs_create():
-        """启动批量注册：body {count, workers}。"""
+        """启动批量注册：body {count, workers, email_source}。"""
         data = request.get_json(silent=True) or {}
         try:
             count = int(data.get("count", 1))
@@ -2025,6 +2066,12 @@ def create_app(auth_code: str | None = None) -> Flask:
             workers = max(1, min(16, int(data.get("workers", 3))))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "workers 非法"}), 400
+
+        try:
+            selected_source = _selected_registration_source(data.get("email_source"))
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        source_label = _registration_source_label(selected_source)
 
         # 提交前先确认池里有足够可用邮箱，给前端一个温和提示（不阻断）
         from config import email as _email_cfg
@@ -2042,15 +2089,17 @@ def create_app(auth_code: str | None = None) -> Flask:
                     "ok": False,
                     "error": "手动模式建议每次只跑 1 个任务（同一 REGISTER_EMAIL）。请把数量设为 1。",
                 }), 400
-            jobs = svc.submit_registration(count=count, workers=workers)
+            jobs = svc.submit_registration(count=count, workers=workers, email_source=selected_source)
             return jsonify({
                 "ok": True,
                 "submitted": len(jobs),
                 "jobs": jobs,
                 "warning": f"手动 OTP 模式：将使用 {reg_email}；验证码请在任务页提交",
                 "workers": workers,
+                "email_source": selected_source,
+                "email_source_label": source_label,
             })
-        sources = parse_email_sources(_email_cfg.EMAIL_SOURCE)
+        sources = parse_email_sources(selected_source)
         if "gptmail" in sources:
             api_key = str(getattr(_email_cfg, "GPTMAIL_API_KEY", "") or "").strip()
             if not api_key:
@@ -2113,8 +2162,10 @@ def create_app(auth_code: str | None = None) -> Flask:
             warning = ""
             if pool.get("available", 0) < count:
                 warning = f"通用 API 邮箱池仅 {pool.get('available', 0)} 个可用，少于任务数 {count}，不足的会失败"
-        elif sources == ["icloud_api"]:
-            pool = db.icloud_email_pool_summary()
+        elif len(sources) == 1 and sources[0] in ("icloud_api", "icloud_api_token", "icloud_url"):
+            pool = db.icloud_email_pool_summary(
+                pickup_filter=_icloud_registration_pickup_filter(sources[0])
+            )
             warning = ""
             if pool.get("available", 0) < count:
                 warning = f"iCloud 邮箱池仅 {pool.get('available', 0)} 个可用，少于任务数 {count}，不足的会失败"
@@ -2124,8 +2175,11 @@ def create_app(auth_code: str | None = None) -> Flask:
                 available += db.outlook_pool_summary().get("available", 0)
             if "generic_api" in sources:
                 available += db.generic_api_email_pool_summary().get("available", 0)
-            if "icloud_api" in sources:
-                available += db.icloud_email_pool_summary().get("available", 0)
+            for icloud_source in ("icloud_api", "icloud_api_token", "icloud_url"):
+                if icloud_source in sources:
+                    available += db.icloud_email_pool_summary(
+                        pickup_filter=_icloud_registration_pickup_filter(icloud_source)
+                    ).get("available", 0)
             warning = ""
             if available < count:
                 warning = f"多个邮箱池合计仅 {available} 个可用，少于任务数 {count}，不足的会失败"
@@ -2134,8 +2188,16 @@ def create_app(auth_code: str | None = None) -> Flask:
             warning = ""
             if pool.get("available", 0) < count:
                 warning = f"可用邮箱仅 {pool.get('available', 0)} 个，少于任务数 {count}，不足的会失败"
-        jobs = svc.submit_registration(count=count, workers=workers)
-        return jsonify({"ok": True, "submitted": len(jobs), "jobs": jobs, "warning": warning, "workers": workers})
+        jobs = svc.submit_registration(count=count, workers=workers, email_source=selected_source)
+        return jsonify({
+            "ok": True,
+            "submitted": len(jobs),
+            "jobs": jobs,
+            "warning": warning,
+            "workers": workers,
+            "email_source": selected_source,
+            "email_source_label": source_label,
+        })
 
     @app.get("/api/manual-otp/waiting")
     def api_manual_otp_waiting():

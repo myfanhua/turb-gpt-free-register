@@ -55,7 +55,7 @@ class CloudflareWebUiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["warning"], "")
         outlook_pool_summary.assert_not_called()
-        submit_registration.assert_called_once_with(count=1, workers=1)
+        submit_registration.assert_called_once_with(count=1, workers=1, email_source="cloudflare")
 
 
 if __name__ == "__main__":

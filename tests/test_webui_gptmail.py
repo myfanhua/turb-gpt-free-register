@@ -35,7 +35,7 @@ class GPTMailWebUiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["warning"], "")
         outlook_pool_summary.assert_not_called()
-        submit_registration.assert_called_once_with(count=1, workers=1)
+        submit_registration.assert_called_once_with(count=1, workers=1, email_source="gptmail")
 
     @patch("webui.app.db.domain_email_pool_summary", return_value={"total": 0, "available": 0, "used": 0, "failed": 0})
     @patch("webui.app.db.outlook_pool_summary")
@@ -77,7 +77,7 @@ class GPTMailWebUiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["warning"], "")
         outlook_pool_summary.assert_not_called()
-        submit_registration.assert_called_once_with(count=1, workers=1)
+        submit_registration.assert_called_once_with(count=1, workers=1, email_source="mailnest")
 
     @patch("webui.app.svc.submit_registration")
     def test_jobs_allows_cloudmail_without_manual_domains(self, submit_registration):
@@ -91,7 +91,7 @@ class GPTMailWebUiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["warning"], "")
-        submit_registration.assert_called_once_with(count=1, workers=1)
+        submit_registration.assert_called_once_with(count=1, workers=1, email_source="cloudmail")
 
     @patch("webui.app.db.outlook_pool_summary")
     @patch("webui.app.svc.submit_registration", return_value=[{"id": 1}])
@@ -107,4 +107,4 @@ class GPTMailWebUiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["warning"], "")
         outlook_pool_summary.assert_not_called()
-        submit_registration.assert_called_once_with(count=1, workers=1)
+        submit_registration.assert_called_once_with(count=1, workers=1, email_source="cloudmail")
