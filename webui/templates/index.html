@@ -399,6 +399,24 @@
         <div id="regWarn"></div>
         <div class="row">
           <div>
+            <label class="fld">邮箱来源
+              <select id="regEmailSource">
+                <option value="">跟随当前配置</option>
+                <option value="icloud_api">iCloud 全部</option>
+                <option value="icloud_api_token">iCloud API</option>
+                <option value="icloud_url">iCloud 独立 URL</option>
+                <option value="outlook">Outlook</option>
+                <option value="generic_api">通用 API</option>
+                <option value="cloudflare_domain">Cloudflare 域名邮箱</option>
+                <option value="cloudflare">Cloudflare 临时邮箱</option>
+                <option value="gptmail">GPTMail</option>
+                <option value="mailnest">MailNest</option>
+                <option value="cloudmail">CloudMail</option>
+              </select>
+              <span class="hint" id="regEmailSourceHint">空值将跟随当前配置</span>
+            </label>
+          </div>
+          <div>
             <label class="fld">注册数量
               <input id="regCount" type="number" min="1" max="200" value="1">
             </label>
@@ -780,9 +798,30 @@ async function loadSummary() {
 }
 
 // ---------- 注册 / 任务 ----------
+let REG_EMAIL_SOURCE_LABELS = {};
+
+async function loadRegistrationEmailSources() {
+  try {
+    const response = await api('/api/email-sources');
+    const select = $('#regEmailSource');
+    const options = Array.isArray(response.options) ? response.options : [];
+    REG_EMAIL_SOURCE_LABELS = Object.fromEntries(options.map(item => [item.value, item.label]));
+    if (select && options.length) {
+      select.innerHTML = '<option value="">跟随当前配置</option>' +
+        options.map(item => `<option value="${esc(item.value)}">${esc(item.label)}</option>`).join('');
+    }
+    const hint = $('#regEmailSourceHint');
+    if (hint) hint.textContent = `当前配置：${response.configured || '-'}`;
+  } catch(e) {
+    const hint = $('#regEmailSourceHint');
+    if (hint) hint.textContent = `来源列表加载失败：${e.message}`;
+  }
+}
+
 $('#btnStart').addEventListener('click', async () => {
   const count = parseInt($('#regCount').value || '1', 10);
   const workers = parseInt($('#regWorkers').value || '3', 10);
+  const selectedSource = $('#regEmailSource').value || '';
   const activeCount = Number(JOB_STATUS_COUNTS.active || 0);
   if (activeCount > 0) {
     const ok = confirm(
@@ -795,8 +834,11 @@ $('#btnStart').addEventListener('click', async () => {
   $('#btnStart').disabled = true;
   const restoreBtn = () => { $('#btnStart').disabled = false; };
   try {
-    const r = await api('/api/jobs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count, workers}) });
-    $('#regWarn').innerHTML = r.warning ? `<div class="banner warn">${esc(r.warning)}（本次并发 ${r.workers || workers}）</div>` : `<div class="banner info">已提交 ${r.submitted} 个任务，本次并发 ${r.workers || workers}</div>`;
+    const r = await api('/api/jobs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count, workers, email_source: selectedSource}) });
+    const sourceLabel = r.email_source_label || REG_EMAIL_SOURCE_LABELS[selectedSource] || '跟随当前配置';
+    $('#regWarn').innerHTML = r.warning
+      ? `<div class="banner warn">${esc(r.warning)}（邮箱来源：${esc(sourceLabel)}；本次并发 ${r.workers || workers}）</div>`
+      : `<div class="banner info">已提交 ${r.submitted} 个任务，邮箱来源：${esc(sourceLabel)}，本次并发 ${r.workers || workers}</div>`;
     refreshJobs();
   } catch(e) { $('#regWarn').innerHTML = `<div class="banner warn">${esc(e.message)}</div>`; }
   finally { setTimeout(restoreBtn, 3000); }
@@ -3181,6 +3223,7 @@ document.addEventListener('click', (e) => {
 
 // ---------- 初始化 ----------
 loadSummary();
+loadRegistrationEmailSources();
 activateTab(localStorage.getItem('gpt_console_active_tab') || 'register', false);
 jobsTimer = setInterval(() => { if (!$('#tab-register').classList.contains('hidden')) refreshJobs(); }, 3000);
 setInterval(loadSummary, 5000);
