@@ -130,8 +130,8 @@ SMS_POLL_INTERVAL: int = 5
 # 接码平台 HTTP 请求超时（秒）
 SMS_REQUEST_TIMEOUT: int = 30
 
-# 取消号码前等待秒数。-1=按平台自动选择：GrizzlySMS 125 秒，
-# SMS-Activate/HeroSMS 立即取消；其他非本地兼容平台也默认立即取消。
+# 取消号码前等待秒数。-1=按平台自动选择：GrizzlySMS、
+# SMS-Activate/HeroSMS 均等待 125 秒（120 秒限制 + 5 秒缓冲）。
 SMS_CANCEL_DELAY: int = env_int("SMS_CANCEL_DELAY", -1)
 
 

@@ -614,7 +614,7 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "SMS_CANCEL_DELAY", "file": "codex.py", "type": "int", "group": "接码平台",
-        "label": "取消前等待(秒)", "help": "-1=按平台自动；GrizzlySMS 125 秒，SMS-Activate/HeroSMS 立即取消",
+        "label": "取消前等待(秒)", "help": "-1=按平台自动；GrizzlySMS、SMS-Activate、HeroSMS 均按 125 秒取消",
         "storage": "env",
     },
     {

@@ -42,8 +42,9 @@ reuse one request/parser implementation for all compatible providers.
 - `SMS_API_BASE`: environment-overridable handler URL. Existing Grizzly URL
   remains the default to preserve current installations.
 - `SMS_API_KEY`: shared API key for handler-compatible providers.
-- `SMS_CANCEL_DELAY`: `-1` means provider default; Grizzly uses 125 seconds and
-  SMS-Activate/HeroSMS uses zero seconds.
+- `SMS_CANCEL_DELAY`: `-1` means provider default; Grizzly and
+  SMS-Activate/HeroSMS use 125 seconds (120-second platform restriction plus a
+  five-second buffer).
 - Existing `SMS_SERVICE`, `SMS_COUNTRY`, and `SMS_MAX_PRICE` remain the request
   parameters. HeroSMS/OpenAI users should enter the service code exposed by
   their account/API documentation, commonly `dr` on SMS-Activate-compatible
@@ -63,9 +64,10 @@ The request function will continue to recognize existing error strings such as
 Successful number acquisition, OTP polling, completion, and cancellation keep
 the public functions used by the Codex OAuth drivers unchanged.
 
-Cancellation delay becomes provider-aware. Grizzly retains its current
-two-minute guard, while HeroSMS/SMS-Activate can send status `8` immediately
-unless `SMS_CANCEL_DELAY` explicitly overrides the default.
+Cancellation delay becomes provider-aware. Grizzly and HeroSMS/SMS-Activate
+wait for the two-minute platform window plus a five-second buffer. Compatible
+providers cancel synchronously so the next number is not acquired before the
+previous cancellation request completes.
 
 ## Testing
 

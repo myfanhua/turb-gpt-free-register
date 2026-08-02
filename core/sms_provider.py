@@ -31,7 +31,7 @@ from config import IMPERSONATE
 
 logger = logging.getLogger(__name__)
 
-# GrizzlySMS 规则：号码取出后 2 分钟内不允许取消（防薅号）。
+# GrizzlySMS / SMS-Activate 兼容平台规则：号码取出后约 2 分钟内不允许取消。
 # 这里留 5 秒缓冲，时间到了再发 setStatus=8。
 _MIN_CANCEL_DELAY = 125
 
@@ -78,7 +78,7 @@ def _cancel_delay_seconds() -> int:
         configured = -1
     if configured >= 0:
         return configured
-    return _MIN_CANCEL_DELAY if _provider() == "grizzly" else 0
+    return _MIN_CANCEL_DELAY if _provider() in {"grizzly", "sms_activate"} else 0
 
 
 def _request_handler(http: CurlSession, params: dict) -> str:
@@ -604,7 +604,8 @@ def cancel(activation_id: str, http: CurlSession | None = None, background: bool
     """
     取消激活（status=8），释放号码避免白扣费。
 
-    GrizzlySMS 默认需要等待约 2 分钟；SMS-Activate/HeroSMS 默认立即取消。
+    GrizzlySMS / SMS-Activate / HeroSMS 默认等待约 2 分钟后取消。
+    SMS-Activate / HeroSMS 使用同步取消，确认旧号码取消请求完成后才允许继续取号。
     本函数默认 background=True，把"等待+取消"放到后台守护线程里执行，
     主流程立刻返回继续走（如换下一个号）。
 
@@ -626,6 +627,9 @@ def cancel(activation_id: str, http: CurlSession | None = None, background: bool
             logger.warning(f"[SMS:H] 释放号码失败（不影响主流程）：id={activation_id}, {type(exc).__name__}: {exc}")
             _ACQUIRED_AT.pop(activation_id, None)
         return
+
+    if _provider() == "sms_activate":
+        background = False
 
     if not background:
         _do_cancel_sync(activation_id, _http)
