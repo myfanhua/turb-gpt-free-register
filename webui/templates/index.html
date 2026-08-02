@@ -86,6 +86,30 @@
       display: inline-flex; gap: 8px; align-items: center;
     }
     .row .action-cell .btn { min-height: 38px; }
+    .registration-launch-grid {
+      display: grid;
+      grid-template-columns: minmax(260px, 1.25fr) minmax(160px, 1fr) minmax(160px, 1fr) auto;
+      gap: 14px;
+      align-items: end;
+    }
+    .registration-launch-grid .fld { margin: 0; }
+    .registration-launch-grid .action-cell {
+      display: inline-flex;
+      align-items: center;
+      align-self: end;
+    }
+    .registration-launch-grid .action-cell .btn { min-height: 38px; }
+    .registration-source-hint {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    @media (max-width: 760px) {
+      .registration-launch-grid { grid-template-columns: 1fr; }
+      .registration-launch-grid .action-cell,
+      .registration-launch-grid .action-cell .btn { width: 100%; }
+    }
     button.btn {
       min-height: 38px; border: 1px solid var(--line); border-radius: 7px; background: #fff;
       padding: 0 14px; font-weight: 800; cursor: pointer; font-size: 13px;
@@ -398,39 +422,33 @@
       <div class="head"><h2>启动批量注册</h2><p>从邮箱池自动领取邮箱并并发注册，下方实时查看任务进度与日志。</p></div>
       <div class="body">
         <div id="regWarn"></div>
-        <div class="row">
-          <div>
-            <label class="fld">邮箱来源
-              <select id="regEmailSource">
-                <option value="">跟随当前配置</option>
-                <option value="icloud_api">iCloud 全部</option>
-                <option value="icloud_api_token">iCloud API</option>
-                <option value="icloud_url">iCloud 独立 URL</option>
-                <option value="outlook">Outlook</option>
-                <option value="generic_api">通用 API</option>
-                <option value="cloudflare_domain">Cloudflare 域名邮箱</option>
-                <option value="cloudflare">Cloudflare 临时邮箱</option>
-                <option value="gptmail">GPTMail</option>
-                <option value="mailnest">MailNest</option>
-                <option value="cloudmail">CloudMail</option>
-              </select>
-              <span class="hint" id="regEmailSourceHint">空值将跟随当前配置</span>
-            </label>
-          </div>
-          <div>
-            <label class="fld">注册数量
-              <input id="regCount" type="number" min="1" max="200" value="1">
-            </label>
-          </div>
-          <div>
-            <label class="fld">并发线程数
-              <input id="regWorkers" type="number" min="1" max="16" value="3">
-            </label>
-          </div>
+        <div class="registration-launch-grid">
+          <label class="registration-source-field fld">邮箱来源
+            <select id="regEmailSource">
+              <option value="">跟随当前配置</option>
+              <option value="icloud_api">iCloud 全部</option>
+              <option value="icloud_api_token">iCloud API</option>
+              <option value="icloud_url">iCloud 独立 URL</option>
+              <option value="outlook">Outlook</option>
+              <option value="generic_api">通用 API</option>
+              <option value="cloudflare_domain">Cloudflare 域名邮箱</option>
+              <option value="cloudflare">Cloudflare 临时邮箱</option>
+              <option value="gptmail">GPTMail</option>
+              <option value="mailnest">MailNest</option>
+              <option value="cloudmail">CloudMail</option>
+            </select>
+          </label>
+          <label class="fld">注册数量
+            <input id="regCount" type="number" min="1" max="200" value="1">
+          </label>
+          <label class="fld">并发线程数
+            <input id="regWorkers" type="number" min="1" max="16" value="3">
+          </label>
           <div class="action-cell">
             <button class="btn primary" id="btnStart">开始注册</button>
           </div>
         </div>
+        <span class="registration-source-hint hint" id="regEmailSourceHint">空值将跟随当前配置</span>
       </div>
     </section>
     <section class="card">

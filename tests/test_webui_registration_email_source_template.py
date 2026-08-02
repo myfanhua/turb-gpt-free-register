@@ -36,6 +36,31 @@ class RegistrationEmailSourceTemplateTests(unittest.TestCase):
         self.assertIn("本次选择", self.template)
         self.assertIn("configured_label", self.template)
 
+    def test_registration_launch_controls_use_aligned_scoped_grid(self):
+        registration_card = self.template.split("启动批量注册", 1)[1].split(
+            "任务列表", 1
+        )[0]
+
+        self.assertIn('class="registration-launch-grid"', registration_card)
+        self.assertIn('class="registration-source-field fld"', registration_card)
+        self.assertIn(
+            'class="registration-source-hint hint" id="regEmailSourceHint"',
+            registration_card,
+        )
+        source_label = registration_card.split('id="regEmailSource"', 1)[1].split(
+            "</label>", 1
+        )[0]
+        self.assertNotIn('id="regEmailSourceHint"', source_label)
+        self.assertIn(
+            "grid-template-columns: minmax(260px, 1.25fr) minmax(160px, 1fr) "
+            "minmax(160px, 1fr) auto;",
+            self.template,
+        )
+        self.assertIn(
+            "@media (max-width: 760px)",
+            self.template,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
