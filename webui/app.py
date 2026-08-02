@@ -710,7 +710,10 @@ def create_app(auth_code: str | None = None) -> Flask:
 
     def _is_extract_eligible(acc: dict) -> bool:
         plan = str(acc.get("current_plan_type") or acc.get("plan_type") or "").lower()
-        return plan == "free" and bool(acc.get("plus_trial_eligible"))
+        # plus_trial_eligible 来自本地套餐查询，可能受查询时机、地区和代理影响而
+        # 出现假阴性。用户手动发起提链时只把 free 作为硬条件，最终资格交给
+        # 提链服务逐账号判断。
+        return plan == "free"
 
     @app.post("/api/accounts/extract-link")
     def api_account_extract_link():
@@ -724,7 +727,7 @@ def create_app(auth_code: str | None = None) -> Flask:
         if not acc:
             return jsonify({"ok": False, "error": "账号不存在"}), 404
         if not _is_extract_eligible(acc):
-            return jsonify({"ok": False, "error": "仅支持 free(可Plus试用) 账号提链；请先查询套餐确认资格"}), 400
+            return jsonify({"ok": False, "error": "仅支持 free 账号提链；请先查询套餐确认账号状态"}), 400
         token = (acc.get("access_token") or "").strip()
         if not token:
             return jsonify({"ok": False, "error": "该账号没有 access_token"}), 400
@@ -777,7 +780,7 @@ def create_app(auth_code: str | None = None) -> Flask:
                 continue
             email = acc.get("email")
             if not _is_extract_eligible(acc):
-                skipped.append({"id": acc_id, "email": email, "reason": "不是 free(可Plus试用)"})
+                skipped.append({"id": acc_id, "email": email, "reason": "不是 free 账号"})
                 continue
             token = (acc.get("access_token") or "").strip()
             if not token:

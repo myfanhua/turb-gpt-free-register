@@ -1,4 +1,6 @@
+import ast
 import unittest
+from pathlib import Path
 
 from config import extract_link
 from webui.config_editor import EDITABLE_FIELDS
@@ -6,14 +8,23 @@ from webui.config_editor import EDITABLE_FIELDS
 
 class KakaoExtractConfigTests(unittest.TestCase):
     def test_defaults_preserve_legacy_provider(self):
-        self.assertEqual(extract_link.EXTRACT_LINK_PROVIDER, "legacy")
-        self.assertEqual(extract_link.KAKAO_EXTRACT_BATCH_SIZE, 5)
+        source = Path(extract_link.__file__).read_text(encoding="utf-8")
+        defaults = {
+            node.target.id: ast.literal_eval(node.value)
+            for node in ast.parse(source).body
+            if isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.value is not None
+        }
+
+        self.assertEqual(defaults["EXTRACT_LINK_PROVIDER"], "legacy")
+        self.assertEqual(defaults["KAKAO_EXTRACT_BATCH_SIZE"], 5)
         self.assertEqual(
-            extract_link.KAKAO_EXTRACT_API_BASE,
+            defaults["KAKAO_EXTRACT_API_BASE"],
             "https://tiqu.dxmcs.xin",
         )
-        self.assertEqual(extract_link.KAKAO_EXTRACT_TIMEOUT_SECONDS, 930)
-        self.assertEqual(extract_link.KAKAO_EXTRACT_POLL_INTERVAL, 4.0)
+        self.assertEqual(defaults["KAKAO_EXTRACT_TIMEOUT_SECONDS"], 930)
+        self.assertEqual(defaults["KAKAO_EXTRACT_POLL_INTERVAL"], 4.0)
 
     def test_kakao_cdk_is_a_separate_secret_field(self):
         fields = {field["key"]: field for field in EDITABLE_FIELDS}

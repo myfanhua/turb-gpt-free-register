@@ -33,6 +33,10 @@ class WebUiExtractLinkProviderTemplateTests(unittest.TestCase):
         self.assertIn("extract_link_provider", self.html)
         self.assertIn("Kakao", self.html)
 
+    def test_manual_extract_treats_local_trial_flag_as_advisory(self):
+        self.assertIn("function isExtractableFreeAccount", self.html)
+        self.assertIn("本地未检测到 Plus 试用资格", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

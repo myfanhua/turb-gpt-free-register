@@ -516,7 +516,7 @@
             <label class="inline-num" id="extractLinkBatchSizeWrap" title="Kakao 每批提交数量，范围 1-5">每批
               <input id="extractLinkBatchSize" type="number" min="1" max="5" value="5">
             </label>
-            <button class="btn good" id="btnExtractSelectedLinks" disabled title="给选中的 free(可Plus试用) 账号批量提链，类型按配置 PIX/UPI/KAKAO_PAY/IDEAL">提链</button>
+            <button class="btn good" id="btnExtractSelectedLinks" disabled title="给选中的 free 账号批量提链；本地资格结果仅作提示，最终由提链服务判断">提链</button>
             <button class="btn" id="btnSaveExtractDefaults" type="button" title="把当前服务和 Kakao 每批数量保存为默认值">设为默认</button>
           </div>
           <div class="btn-group">
@@ -1243,6 +1243,16 @@ function extractProviderLabel(provider = currentExtractProvider()) {
   return provider === 'kakao_batch' ? 'Kakao API' : '旧接口';
 }
 
+function isExtractableFreeAccount(account) {
+  const plan = (account?.current_plan_type || account?.plan_type || '').toString().toLowerCase();
+  return plan === 'free';
+}
+
+function localTrialWarning(accounts) {
+  const count = (accounts || []).filter(account => !account.plus_trial_eligible).length;
+  return count ? `\n其中 ${count} 个账号本地未检测到 Plus 试用资格，将交给提链服务实际判断。` : '';
+}
+
 function syncExtractProviderControls() {
   const kakao = currentExtractProvider() === 'kakao_batch';
   const wrap = $('#extractLinkBatchSizeWrap');
@@ -1251,8 +1261,8 @@ function syncExtractProviderControls() {
   if (input) input.disabled = !kakao;
   const bulk = $('#btnExtractSelectedLinks');
   if (bulk) bulk.title = kakao
-    ? '用 Kakao API 为选中的 free(可Plus试用) 账号批量提链；每批最多 5 个'
-    : '用旧接口为选中的 free(可Plus试用) 账号批量提链';
+    ? '用 Kakao API 为选中的 free 账号批量提链；每批最多 5 个'
+    : '用旧接口为选中的 free 账号批量提链';
 }
 
 async function loadExtractLinkOptions(force = false) {
@@ -1523,12 +1533,11 @@ function _extractLinkCell(r) {
 function _extractLinkAction(r) {
   const s = r.extract_link_status || '';
   if (['queued','running'].includes(s)) return `<button disabled title="${esc(r.extract_link_message || '提链任务执行中')}">提链中…</button>`;
-  const plan = (r.current_plan_type || r.plan_type || '').toString().toLowerCase();
-  const eligible = plan === 'free' && !!r.plus_trial_eligible;
-  if (!eligible) return '';
+  if (!isExtractableFreeAccount(r)) return '';
   const failedReason = s === 'failed' ? (r.extract_link_error || r.extract_link_message || '') : '';
   const provider = extractProviderLabel();
-  return `<button class="good" data-extract-link="${esc(r.id)}" title="${esc(failedReason ? `使用${provider}重新提链；上次失败原因：` + failedReason : `使用${provider}为该 free(可Plus试用) 账号提链`)}">提链</button>`;
+  const qualification = r.plus_trial_eligible ? '本地已确认 Plus 试用资格' : '本地资格未确认，由提链服务实际判断';
+  return `<button class="good" data-extract-link="${esc(r.id)}" title="${esc(failedReason ? `使用${provider}重新提链；上次失败原因：` + failedReason : `使用${provider}为该 free 账号提链；${qualification}`)}">提链</button>`;
 }
 function _codexAction(r) {
   const s = r.codex_status || '';
@@ -1960,9 +1969,8 @@ async function checkOnePlan(id, btn) {
 async function extractOneLink(id, btn) {
   const acc = ACCOUNTS.find(a => Number(a.id) === Number(id));
   if (!acc) { showToast('账号不存在'); return; }
-  const plan = (acc.current_plan_type || acc.plan_type || '').toString().toLowerCase();
-  if (plan !== 'free' || !acc.plus_trial_eligible) {
-    showToast('仅支持 free(可Plus试用) 账号提链');
+  if (!isExtractableFreeAccount(acc)) {
+    showToast('仅支持 free 账号提链');
     return;
   }
   const provider = currentExtractProvider();
@@ -1970,7 +1978,8 @@ async function extractOneLink(id, btn) {
   const detail = provider === 'kakao_batch'
     ? 'Kakao API 将异步生成 Kakao/Nicepay 支付链接。'
     : '旧接口的提链类型按配置使用 PIX/UPI/KAKAO_PAY/IDEAL。';
-  if (!confirm(`确定使用 ${providerLabel} 为该账号提链吗？\n\n${acc.email || ('#' + id)}\n\n${detail}\n成功会消耗对应 CDK 次数。`)) return;
+  const warning = localTrialWarning([acc]);
+  if (!confirm(`确定使用 ${providerLabel} 为该账号提链吗？\n\n${acc.email || ('#' + id)}\n\n${detail}${warning}\n成功会消耗对应 CDK 次数。`)) return;
   const old = btn.textContent;
   btn.disabled = true;
   btn.textContent = '提链中…';
@@ -1997,8 +2006,8 @@ async function extractSelectedLinks() {
   const ids = Array.from(ACCOUNT_SELECTED);
   if (ids.length === 0) { showToast('请先选择账号'); return; }
   const selected = ids.map(id => ACCOUNTS.find(a => Number(a.id) === Number(id))).filter(Boolean);
-  const eligible = selected.filter(a => (a.current_plan_type || a.plan_type || '').toString().toLowerCase() === 'free' && !!a.plus_trial_eligible);
-  if (!eligible.length) { showToast('选中账号里没有 free(可Plus试用)'); return; }
+  const eligible = selected.filter(isExtractableFreeAccount);
+  if (!eligible.length) { showToast('选中账号里没有 free 账号'); return; }
   const provider = currentExtractProvider();
   const providerLabel = extractProviderLabel(provider);
   const batchSize = currentExtractBatchSize();
@@ -2006,7 +2015,8 @@ async function extractSelectedLinks() {
   const batchDetail = provider === 'kakao_batch'
     ? `每批 ${batchSize} 个，预计 ${estimatedBatches} 批。`
     : '旧接口将按账号分别创建任务。';
-  if (!confirm(`确定使用 ${providerLabel} 批量提链 ${eligible.length} 个 free(可Plus试用) 账号吗？\n\n${batchDetail}\n非可试用账号会自动跳过，成功会按实际结果消耗 CDK 次数。`)) return;
+  const warning = localTrialWarning(eligible);
+  if (!confirm(`确定使用 ${providerLabel} 批量提链 ${eligible.length} 个 free 账号吗？\n\n${batchDetail}${warning}\n非 free 账号会自动跳过，成功会按实际结果消耗 CDK 次数。`)) return;
   const btn = $('#btnExtractSelectedLinks');
   const old = btn.textContent;
   btn.disabled = true;

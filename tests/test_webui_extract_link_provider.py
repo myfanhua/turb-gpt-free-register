@@ -95,19 +95,47 @@ class WebUiExtractLinkProviderTests(unittest.TestCase):
 
     @patch("webui.app.extract_link_service.enqueue_accounts_extract")
     @patch("webui.app.db.get_account")
-    def test_bulk_route_uses_only_selected_eligible_accounts(self, get_account, enqueue):
+    def test_single_route_allows_free_account_when_local_trial_flag_is_false(self, get_account, enqueue):
+        get_account.return_value = {
+            **eligible_account(1),
+            "plus_trial_eligible": False,
+        }
+        enqueue.return_value = {
+            "provider": "kakao_batch",
+            "batch_count": 1,
+            "started": [{"id": 1}],
+            "started_count": 1,
+            "busy": [],
+            "busy_count": 0,
+            "failed": [],
+            "failed_count": 0,
+        }
+
+        response = self.client.post("/api/accounts/extract-link", json={
+            "account_id": 1,
+            "provider": "kakao_batch",
+            "batch_size": 5,
+        })
+
+        self.assertEqual(response.status_code, 202)
+        enqueue.assert_called_once()
+
+    @patch("webui.app.extract_link_service.enqueue_accounts_extract")
+    @patch("webui.app.db.get_account")
+    def test_bulk_route_uses_selected_free_accounts_even_when_local_trial_flag_is_false(self, get_account, enqueue):
         accounts = {
             1: eligible_account(1),
             2: {**eligible_account(2), "plus_trial_eligible": False},
             3: eligible_account(3),
+            4: {**eligible_account(4), "current_plan_type": "plus", "plan_type": "plus"},
         }
         get_account.side_effect = lambda account_id: accounts.get(account_id)
         enqueue.return_value = {
             "provider": "kakao_batch",
             "batch_size": 2,
             "batch_count": 1,
-            "started": [{"id": 1}, {"id": 3}],
-            "started_count": 2,
+            "started": [{"id": 1}, {"id": 2}, {"id": 3}],
+            "started_count": 3,
             "busy": [],
             "busy_count": 0,
             "failed": [],
@@ -115,7 +143,7 @@ class WebUiExtractLinkProviderTests(unittest.TestCase):
         }
 
         response = self.client.post("/api/accounts/extract-link-bulk", json={
-            "account_ids": [1, 2, 3],
+            "account_ids": [1, 2, 3, 4],
             "provider": "kakao_batch",
             "batch_size": 2,
         })
@@ -125,7 +153,7 @@ class WebUiExtractLinkProviderTests(unittest.TestCase):
         self.assertEqual(payload["batch_count"], 1)
         self.assertEqual(payload["skipped_count"], 1)
         kwargs = enqueue.call_args.kwargs
-        self.assertEqual([item["id"] for item in kwargs["accounts"]], [1, 3])
+        self.assertEqual([item["id"] for item in kwargs["accounts"]], [1, 2, 3])
         self.assertEqual(kwargs["batch_size"], 2)
 
     def test_compact_account_exposes_batch_status_without_secrets(self):

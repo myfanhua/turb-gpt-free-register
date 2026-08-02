@@ -465,7 +465,7 @@ KAKAO_EXTRACT_POLL_INTERVAL=4
 
 - 在“账号 → 套餐/提链”工具栏选择“旧接口”或“Kakao API”，然后点击原有“提链”按钮。
 - “设为默认”会保存当前 provider；选择 Kakao 时同时保存每批数量。
-- 只处理用户手动勾选的账号；后端会再次过滤缺少 Token 或不具备 Plus 试用资格的账号。
+- 只处理用户手动勾选的 free 账号；本地 Plus 试用资格结果仅作提示，后端会过滤非 free 或缺少 Token 的账号，最终资格由提链服务逐账号判断。
 - Kakao 每批可设置 `1～5` 个账号。选择更多账号时自动拆批，例如 12 个账号按 5 个拆成 `5 + 5 + 2`。
 - 两套 API 地址和 CDK 分开保存。Kakao 没有独立的 CDK 查询接口，页面显示最近一次任务返回的剩余次数。
 - Kakao 使用 `POST /api/v1/extractions/async` 提交并轮询 `GET /api/v1/extractions/{batchId}`；WebUI 重启后会继续查询已保存的批次，不会重新提交同一批任务。
