@@ -180,7 +180,9 @@ def _compact_account_for_list(row: dict) -> dict:
         # 提链成功/失败时才需要。
         "extract_link_status", "extract_link_type", "extract_link_message", "extract_link_error",
         "extract_link_long_url", "extract_link_copy_paste", "extract_link_image_url_png",
-        "extract_link_image_url_svg", "extract_link_expires_at",
+        "extract_link_image_url_svg", "extract_link_expires_at", "extract_link_provider",
+        "extract_link_batch_id", "extract_link_batch_number", "extract_link_batch_total",
+        "extract_link_result_index", "extract_link_cdk_remaining",
         # Codex / Agent 状态提示。
         "codex_error", "codex_agent_message", "codex_agent_runtime_id",
         "codex_agent_sub2api_url", "codex_agent_sub2api_mode", "codex_agent_sub2api_total",
@@ -283,8 +285,17 @@ def create_app(auth_code: str | None = None) -> Flask:
     if recovered_plan_checks:
         logger.warning("已恢复 %s 个因 WebUI 重启中断的套餐查询状态", recovered_plan_checks)
     recovered_extract_links = db.recover_interrupted_extract_links()
-    if recovered_extract_links:
-        logger.warning("已恢复 %s 个因 WebUI 重启中断的提链状态", recovered_extract_links)
+    failed_extract_links = int(recovered_extract_links.get("failed_count") or 0)
+    if failed_extract_links:
+        logger.warning("已标记 %s 个因 WebUI 重启中断且不可恢复的提链状态", failed_extract_links)
+    resumed_extract_links = extract_link_service.resume_interrupted_kakao_batches(
+        recovered_extract_links.get("kakao_batches") or []
+    )
+    if resumed_extract_links.get("resumed_batches"):
+        logger.warning(
+            "已恢复 %s 个 Kakao 提链批次轮询",
+            resumed_extract_links.get("resumed_batches"),
+        )
     recovered_codex_agents = db.recover_interrupted_codex_agents()
     if recovered_codex_agents:
         logger.warning("已恢复 %s 个因 WebUI 重启中断的 Codex Agent Token 状态", recovered_codex_agents)
@@ -655,6 +666,48 @@ def create_app(auth_code: str | None = None) -> Flask:
         except Exception as exc:
             return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 400
 
+    @app.get("/api/extract-link/options")
+    def api_extract_link_options():
+        """账号页提链 provider 选择与默认值。"""
+        try:
+            return jsonify({
+                "ok": True,
+                "providers": [
+                    {"value": "legacy", "label": "旧接口"},
+                    {"value": "kakao_batch", "label": "Kakao API"},
+                ],
+                "default_provider": extract_link_service.provider_name(),
+                "default_batch_size": extract_link_service.kakao_batch_size(),
+                "batch_size_min": 1,
+                "batch_size_max": 5,
+                "kakao_remaining_count": extract_link_service.latest_kakao_remaining_count(),
+            })
+        except Exception as exc:
+            return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 400
+
+    @app.post("/api/extract-link/defaults")
+    def api_extract_link_defaults():
+        """保存账号页的默认 provider 与 Kakao 每批数量。"""
+        data = request.get_json(silent=True) or {}
+        try:
+            provider = extract_link_service.provider_name(data.get("provider"))
+            batch_size = extract_link_service.kakao_batch_size(data.get("batch_size"))
+            result = config_editor.update_config({
+                "EXTRACT_LINK_PROVIDER": provider,
+                "KAKAO_EXTRACT_BATCH_SIZE": batch_size,
+            })
+            import config as _config_pkg
+            _config_pkg.reload_all()
+            return jsonify({
+                "ok": True,
+                "provider": provider,
+                "batch_size": batch_size,
+                "updated": result.get("updated") or [],
+            })
+        except Exception as exc:
+            logger.exception("保存提链默认配置失败")
+            return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 400
+
     def _is_extract_eligible(acc: dict) -> bool:
         plan = str(acc.get("current_plan_type") or acc.get("plan_type") or "").lower()
         return plan == "free" and bool(acc.get("plus_trial_eligible"))
@@ -676,21 +729,25 @@ def create_app(auth_code: str | None = None) -> Flask:
         if not token:
             return jsonify({"ok": False, "error": "该账号没有 access_token"}), 400
         try:
-            queued = extract_link_service.enqueue_account_extract(
-                account_id=int(acc.get("id")),
-                email=acc.get("email") or "",
-                access_token=token,
+            queued = extract_link_service.enqueue_accounts_extract(
+                accounts=[{
+                    "id": int(acc.get("id")),
+                    "email": acc.get("email") or "",
+                    "access_token": token,
+                }],
                 trigger="manual",
+                provider=data.get("provider"),
+                batch_size=data.get("batch_size"),
                 link_type=data.get("link_type"),
                 cdk=data.get("cdk"),
             )
         except Exception as exc:
             return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 400
-        if queued.get("busy"):
+        if queued.get("busy_count") and not queued.get("started_count"):
             return jsonify({"ok": False, **queued}), 409
-        if not queued.get("accepted"):
+        if not queued.get("started_count"):
             return jsonify({"ok": False, **queued}), 503
-        return jsonify({"ok": True, "started": True, **{k: v for k, v in queued.items() if k != "future"}}), 202
+        return jsonify({"ok": True, "started": True, **queued}), 202
 
     @app.post("/api/accounts/extract-link-bulk")
     def api_accounts_extract_link_bulk():
@@ -702,9 +759,7 @@ def create_app(auth_code: str | None = None) -> Flask:
         if len(ids) > 500:
             return jsonify({"ok": False, "error": "单次最多提链 500 个账号"}), 400
 
-        started = []
-        busy = []
-        failed = []
+        eligible_accounts = []
         skipped = []
         seen = set()
         for raw in ids:
@@ -728,33 +783,25 @@ def create_app(auth_code: str | None = None) -> Flask:
             if not token:
                 skipped.append({"id": acc_id, "email": email, "reason": "缺少 access_token"})
                 continue
-            try:
-                queued = extract_link_service.enqueue_account_extract(
-                    account_id=acc_id,
-                    email=email or "",
-                    access_token=token,
-                    trigger="manual_bulk",
-                    link_type=data.get("link_type"),
-                    cdk=data.get("cdk"),
-                )
-            except Exception as exc:
-                failed.append({"id": acc_id, "email": email, "error": f"{type(exc).__name__}: {exc}"})
-                continue
-            item = {"id": acc_id, "email": email, **{k: v for k, v in queued.items() if k != "future"}}
-            if queued.get("accepted"):
-                started.append(item)
-            elif queued.get("busy"):
-                busy.append(item)
-            else:
-                failed.append(item)
+            eligible_accounts.append({
+                "id": acc_id,
+                "email": email or "",
+                "access_token": token,
+            })
+        try:
+            queued = extract_link_service.enqueue_accounts_extract(
+                accounts=eligible_accounts,
+                trigger="manual_bulk",
+                provider=data.get("provider"),
+                batch_size=data.get("batch_size"),
+                link_type=data.get("link_type"),
+                cdk=data.get("cdk"),
+            )
+        except Exception as exc:
+            return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 400
         return jsonify({
             "ok": True,
-            "started": started,
-            "started_count": len(started),
-            "busy": busy,
-            "busy_count": len(busy),
-            "failed": failed,
-            "failed_count": len(failed),
+            **queued,
             "skipped": skipped,
             "skipped_count": len(skipped),
         }), 202

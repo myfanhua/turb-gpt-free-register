@@ -140,6 +140,34 @@ def queue_settings() -> dict:
     return {"workers": _WORKERS, "queue_limit": _QUEUE_LIMIT}
 
 
+def latest_kakao_remaining_count() -> int | None:
+    """返回最近一次 Kakao 批次写入的剩余次数。"""
+    try:
+        rows = db.list_accounts(limit=5000, archived="all")
+    except Exception:
+        return None
+    candidates = [
+        row for row in rows
+        if str(row.get("extract_link_provider") or "").strip().lower() == "kakao_batch"
+        and row.get("extract_link_cdk_remaining") is not None
+    ]
+    candidates.sort(
+        key=lambda row: str(
+            row.get("extract_link_checked_at")
+            or row.get("extract_link_completed_at")
+            or row.get("updated_at")
+            or ""
+        ),
+        reverse=True,
+    )
+    if not candidates:
+        return None
+    try:
+        return int(candidates[0].get("extract_link_cdk_remaining"))
+    except (TypeError, ValueError):
+        return None
+
+
 def _session():
     if curl_requests is None:
         return None
