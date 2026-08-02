@@ -65,6 +65,49 @@ class ICloudWebUiTests(unittest.TestCase):
             },
         ])
 
+    @patch("webui.app.db.import_icloud_emails")
+    def test_import_accepts_url_only_with_three_or_more_dashes(self, import_icloud):
+        import_icloud.return_value = {"inserted": 5, "updated": 0, "skipped": 0, "invalid": 0}
+        response = self.client.post("/api/outlook/import", json={
+            "source": "icloud_api",
+            "text": (
+                "dash-name@icloud.com---https://pickup.example/show/cred-with-dash/dash-name@icloud.com\n"
+                "four@icloud.com----https://pickup.example/show/credential/four@icloud.com\n"
+                "five@icloud.com-----https://pickup.example/show/credential/five@icloud.com\n"
+                "six@icloud.com------https://pickup.example/show/credential/six@icloud.com\n"
+                "mixed@icloud.com----tok_mixed----https://pickup.example/show/credential/mixed@icloud.com"
+            ),
+        })
+
+        self.assertEqual(response.status_code, 200)
+        import_icloud.assert_called_once_with([
+            {
+                "email": "dash-name@icloud.com",
+                "token": "",
+                "pickup_url": "https://pickup.example/show/cred-with-dash/dash-name@icloud.com",
+            },
+            {
+                "email": "four@icloud.com",
+                "token": "",
+                "pickup_url": "https://pickup.example/show/credential/four@icloud.com",
+            },
+            {
+                "email": "five@icloud.com",
+                "token": "",
+                "pickup_url": "https://pickup.example/show/credential/five@icloud.com",
+            },
+            {
+                "email": "six@icloud.com",
+                "token": "",
+                "pickup_url": "https://pickup.example/show/credential/six@icloud.com",
+            },
+            {
+                "email": "mixed@icloud.com",
+                "token": "tok_mixed",
+                "pickup_url": "https://pickup.example/show/credential/mixed@icloud.com",
+            },
+        ])
+
     @patch("webui.app.db.list_icloud_email_pool")
     def test_list_icloud_pool_returns_only_masked_token(self, list_pool):
         list_pool.return_value = [{"id": 1, "email": "one@icloud.com", "status": "available", "token_masked": "tok_****1234"}]

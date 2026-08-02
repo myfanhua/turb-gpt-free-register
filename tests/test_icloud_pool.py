@@ -61,6 +61,66 @@ class ICloudPoolTests(unittest.TestCase):
         row = db.get_icloud_email_by_email("one@icloud.com", include_token=True)
         self.assertEqual(row["pickup_url"], pickup_url)
 
+    def test_import_accepts_url_only_and_hides_raw_url_from_public_rows(self):
+        pickup_url = "https://pickup.example/show/secret-value/one@icloud.com"
+
+        result = db.import_icloud_emails([
+            {"email": "one@icloud.com", "token": "", "pickup_url": pickup_url},
+        ])
+
+        self.assertEqual(result, {"inserted": 1, "updated": 0, "skipped": 0, "invalid": 0})
+        public_row = db.get_icloud_email_by_email("one@icloud.com")
+        self.assertEqual(public_row["pickup_mode"], "independent_url")
+        self.assertTrue(public_row["has_pickup_url"])
+        self.assertNotIn("pickup_url", public_row)
+        self.assertNotIn("secret-value", str(public_row))
+
+        claimed = db.claim_next_icloud_email()
+        self.assertEqual(claimed["pickup_url"], pickup_url)
+        self.assertEqual(claimed["pickup_mode"], "independent_url")
+
+    def test_import_derives_api_and_mixed_pickup_modes(self):
+        db.import_icloud_emails([
+            {"email": "api@icloud.com", "token": "tok_api"},
+            {
+                "email": "mixed@icloud.com",
+                "token": "tok_mixed",
+                "pickup_url": "https://pickup.example/show/secret/mixed@icloud.com",
+            },
+        ])
+
+        api_row = db.get_icloud_email_by_email("api@icloud.com")
+        mixed_row = db.get_icloud_email_by_email("mixed@icloud.com")
+        self.assertEqual(api_row["pickup_mode"], "api_token")
+        self.assertFalse(api_row["has_pickup_url"])
+        self.assertEqual(mixed_row["pickup_mode"], "independent_url_with_token")
+        self.assertTrue(mixed_row["has_pickup_url"])
+
+    def test_import_rejects_pickup_url_for_another_mailbox(self):
+        result = db.import_icloud_emails([{
+            "email": "one@icloud.com",
+            "token": "",
+            "pickup_url": "https://pickup.example/show/secret/two@icloud.com",
+        }])
+
+        self.assertEqual(result, {"inserted": 0, "updated": 0, "skipped": 0, "invalid": 1})
+        self.assertEqual(db.icloud_email_pool_summary()["total"], 0)
+
+    def test_import_updates_existing_mailbox_in_place(self):
+        db.import_icloud_emails([{"email": "one@icloud.com", "token": "tok_old"}])
+
+        result = db.import_icloud_emails([{
+            "email": "ONE@icloud.com",
+            "token": "",
+            "pickup_url": "https://pickup.example/show/secret/one@icloud.com",
+        }])
+
+        self.assertEqual(result, {"inserted": 0, "updated": 1, "skipped": 0, "invalid": 0})
+        self.assertEqual(db.icloud_email_pool_summary()["total"], 1)
+        claimed = db.claim_next_icloud_email()
+        self.assertEqual(claimed["token"], "")
+        self.assertEqual(claimed["pickup_mode"], "independent_url")
+
     def test_short_tokens_are_never_echoed_in_full(self):
         for token in ("a", "abcd", "tok_", "tok_a"):
             with self.subTest(token=token):

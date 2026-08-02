@@ -11,6 +11,7 @@ Flask 本地控制台。
 默认绑定 127.0.0.1，仅本地访问。
 """
 import logging
+import re
 import threading
 import time
 import uuid
@@ -24,6 +25,44 @@ from core import registration_service as svc
 from webui import config_editor
 
 logger = logging.getLogger(__name__)
+
+_ICLOUD_DASH_IMPORT_RE = re.compile(
+    r"^(?P<email>[^\s@]+@icloud\.com)-{3,}(?P<material>.+)$",
+    re.IGNORECASE,
+)
+_ICLOUD_URL_SPLIT_RE = re.compile(r"-{3,}(?=https://)", re.IGNORECASE)
+
+
+def _parse_icloud_import_line(line: str) -> dict:
+    """Parse one iCloud pool line without splitting inside an HTTPS URL."""
+    value = str(line or "").strip()
+    matched = _ICLOUD_DASH_IMPORT_RE.match(value)
+    if matched:
+        email = matched.group("email").strip()
+        material = matched.group("material").strip()
+        if material.lower().startswith("https://"):
+            return {"email": email, "token": "", "pickup_url": material}
+        token_and_url = _ICLOUD_URL_SPLIT_RE.split(material, maxsplit=1)
+        record = {"email": email, "token": token_and_url[0].strip()}
+        if len(token_and_url) > 1 and token_and_url[1].strip():
+            record["pickup_url"] = token_and_url[1].strip()
+        return record
+
+    parts = None
+    for separator in ("----", "====", "---", "\t", "|", "，", ",", "：", ":"):
+        if separator in value:
+            parts = value.split(separator, 2)
+            break
+    if parts is None:
+        parts = value.split(None, 1)
+    parts = [part.strip() for part in parts]
+    record = {
+        "email": parts[0] if parts else "",
+        "token": parts[1] if len(parts) > 1 else "",
+    }
+    if len(parts) > 2 and parts[2]:
+        record["pickup_url"] = parts[2]
+    return record
 
 def _pool_source_arg(default: str = "outlook") -> str:
     src = (request.args.get("source") or "").strip()
@@ -1242,28 +1281,11 @@ def create_app(auth_code: str | None = None) -> Flask:
             if not line or line.startswith("#"):
                 continue
             if source == "icloud_api":
-                parts = None
-                for separator in ("----", "====", "---", "\t", "|", "，", ",", "：", ":"):
-                    if separator in line:
-                        # iCloud Pickup 导出常见格式：email---token---pickup_url。
-                        # 必须先识别三横线，否则会误把 URL 的 ``https:`` 当分隔符，
-                        # 导致整段 email---token---https 被保存成邮箱地址。
-                        parts = line.split(separator, 2)
-                        break
-                if parts is None:
-                    parts = line.split(None, 1)
+                records.append(_parse_icloud_import_line(line))
+                continue
             else:
                 parts = line.split("----") if "----" in line else line.split("====")
             parts = [p.strip() for p in parts]
-            if source == "icloud_api":
-                record = {
-                    "email": parts[0] if parts else "",
-                    "token": parts[1] if len(parts) > 1 else "",
-                }
-                if len(parts) > 2 and parts[2]:
-                    record["pickup_url"] = parts[2]
-                records.append(record)
-                continue
             if source == "generic_api":
                 if len(parts) < 2:
                     continue

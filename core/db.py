@@ -19,6 +19,7 @@ from datetime import datetime
 from html import escape
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +105,12 @@ def _generic_api_email_line(row: dict) -> str:
 
 
 def _icloud_email_line(row: dict) -> str:
-    values = [row.get("email") or "", row.get("token") or ""]
+    email = row.get("email") or ""
+    token = row.get("token") or ""
     pickup_url = str(row.get("pickup_url") or "").strip()
+    if pickup_url and not token:
+        return "----".join([email, pickup_url])
+    values = [email, token]
     if pickup_url:
         values.append(pickup_url)
     return "----".join(values)
@@ -124,6 +129,22 @@ def _mask_icloud_token(token: str) -> str:
         return "tok_****"
     suffix = value[-4:]
     return f"{prefix}****{suffix}"
+
+
+def _icloud_pickup_mode(token: str, pickup_url: str) -> str:
+    if pickup_url and token:
+        return "independent_url_with_token"
+    if pickup_url:
+        return "independent_url"
+    return "api_token"
+
+
+def _valid_icloud_pickup_url(email: str, pickup_url: str) -> bool:
+    parsed = urlparse(str(pickup_url or "").strip())
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
+        return False
+    tail = unquote(parsed.path.rstrip("/").rsplit("/", 1)[-1]).strip().lower()
+    return "@" not in tail or tail == str(email or "").strip().lower()
 
 
 def _account_line(row: dict) -> str:
@@ -540,13 +561,16 @@ def _save_icloud_emails(rows: list[dict]) -> None:
 def _decorate_icloud_email(row: dict, *, include_token: bool = False) -> dict:
     out = dict(row)
     token = str(out.pop("token", "") or "")
+    pickup_url = str(out.pop("pickup_url", "") or "").strip()
     out["token_masked"] = _mask_icloud_token(token)
-    # copy_line is intentionally email-only; the raw mailbox token should not
-    # be exposed through list endpoints or normal task output. The per-mailbox
-    # Pickup URL is safe to preserve because it is an endpoint, not a secret.
+    out["pickup_mode"] = _icloud_pickup_mode(token, pickup_url)
+    out["has_pickup_url"] = bool(pickup_url)
+    # copy_line is intentionally email-only; raw mailbox credentials must not
+    # be exposed through list endpoints or normal task output.
     out["copy_line"] = out.get("email") or ""
     if include_token:
         out["token"] = token
+        out["pickup_url"] = pickup_url
     return out
 
 
@@ -1690,7 +1714,7 @@ def get_outlook_by_email(email: str) -> dict | None:
 # ============================================================
 
 def import_icloud_emails(records: list[dict]) -> dict[str, int]:
-    """批量导入 iCloud 邮箱及其专属 Pickup Token。
+    """批量导入 iCloud 邮箱及其专属 Pickup Token/URL。
 
     邮箱按小写地址去重；同一批中后出现的 Token 覆盖前一条。已有
     ``used``/``registered`` 记录不会被重置，避免覆盖正在运行的任务。
@@ -1706,16 +1730,26 @@ def import_icloud_emails(records: list[dict]) -> dict[str, int]:
             email = str(raw.get("email") or "").strip().lower()
             token = str(raw.get("token") or "").strip()
             pickup_url = str(raw.get("pickup_url") or raw.get("pickupUrl") or "").strip()
-            if not email or "@" not in email or not token:
+            if (
+                not email
+                or "@" not in email
+                or (not token and not pickup_url)
+                or (pickup_url and not _valid_icloud_pickup_url(email, pickup_url))
+            ):
                 result["invalid"] += 1
                 continue
             if email in collapsed:
                 result["skipped"] += 1
-            collapsed[email] = {"token": token, "pickup_url": pickup_url}
+            collapsed[email] = {
+                "token": token,
+                "pickup_url": pickup_url,
+                "pickup_mode": _icloud_pickup_mode(token, pickup_url),
+            }
 
         for email, material in collapsed.items():
             token = material["token"]
             pickup_url = material["pickup_url"]
+            pickup_mode = material["pickup_mode"]
             row = _find_by_email(rows, email)
             now = _now()
             if row is None:
@@ -1724,6 +1758,7 @@ def import_icloud_emails(records: list[dict]) -> dict[str, int]:
                     "email": email,
                     "token": token,
                     "pickup_url": pickup_url,
+                    "pickup_mode": pickup_mode,
                     "status": "available",
                     "used_at": None,
                     "note": None,
@@ -1732,15 +1767,17 @@ def import_icloud_emails(records: list[dict]) -> dict[str, int]:
                 })
                 result["inserted"] += 1
                 continue
-            changed = row.get("token") != token
-            if pickup_url and row.get("pickup_url") != pickup_url:
-                changed = True
+            changed = (
+                row.get("token") != token
+                or str(row.get("pickup_url") or "") != pickup_url
+                or row.get("pickup_mode") != pickup_mode
+            )
             if not changed:
                 result["skipped"] += 1
                 continue
             row["token"] = token
-            if pickup_url:
-                row["pickup_url"] = pickup_url
+            row["pickup_url"] = pickup_url
+            row["pickup_mode"] = pickup_mode
             row["updated_at"] = now
             if row.get("status") in {"available", "failed", "disabled"}:
                 row["status"] = "available"
