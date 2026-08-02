@@ -612,6 +612,25 @@ def _phone_country_selection_hints(phone: str) -> dict:
     return {"dial_code": "", "iso2": "", "names": []}
 
 
+def _phone_values_match(expected_e164: str, visible_value: str, hidden_value: str) -> bool:
+    """接受完整 E.164 可见值，也接受“国家已选中 + 可见框为本地号码”。"""
+    digits = lambda value: "".join(ch for ch in str(value or "") if ch.isdigit())
+    expected_digits = digits(expected_e164)
+    visible_digits = digits(visible_value)
+    hidden_digits = digits(hidden_value)
+    if not expected_digits or not visible_digits:
+        return False
+    if hidden_value and hidden_digits != expected_digits:
+        return False
+    if visible_digits == expected_digits:
+        return True
+    return bool(
+        hidden_digits == expected_digits
+        and len(visible_digits) >= 7
+        and expected_digits.endswith(visible_digits)
+    )
+
+
 def _has_strict_add_phone_form(driver) -> bool:
     try:
         return bool(driver.execute_script(r"""
@@ -853,8 +872,13 @@ def _verify_add_phone_value_before_submit(driver, expected_e164: str) -> dict:
     const ok = !!visibleDigits && visibleDigits === expectedDigits && (!hidden || hiddenDigits === expectedDigits);
     return {ok, visibleValue, hiddenValue, expected, visibleDigits, hiddenDigits, expectedDigits, url: location.href};
     """, expected_e164)
-    if not result or not result.get("ok"):
+    if not result or not _phone_values_match(
+        expected_e164,
+        str(result.get("visibleValue") or ""),
+        str(result.get("hiddenValue") or ""),
+    ):
         raise RuntimeError(f"手机号提交前校验失败 result={result} state={_phone_page_state(driver)}")
+    result["ok"] = True
     return result
 
 

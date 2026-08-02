@@ -42,6 +42,33 @@ class RoxyPhoneCountryTests(unittest.TestCase):
         self.assertEqual(driver.fill_args[1]["iso2"], "GB")
         self.assertEqual(driver.fill_args[1]["dial_code"], "44")
 
+    def test_verify_accepts_national_visible_value_with_full_hidden_e164(self):
+        class _Driver:
+            def execute_script(self, script, *args):
+                return {
+                    "ok": False,
+                    "visibleValue": "9758618929",
+                    "hiddenValue": "+639758618929",
+                    "expected": "+639758618929",
+                    "visibleDigits": "9758618929",
+                    "hiddenDigits": "639758618929",
+                    "expectedDigits": "639758618929",
+                    "url": "https://auth.openai.com/add-phone",
+                }
+
+        result = roxy_codex_oauth._verify_add_phone_value_before_submit(
+            _Driver(), "+639758618929"
+        )
+
+        self.assertEqual(result["visibleValue"], "9758618929")
+
+    def test_verify_rejects_unrelated_visible_value(self):
+        self.assertFalse(
+            roxy_codex_oauth._phone_values_match(
+                "+639758618929", "5551234", "+639758618929"
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
