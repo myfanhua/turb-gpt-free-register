@@ -441,6 +441,7 @@ def save_account_data(
             email=email,
             access_token=access_token,
             trigger="registration_auto",
+            proxy=proxy_used,
         )
         if queued.get("accepted"):
             logger.info(f"[Plan] 注册后自动查询已入队: id={row_id}, email={email}")

@@ -29,6 +29,7 @@ class RoxyOpenResult:
     webdriver_url: str | None = None
     ws_endpoint: str | None = None
     created_by_run: bool = False
+    registration_proxy: str | None = None
 
 
 def _strip_slashes(value: str) -> str:
@@ -409,8 +410,9 @@ class RoxyBrowserClient:
 
         return {"ok": False, "items": [], "errors": errors}
 
-    def create_profile(self, payload: dict | None = None) -> str:
+    def create_profile(self, payload: dict | None = None) -> tuple[str, str | None]:
         body = dict(getattr(_cfg, "ROXY_PROFILE_CREATE_PAYLOAD", {}) or {})
+        registration_proxy = None
         default_os = str(getattr(_cfg, "ROXY_DEFAULT_OS", "macOS") or "macOS").strip()
         if default_os:
             # Roxy 官方枚举为 macOS（大小写敏感），默认创建 macOS 指纹环境。
@@ -431,6 +433,7 @@ class RoxyBrowserClient:
             proxy_url = _proxy_cfg.pick_proxy()
             if proxy_url:
                 proxy_url = prepare_proxy_for_roxy(proxy_url)
+                registration_proxy = proxy_url
                 proxy_info = _proxy_url_to_roxy_info(proxy_url)
                 body["proxyInfo"] = proxy_info
                 logger.info(
@@ -458,7 +461,7 @@ class RoxyBrowserClient:
         ])
         if not profile_id:
             raise RuntimeError(f"Roxy 创建环境成功但未返回 dirId/profile_id: {result}")
-        return profile_id
+        return profile_id, registration_proxy
 
     @staticmethod
     def _normalize_profile_id(value: str | None) -> str:
@@ -479,8 +482,9 @@ class RoxyBrowserClient:
 
         pid = configured_pid
         created_by_run = False
+        registration_proxy = None
         if not pid:
-            pid = self.create_profile()
+            pid, registration_proxy = self.create_profile()
             created_by_run = True
             logger.info("[Roxy] 已创建临时环境：%s", pid)
 
@@ -522,6 +526,7 @@ class RoxyBrowserClient:
             webdriver_url=webdriver_url,
             ws_endpoint=ws_endpoint,
             created_by_run=created_by_run,
+            registration_proxy=registration_proxy,
         )
 
     def close_profile(self, profile_id: str) -> None:

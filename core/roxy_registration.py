@@ -1666,12 +1666,13 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
         except Exception as exc:
             codex_result = {"status": "failed", "ok": False, "message": f"{type(exc).__name__}: {str(exc)[:180]}"}
 
+        registration_proxy = opened.registration_proxy or proxy or None
         account_id = save_account_data(
             email=email,
             access_token=access_token,
             totp_secret=totp_secret,
             email_source=resolve_email_source(email),
-            proxy_used=proxy or None,
+            proxy_used=registration_proxy,
             batch_dir=batch_dir,
             extra={
                 "user": session_info.get("user"),

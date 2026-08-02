@@ -24,7 +24,8 @@ class ProxyRotationTests(unittest.TestCase):
 
     def test_pick_proxy_keeps_static_proxy_unchanged(self):
         static = "socks5h://127.0.0.1:7897"
-        with patch.object(proxy, "PROXY_POOL", [static]):
+        with patch.object(proxy, "PROXY_CHAIN_ENABLED", False), \
+             patch.object(proxy, "PROXY_POOL", [static]):
             self.assertEqual(proxy.pick_proxy(), static)
 
 
