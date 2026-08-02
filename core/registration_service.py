@@ -304,6 +304,9 @@ def _run_one_job(job_id: int, log_file: str) -> None:
     try:
         with _JobLogContext(log_file):
             from main import run_registration
+            from core.email_provider import clear_acquired_email_source_context
+
+            clear_acquired_email_source_context()
             log_logger.info(f"[Job {job_id}] 开始注册任务")
             job_email_source = str(current.get("email_source") or "").strip()
             email, name, birthday = _prepare_registration_args(job_email_source)
@@ -379,6 +382,12 @@ def _run_one_job(job_id: int, log_file: str) -> None:
             completed_at=datetime.now().isoformat(timespec="seconds"),
         )
     finally:
+        try:
+            from core.email_provider import clear_acquired_email_source_context
+
+            clear_acquired_email_source_context()
+        except Exception:
+            pass
         _deactivate_job(job_id)
 
 

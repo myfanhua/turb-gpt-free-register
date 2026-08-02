@@ -1807,7 +1807,8 @@ def _icloud_row_matches_filter(row: dict, pickup_filter: str) -> bool:
     if mode == "token":
         return bool(str(row.get("token") or "").strip())
     if mode == "url":
-        return bool(_icloud_row_pickup_url(row))
+        pickup_url = _icloud_row_pickup_url(row)
+        return bool(pickup_url) and not _is_icloud_json_pickup_url(pickup_url)
     if mode != "all":
         raise ValueError(f"未知 iCloud 领取过滤器: {mode}")
     return True

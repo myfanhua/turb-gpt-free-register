@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from unittest.mock import patch
 
 from core import email_provider
@@ -63,6 +65,48 @@ class RegistrationEmailSourceSelectorTests(unittest.TestCase):
 
         self.assertEqual(email_provider._pick_from_source("icloud_url"), "one@icloud.com")
         pick.assert_called_once_with(selection="url")
+
+    @patch("core.icloud_mail_client.release_account")
+    @patch("core.outlook_client.release_account")
+    @patch("core.icloud_mail_client.fetch_latest_otp", return_value="111111")
+    @patch("core.outlook_client.fetch_latest_otp", return_value="654321")
+    @patch("core.db.get_icloud_email_by_email", return_value={"email": "duplicate@example.com"})
+    @patch("core.email_provider._pick_from_source", return_value="duplicate@example.com")
+    def test_acquired_source_routes_duplicate_email_through_selected_provider(
+        self,
+        pick,
+        get_icloud,
+        outlook_fetch,
+        icloud_fetch,
+        outlook_release,
+        icloud_release,
+    ):
+        email = email_provider.acquire_email("outlook")
+
+        code = email_provider.wait_for_otp(email, after_ts=100)
+        released_source = email_provider.release_email(email, status="available")
+
+        self.assertEqual(code, "654321")
+        self.assertEqual(released_source, "outlook")
+        outlook_fetch.assert_called_once_with(email, after_ts=100)
+        icloud_fetch.assert_not_called()
+        outlook_release.assert_called_once_with(email, status="available", note=None)
+        icloud_release.assert_not_called()
+
+    @patch("core.db.get_icloud_email_by_email", return_value={"email": "duplicate@example.com"})
+    @patch("core.email_provider._pick_from_source", return_value="duplicate@example.com")
+    def test_concurrent_acquisitions_keep_thread_local_source_for_duplicate_email(self, pick, get_icloud):
+        barrier = Barrier(2)
+
+        def acquire_and_resolve(source):
+            email = email_provider.acquire_email(source)
+            barrier.wait(timeout=2)
+            return email_provider.resolve_email_source(email)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(acquire_and_resolve, ["outlook", "icloud_url"]))
+
+        self.assertEqual(results, ["outlook", "icloud_api"])
 
 
 if __name__ == "__main__":

@@ -15,9 +15,11 @@ EMAIL_SOURCE 支持单个或多个来源：
     ["icloud_api", "outlook", "generic_api", "mailnest", "cloudmail"]  # 也兼容列表写法
 """
 import logging
+import threading
 from typing import Iterable
 
 logger = logging.getLogger(__name__)
+_ACQUIRED_SOURCE_CONTEXT = threading.local()
 
 _VALID_SOURCES = (
     "outlook",
@@ -53,6 +55,26 @@ def registration_source_options() -> list[dict]:
 def canonical_email_source(source: str) -> str:
     value = str(source or "").strip()
     return "icloud_api" if value in {"icloud_api_token", "icloud_url"} else value
+
+
+def _remember_acquired_email_source(email: str, source: str) -> None:
+    _ACQUIRED_SOURCE_CONTEXT.email = str(email or "").strip().lower()
+    _ACQUIRED_SOURCE_CONTEXT.source = canonical_email_source(source)
+
+
+def clear_acquired_email_source_context() -> None:
+    for attr in ("email", "source"):
+        try:
+            delattr(_ACQUIRED_SOURCE_CONTEXT, attr)
+        except AttributeError:
+            pass
+
+
+def _acquired_email_source(email: str) -> str:
+    key = str(email or "").strip().lower()
+    if key and key == getattr(_ACQUIRED_SOURCE_CONTEXT, "email", ""):
+        return str(getattr(_ACQUIRED_SOURCE_CONTEXT, "source", "") or "")
+    return ""
 
 
 def snapshot_registration_source(value=None) -> str:
@@ -126,6 +148,7 @@ def acquire_email(value=None) -> str:
     for source in sources:
         try:
             email = _pick_from_source(source)
+            _remember_acquired_email_source(email, source)
             logger.info(f"[EmailProvider] 使用邮箱来源: {source}, email={email}")
             return email
         except Exception as exc:
@@ -137,6 +160,10 @@ def acquire_email(value=None) -> str:
 
 def resolve_email_source(email: str) -> str:
     """根据邮箱在各池中的归属判断实际来源。"""
+    acquired_source = _acquired_email_source(email)
+    if acquired_source:
+        return acquired_source
+
     from core.gptmail_client import get_account_context as get_gptmail_context
     if get_gptmail_context(email):
         return "gptmail"

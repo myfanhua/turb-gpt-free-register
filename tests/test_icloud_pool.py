@@ -193,6 +193,30 @@ class ICloudPoolTests(unittest.TestCase):
         self.assertEqual(claimed["email"], "url@icloud.com")
         self.assertEqual(claimed["claimed_pickup_mode"], "independent_url")
 
+    def test_url_filter_skips_json_pickup_endpoints(self):
+        db.import_icloud_emails([
+            {
+                "email": "json@icloud.com",
+                "token": "tok_json",
+                "pickup_url": "https://pickup.example/api/mail/pickup",
+            },
+            {
+                "email": "latest@icloud.com",
+                "token": "tok_latest",
+                "pickup_url": "https://pickup.example/messages/latest?mail=latest%40icloud.com",
+            },
+            {
+                "email": "page@icloud.com",
+                "token": "",
+                "pickup_url": "https://pickup.example/show/secret/page@icloud.com",
+            },
+        ])
+
+        claimed = db.claim_next_icloud_email(pickup_filter="url")
+
+        self.assertEqual(claimed["email"], "page@icloud.com")
+        self.assertEqual(db.icloud_email_pool_summary(pickup_filter="url")["total"], 1)
+
     def test_mixed_mailbox_can_be_forced_to_either_channel(self):
         material = {
             "email": "mixed@icloud.com",
