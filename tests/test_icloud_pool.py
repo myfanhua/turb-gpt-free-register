@@ -217,6 +217,43 @@ class ICloudPoolTests(unittest.TestCase):
         self.assertEqual(claimed["email"], "page@icloud.com")
         self.assertEqual(db.icloud_email_pool_summary(pickup_filter="url")["total"], 1)
 
+    def test_url_filter_skips_browser_render_urls_with_fragment_credentials(self):
+        db.import_icloud_emails([
+            {
+                "email": "browser@icloud.com",
+                "token": "tok_browser",
+                "pickup_url": (
+                    "https://flysms.xyz/icloud/pickup"
+                    "#email=browser%40icloud.com&key=tok_browser"
+                ),
+            },
+            {
+                "email": "page@icloud.com",
+                "token": "",
+                "pickup_url": "https://icloud-api.top/show/secret/page@icloud.com",
+            },
+        ])
+
+        claimed = db.claim_next_icloud_email(pickup_filter="url")
+
+        self.assertEqual(claimed["email"], "page@icloud.com")
+        self.assertEqual(db.icloud_email_pool_summary(pickup_filter="url")["total"], 1)
+
+    def test_browser_render_url_with_token_is_classified_as_api_only(self):
+        db.import_icloud_emails([{
+            "email": "browser@icloud.com",
+            "token": "tok_browser",
+            "pickup_url": (
+                "https://flysms.xyz/icloud/pickup"
+                "#email=browser%40icloud.com&key=tok_browser"
+            ),
+        }])
+
+        row = db.get_icloud_email_by_email("browser@icloud.com")
+
+        self.assertEqual(row["pickup_mode"], "api_token")
+        self.assertTrue(row["has_pickup_url"])
+
     def test_mixed_mailbox_can_be_forced_to_either_channel(self):
         material = {
             "email": "mixed@icloud.com",

@@ -139,11 +139,18 @@ def _is_icloud_json_pickup_url(pickup_url: str) -> bool:
     )
 
 
+def _is_icloud_independent_pickup_url(pickup_url: str) -> bool:
+    parsed = urlparse(str(pickup_url or "").strip())
+    # URL fragments never reach the server. Pages that keep mailbox credentials
+    # only after # require browser-side JavaScript and cannot be fetched as HTML.
+    return bool(parsed.scheme and parsed.netloc) and not parsed.fragment and not _is_icloud_json_pickup_url(pickup_url)
+
+
 def _icloud_pickup_mode(token: str, pickup_url: str) -> str:
-    if pickup_url and token and not _is_icloud_json_pickup_url(pickup_url):
+    if token and _is_icloud_independent_pickup_url(pickup_url):
         return "independent_url_with_token"
     if pickup_url:
-        return "api_token" if token else "independent_url"
+        return "independent_url" if _is_icloud_independent_pickup_url(pickup_url) else "api_token"
     return "api_token"
 
 
@@ -1808,7 +1815,7 @@ def _icloud_row_matches_filter(row: dict, pickup_filter: str) -> bool:
         return bool(str(row.get("token") or "").strip())
     if mode == "url":
         pickup_url = _icloud_row_pickup_url(row)
-        return bool(pickup_url) and not _is_icloud_json_pickup_url(pickup_url)
+        return _is_icloud_independent_pickup_url(pickup_url)
     if mode != "all":
         raise ValueError(f"未知 iCloud 领取过滤器: {mode}")
     return True
