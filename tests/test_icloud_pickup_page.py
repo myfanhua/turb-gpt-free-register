@@ -94,13 +94,31 @@ class ICloudPickupPageTests(unittest.TestCase):
         html = """
         <html><head><title>one@icloud.com</title></head><body>
           <div class="cnt">1 封</div>
-          <div class="card"><div class="to">two@icloud.com</div>
+          <div class="card"><div class="to">notone@icloud.com</div>
             <div class="su">OpenAI code 654321</div>
             <div class="dt">2026-08-02T06:00:00Z</div><div class="bd">Code 654321</div></div>
         </body></html>
         """
 
         with self.assertRaisesRegex(page.ICloudPickupPageError, "邮件收件人不匹配"):
+            page.parse_pickup_page(html, expected_email="one@icloud.com")
+
+    def test_expected_mailbox_accepts_matching_h1_when_title_is_absent(self):
+        html = """
+        <html><body><div class="hd"><h1>one@icloud.com</h1></div>
+          <div class="cnt">0 封</div><div class="no">等待接收邮件</div>
+        </body></html>
+        """
+
+        self.assertEqual(
+            page.parse_pickup_page(html, expected_email="one@icloud.com"),
+            [],
+        )
+
+    def test_expected_mailbox_rejects_page_without_mailbox_identity(self):
+        html = '<div class="cnt">0 封</div><div class="no">等待接收邮件</div>'
+
+        with self.assertRaisesRegex(page.ICloudPickupPageError, "缺少邮箱标识"):
             page.parse_pickup_page(html, expected_email="one@icloud.com")
 
 

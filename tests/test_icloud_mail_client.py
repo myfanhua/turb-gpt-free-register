@@ -68,6 +68,7 @@ def profile_response(
 def html_response(
     status=200,
     *,
+    mailbox="one@icloud.com",
     sender="ChatGPT <noreply@tm.openai.com>",
     subject="Your verification code is 654321",
     date=MESSAGE_DATE,
@@ -75,7 +76,7 @@ def html_response(
 ):
     item = Mock(status_code=status, headers={})
     item.text = f"""
-    <html><body><div class="cnt">1 封</div>
+    <html><head><title>{mailbox}</title></head><body><div class="cnt">1 封</div>
       <div class="card">
         <div class="fr">{sender}</div>
         <div class="su">{subject}</div>
@@ -338,7 +339,11 @@ class ICloudMailClientTests(unittest.TestCase):
     @patch("core.icloud_mail_client.requests.get")
     def test_url_only_empty_page_then_new_html_message_returns_otp(self, get, sleep):
         empty = Mock(status_code=200, headers={})
-        empty.text = '<div class="cnt">0 封</div><div class="no">等待接收邮件</div>'
+        empty.text = (
+            '<html><head><title>one@icloud.com</title></head><body>'
+            '<div class="cnt">0 封</div><div class="no">等待接收邮件</div>'
+            '</body></html>'
+        )
         get.side_effect = [empty, html_response(subject="OpenAI code 222222", body="Code 222222")]
         client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
             email="one@icloud.com",
@@ -394,7 +399,7 @@ class ICloudMailClientTests(unittest.TestCase):
         )
         get.side_effect = [
             html_response(subject="OpenAI code 111111", body="Code 111111"),
-            html_response(subject="OpenAI code 222222", body="Code 222222"),
+            html_response(mailbox="two@icloud.com", subject="OpenAI code 222222", body="Code 222222"),
         ]
 
         self.assertEqual(client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0), "111111")
@@ -444,6 +449,31 @@ class ICloudMailClientTests(unittest.TestCase):
         self.assertNotIn("query+secret", message)
         self.assertNotIn("query%20secret", message)
         self.assertNotIn("token=", message)
+
+    @patch("core.icloud_mail_client.requests.get")
+    def test_url_network_error_hides_relative_url_query_credentials(self, get):
+        pickup_url = (
+            "https://pickup.example/show/one@icloud.com"
+            "?token=query%20secret&mail=one%40icloud.com"
+        )
+        client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
+            email="one@icloud.com",
+            token="",
+            pickup_url=pickup_url,
+            pickup_mode="independent_url",
+        )
+        get.side_effect = requests.ConnectionError(
+            "Max retries exceeded with url: "
+            "/show/one@icloud.com?token=query+secret&mail=one%40icloud.com&n=10"
+        )
+
+        with self.assertRaises(client.ICloudMailError) as raised:
+            client.fetch_latest_otp("one@icloud.com", AFTER_TS, 0, 1, 0)
+
+        message = str(raised.exception)
+        self.assertNotIn("query+secret", message)
+        self.assertNotIn("token=", message)
+        self.assertNotIn("mail=", message)
 
     @patch("core.icloud_mail_client.requests.get")
     def test_html_page_for_another_mailbox_is_rejected(self, get):

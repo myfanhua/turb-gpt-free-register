@@ -48,6 +48,7 @@ _PROFILE_SYNC_CACHE_TTL = 1.0
 _PROVIDER_UNAVAILABLE_ROUNDS = 2
 _HTML_PAGE_TIMEZONE = timezone(timedelta(hours=8))
 _URL_IN_TEXT_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
+_QUERY_IN_TEXT_RE = re.compile(r"\?[^\s\"'<>]+")
 
 
 @dataclass(frozen=True)
@@ -244,10 +245,11 @@ def _redact_account_secrets(value: object, account: ICloudMailAccount) -> str:
     profile_token = _profile_token()
     if profile_token:
         text = text.replace(profile_token, "***")
-    return _URL_IN_TEXT_RE.sub(
+    text = _URL_IN_TEXT_RE.sub(
         lambda matched: _redacted_url(matched.group(0)),
         text,
     )
+    return _QUERY_IN_TEXT_RE.sub("?***", text)
 
 
 def _redacted_url(url: str) -> str:

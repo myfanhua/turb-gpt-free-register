@@ -4,6 +4,8 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+_EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
+
 
 class ICloudPickupPageError(ValueError):
     pass
@@ -46,6 +48,7 @@ class _PickupPageParser(HTMLParser):
         self.message_count: int | None = None
         self.saw_empty_state = False
         self.title_parts: list[str] = []
+        self.heading_parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs):
         attributes = dict(attrs)
@@ -61,6 +64,7 @@ class _PickupPageParser(HTMLParser):
             "is_count": "cnt" in classes,
             "is_empty": "no" in classes,
             "is_title": tag.lower() == "title",
+            "is_heading": tag.lower() == "h1",
         }
         if frame["is_empty"]:
             self.saw_empty_state = True
@@ -101,6 +105,8 @@ class _PickupPageParser(HTMLParser):
             self.count_parts.append(data)
         if any(frame["is_title"] for frame in self.stack):
             self.title_parts.append(data)
+        if any(frame["is_heading"] for frame in self.stack):
+            self.heading_parts.append(data)
         if self.current is None:
             return
         field = next(
@@ -125,17 +131,26 @@ def parse_pickup_page(html_text: str, expected_email: str = "") -> list[dict]:
     parser.feed(str(html_text or ""))
     parser.close()
     expected = str(expected_email or "").strip().lower()
-    title = _clean_text(parser.title_parts).lower()
-    mailbox_match = re.search(r"[^\s<>]+@[^\s<>]+", title)
-    page_mailbox = mailbox_match.group(0).strip(".,;:()[]{}") if mailbox_match else ""
-    if expected and page_mailbox and page_mailbox != expected:
-        raise ICloudPickupPageError(
-            f"独立取件页面邮箱不匹配: expected={expected}, actual={page_mailbox}"
-        )
     if expected:
+        identities = {
+            match.lower()
+            for source in (
+                _clean_text(parser.title_parts),
+                _clean_text(parser.heading_parts),
+            )
+            for match in _EMAIL_RE.findall(source)
+        }
+        if not identities:
+            raise ICloudPickupPageError("独立取件页面缺少邮箱标识")
+        if identities != {expected}:
+            raise ICloudPickupPageError(
+                "独立取件页面邮箱不匹配: "
+                f"expected={expected}, actual={','.join(sorted(identities))}"
+            )
         for card in parser.cards:
             recipient = str(card.get("to") or "").strip().lower()
-            if recipient and expected not in recipient:
+            recipient_emails = {match.lower() for match in _EMAIL_RE.findall(recipient)}
+            if recipient and recipient_emails != {expected}:
                 raise ICloudPickupPageError(
                     f"独立取件邮件收件人不匹配: expected={expected}"
                 )
