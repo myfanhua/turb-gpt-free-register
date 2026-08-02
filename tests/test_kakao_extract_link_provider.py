@@ -123,6 +123,21 @@ class KakaoExtractLinkClientTests(unittest.TestCase):
         with self.assertRaisesRegex(KakaoExtractLinkError, "批次不存在"):
             client.get_batch("missing")
 
+    def test_terminal_error_status_preserves_service_reason(self):
+        client = self.make_client(FakeTransport([(
+            200,
+            {
+                "batchId": "batch-error",
+                "status": "error",
+                "done": True,
+                "error": "CDK_QUOTA_EXHAUSTED",
+                "results": [],
+            },
+        )]))
+
+        with self.assertRaisesRegex(KakaoExtractLinkError, "次数已用完"):
+            client.poll("batch-error")
+
     def test_error_messages_redact_cdk_and_tokens(self):
         transport = FakeTransport([RuntimeError(
             "request failed for TOKEN_SECRET with KAKAO-CDK at http://user:pass@example.test"

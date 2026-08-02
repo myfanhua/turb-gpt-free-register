@@ -348,6 +348,10 @@ class KakaoExtractLinkClient:
         status = str(data.get("status") or "").strip().lower()
         done = bool(data.get("done")) or status in {"completed", "error"}
         results = data.get("results") if isinstance(data.get("results"), list) else []
+        if status == "error" and not results:
+            code, detail = self._error_parts(data)
+            message = ERROR_MESSAGES.get(code) or detail or code or "Kakao 提链批次执行失败"
+            raise KakaoExtractLinkError(self._sanitize(message), code=code)
         remaining = data.get("remainingCount")
         try:
             remaining_count = int(remaining) if remaining is not None else None

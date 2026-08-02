@@ -1,5 +1,6 @@
 import copy
 import unittest
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from core import db
@@ -126,6 +127,44 @@ class KakaoExtractDbTests(unittest.TestCase):
         self.assertEqual(self.accounts[0]["extract_link_status"], "failed")
         self.assertEqual(self.accounts[0]["extract_link_error"], "队列提交失败")
         self.assertEqual(self.accounts[1]["extract_link_status"], "running")
+
+    def test_lightweight_status_snapshot_includes_kakao_batch_metadata(self):
+        self.accounts[:] = [{
+            "id": 20,
+            "email": "status@example.com",
+            "plan_type": "free",
+            "extract_link_status": "running",
+            "extract_link_provider": "kakao_batch",
+            "extract_link_batch_id": "batch-status",
+            "extract_link_batch_number": 2,
+            "extract_link_batch_total": 3,
+            "extract_link_result_index": 1,
+            "extract_link_cdk_remaining": 8,
+        }]
+
+        snapshot = db.list_account_plan_check_statuses()
+
+        item = snapshot["items"][0]
+        self.assertEqual(item["extract_link_provider"], "kakao_batch")
+        self.assertEqual(item["extract_link_batch_id"], "batch-status")
+        self.assertEqual(item["extract_link_batch_number"], 2)
+        self.assertEqual(item["extract_link_batch_total"], 3)
+        self.assertEqual(item["extract_link_result_index"], 1)
+        self.assertEqual(item["extract_link_cdk_remaining"], 8)
+
+    def test_running_kakao_batch_is_not_treated_as_stale_after_five_minutes(self):
+        self.accounts[:] = [{
+            "id": 30,
+            "extract_link_status": "running",
+            "extract_link_provider": "kakao_batch",
+            "extract_link_started_at": (
+                datetime.now() - timedelta(minutes=5)
+            ).isoformat(timespec="seconds"),
+        }]
+
+        claimed = db.claim_account_extract(30, provider="kakao_batch")
+
+        self.assertFalse(claimed)
 
 
 if __name__ == "__main__":

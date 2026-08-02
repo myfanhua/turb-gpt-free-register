@@ -29,6 +29,7 @@ _LEGACY_DATA_DIR = _PROJECT_ROOT / "data"
 _LOG_DIR = _PROJECT_ROOT / "注册日志"
 _PLAN_CHECK_STALE_SECONDS = 120
 _PLAN_CHECK_QUEUE_STALE_SECONDS = 1800
+_KAKAO_EXTRACT_STALE_SECONDS = 1500
 
 _OUTLOOK_JSON = _PROJECT_ROOT / "用于注册的邮箱.json"
 _OUTLOOK_TXT = _PROJECT_ROOT / "用于注册的邮箱.txt"
@@ -1110,7 +1111,16 @@ def claim_account_extract(
         if current_status in {"queued", "running"}:
             try:
                 stamp_key = "extract_link_queued_at" if current_status == "queued" else "extract_link_started_at"
-                stale_after = _PLAN_CHECK_QUEUE_STALE_SECONDS if current_status == "queued" else _PLAN_CHECK_STALE_SECONDS
+                current_provider = str(
+                    row.get("extract_link_provider") or provider or "legacy"
+                ).strip().lower()
+                stale_after = (
+                    _PLAN_CHECK_QUEUE_STALE_SECONDS
+                    if current_status == "queued"
+                    else _KAKAO_EXTRACT_STALE_SECONDS
+                    if current_provider == "kakao_batch"
+                    else _PLAN_CHECK_STALE_SECONDS
+                )
                 started_at = datetime.fromisoformat(str(row.get(stamp_key) or ""))
                 if (datetime.now() - started_at).total_seconds() < stale_after:
                     return False
@@ -1319,7 +1329,10 @@ def list_account_plan_check_statuses(limit: int = 5000, offset: int = 0, archive
         "extract_link_message", "extract_link_error",
         "extract_link_long_url", "extract_link_copy_paste",
         "extract_link_image_url_png", "extract_link_image_url_svg",
-        "extract_link_expires_at",
+        "extract_link_expires_at", "extract_link_provider",
+        "extract_link_batch_id", "extract_link_batch_number",
+        "extract_link_batch_total", "extract_link_result_index",
+        "extract_link_cdk_remaining",
         "codex_status", "codex_error",
         "codex_agent_status", "codex_agent_message",
         "codex_agent_runtime_id", "codex_agent_sub2api_url",
@@ -1363,6 +1376,12 @@ def list_account_plan_check_statuses(limit: int = 5000, offset: int = 0, archive
                     "plan_type": row.get("plan_type"),
                     "plus_trial_eligible": row.get("plus_trial_eligible"),
                     "extract_link_status": row.get("extract_link_status"),
+                    "extract_link_provider": row.get("extract_link_provider"),
+                    "extract_link_batch_id": row.get("extract_link_batch_id"),
+                    "extract_link_batch_number": row.get("extract_link_batch_number"),
+                    "extract_link_batch_total": row.get("extract_link_batch_total"),
+                    "extract_link_message": row.get("extract_link_message"),
+                    "extract_link_error": row.get("extract_link_error"),
                     "codex_status": row.get("codex_status"),
                     "codex_agent_status": row.get("codex_agent_status"),
                 }
