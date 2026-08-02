@@ -208,12 +208,27 @@ class RoxyBrowserClient:
             or "http 429" in text
         )
 
+    @staticmethod
+    def _is_safe_create_retry_error(exc: Exception) -> bool:
+        """Only retry create failures that clearly happened before a profile was created."""
+        text = str(exc or "").lower()
+        return (
+            "status code 502" in text
+            or "status code 503" in text
+            or "status code 504" in text
+            or "http 502" in text
+            or "http 503" in text
+            or "http 504" in text
+            or "正在创建中" in text
+        )
+
     def request(self, method: str, path: str, *, params: dict | None = None, json_body: dict | None = None) -> dict:
         url = _join_url(self.api_base, path)
         method_u = method.upper()
-        # create 超时后服务端可能已创建环境，直接重试可能产生孤儿环境；默认不重试 create。
+        # create 只重试明确发生在创建前的 502/503/504/忙碌错误；
+        # 连接中断或超时时服务端可能已创建环境，不重试，避免孤儿环境。
         is_create = str(path or "").rstrip("/").endswith("/create") or "browser/create" in str(path or "")
-        max_attempts = 1 if is_create else max(1, int(getattr(_cfg, "ROXY_API_RETRIES", 3) or 3))
+        max_attempts = max(1, int(getattr(_cfg, "ROXY_API_RETRIES", 3) or 3))
         base_delay = max(0.5, float(getattr(_cfg, "ROXY_API_RETRY_DELAY", 2) or 2))
         last_exc: Exception | None = None
         for attempt in range(1, max_attempts + 1):
@@ -249,6 +264,8 @@ class RoxyBrowserClient:
             except Exception as exc:
                 last_exc = exc
                 retryable = self._is_retryable_error(exc)
+                if is_create:
+                    retryable = self._is_safe_create_retry_error(exc)
                 if attempt >= max_attempts or not retryable:
                     raise
                 delay = base_delay * attempt
