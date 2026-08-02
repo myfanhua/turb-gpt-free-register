@@ -106,17 +106,18 @@ class RegistrationServiceEmailSourceTests(unittest.TestCase):
                 "account_id": 1,
             }
 
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                futures = [
-                    executor.submit(svc._run_one_job, job_id, row["log_file"])
-                    for job_id, row in jobs.items()
-                ]
-                for future in futures:
-                    future.result()
+            for _ in range(20):
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    futures = [
+                        executor.submit(svc._run_one_job, job_id, row["log_file"])
+                        for job_id, row in jobs.items()
+                    ]
+                    for future in futures:
+                        future.result()
 
         self.assertCountEqual(
             prepare.call_args_list,
-            [call("icloud_url"), call("outlook")],
+            [call("icloud_url"), call("outlook")] * 20,
         )
 
 
