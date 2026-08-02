@@ -582,6 +582,36 @@ _PHONE_INPUT_SELECTORS = [
 ]
 
 
+_PHONE_COUNTRY_HINTS = {
+    "212": {"iso2": "MA", "names": ["Morocco", "摩洛哥"]},
+    "351": {"iso2": "PT", "names": ["Portugal", "葡萄牙"]},
+    "27": {"iso2": "ZA", "names": ["South Africa", "南非"]},
+    "31": {"iso2": "NL", "names": ["Netherlands", "荷兰"]},
+    "34": {"iso2": "ES", "names": ["Spain", "西班牙"]},
+    "43": {"iso2": "AT", "names": ["Austria", "奥地利"]},
+    "44": {"iso2": "GB", "names": ["United Kingdom", "UK", "英国"]},
+    "54": {"iso2": "AR", "names": ["Argentina", "阿根廷"]},
+    "55": {"iso2": "BR", "names": ["Brazil", "巴西"]},
+    "57": {"iso2": "CO", "names": ["Colombia", "哥伦比亚"]},
+    "62": {"iso2": "ID", "names": ["Indonesia", "印度尼西亚"]},
+    "63": {"iso2": "PH", "names": ["Philippines", "菲律宾"]},
+}
+
+
+def _phone_country_selection_hints(phone: str) -> dict:
+    """根据 E.164 前缀返回 OpenAI 国家下拉框的匹配提示。"""
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    for dial_code in sorted(_PHONE_COUNTRY_HINTS, key=len, reverse=True):
+        if digits.startswith(dial_code):
+            item = _PHONE_COUNTRY_HINTS[dial_code]
+            return {
+                "dial_code": dial_code,
+                "iso2": str(item.get("iso2") or ""),
+                "names": list(item.get("names") or []),
+            }
+    return {"dial_code": "", "iso2": "", "names": []}
+
+
 def _has_strict_add_phone_form(driver) -> bool:
     try:
         return bool(driver.execute_script(r"""
@@ -656,8 +686,15 @@ def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
     """
     if not _has_strict_add_phone_form(driver):
         raise RuntimeError(f"当前不是 add-phone 手机号输入页，不能填写手机号: state={_phone_page_state(driver)}")
+    country_hints = _phone_country_selection_hints(phone)
     result = driver.execute_script(r"""
     const rawPhone = String(arguments[0] || '').trim();
+    const countryHints = arguments[1] || {};
+    const hintedDialCode = String(countryHints.dial_code || '').replace(/\D+/g, '');
+    const hintedIso2 = String(countryHints.iso2 || '').trim().toLowerCase();
+    const hintedNames = Array.isArray(countryHints.names)
+      ? countryHints.names.map(x => String(x || '').trim().toLowerCase()).filter(Boolean)
+      : [];
     const e164 = rawPhone.startsWith('+') ? rawPhone : ('+' + rawPhone.replace(/\D+/g, ''));
     const digits = e164.replace(/\D+/g, '');
     const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
@@ -685,10 +722,26 @@ def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
     if (select) {
       // 参考 FlowPilot ensureCountrySelected：按号码前缀选择对应国家/区号，避免默认国家与号码不一致。
       const options = [...select.options];
-      const matched = options
+      const hintedMatch = options.find(opt => {
+        const fields = [
+          opt.value,
+          opt.label,
+          opt.textContent,
+          opt.getAttribute('data-country-code'),
+          opt.getAttribute('data-code'),
+          opt.getAttribute('data-key'),
+        ].map(x => String(x || '').replace(/\s+/g, ' ').trim().toLowerCase());
+        const tokens = fields.flatMap(x => x.split(/[^a-z0-9]+/).filter(Boolean));
+        if (hintedIso2 && tokens.includes(hintedIso2)) return true;
+        return hintedNames.some(name => fields.some(field => field === name || field.includes(name)));
+      });
+      const prefixMatch = options
         .map(opt => ({opt, code: optionDialCode(opt)}))
         .filter(x => x.code && digits.startsWith(x.code))
         .sort((a, b) => b.code.length - a.code.length)[0];
+      const matched = hintedMatch
+        ? {opt: hintedMatch, code: optionDialCode(hintedMatch) || hintedDialCode}
+        : prefixMatch;
       if (matched && select.value !== matched.opt.value) {
         select.value = matched.opt.value;
         select.dispatchEvent(new Event('input', {bubbles:true}));
@@ -698,7 +751,7 @@ def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
       if (select.selectedIndex >= 0 && select.options[select.selectedIndex]) {
         const opt = select.options[select.selectedIndex];
         selectedText = String(opt.textContent || opt.label || opt.value || '').replace(/\s+/g, ' ').trim();
-        dialCode = optionDialCode(opt);
+        dialCode = optionDialCode(opt) || (matched && matched.opt === opt ? hintedDialCode : '');
       }
     }
 
@@ -744,7 +797,7 @@ def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
       inputId: phoneInput.id || '',
       url: location.href,
     };
-    """, phone)
+    """, phone, country_hints)
     if not result or not result.get("ok"):
         raise RuntimeError(f"手机号写入失败 result={result} state={_phone_page_state(driver)}")
     actual = str(result.get("actualVisible") or "").strip()
