@@ -573,7 +573,7 @@
   <!-- ============ 邮箱池 ============ -->
   <div id="tab-outlook" class="hidden">
     <section class="card">
-      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址；iCloud API：邮箱----Token----PickupURL（建议保留导出里的专属地址），也兼容制表符、竖线、逗号或空格分隔。</p></div>
+      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址；iCloud API 支持“邮箱 + Token”或“邮箱 + 独立取件 URL”，三个及以上横线均可作为分隔符。</p></div>
       <div class="body">
         <div id="importResult"></div>
         <label class="fld">导入类型
@@ -590,7 +590,8 @@
         </label>
         <textarea id="importText" placeholder="Outlook: email----password----clientId----refreshToken
 通用API: email----取码地址
-iCloud API: email----Token----PickupURL"></textarea>
+iCloud API: 邮箱----Token
+iCloud URL: 邮箱----独立取件URL"></textarea>
         <div style="margin-top:10px;"><button class="btn primary" id="btnImport">导入</button></div>
       </div>
     </section>
@@ -2255,6 +2256,13 @@ function poolKey(r) { return `${r.source || $('#poolSource')?.value || 'outlook'
 function poolLabel(src) {
   return ({outlook:'Outlook', generic_api:'通用API', icloud_api:'iCloud API', cloudflare_domain:'域名邮箱'})[src] || src || '-';
 }
+function icloudPickupLabel(mode) {
+  return ({
+    api_token: 'API Token',
+    independent_url: '独立 URL',
+    independent_url_with_token: 'URL + API 后备'
+  })[mode] || '已配置';
+}
 async function loadOutlook() {
   try {
     const source = $('#poolSource')?.value || 'outlook';
@@ -2273,7 +2281,7 @@ function renderOutlook() {
   const rows = OUTLOOK;
   $('#outlookBody').innerHTML = rows.map(r => {
     const tokenPreview = r.source === 'icloud_api'
-      ? (r.token_masked || '已配置')
+      ? `${icloudPickupLabel(r.pickup_mode)}${r.token_masked ? ` · ${r.token_masked}` : ''}`
       : (short(r.access_token || '', 36) || '未生成');
     const tokenCopyButton = r.source === 'icloud_api'
       ? ''

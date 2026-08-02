@@ -360,7 +360,7 @@ Use the label plus masked Token where applicable; never interpolate a raw URL.
 Run:
 
 ```powershell
-python -m pytest tests/test_webui_icloud.py tests/test_webui_icloud_template.py tests/test_icloud_pool.py tests/test_icloud_pickup_page.py tests/test_icloud_mail_client.py tests/test_icloud_email_provider.py tests/test_hero_sms.py tests/test_hero_sms_webui.py -q
+python -m pytest tests/test_webui_icloud.py tests/test_webui_icloud_template.py tests/test_icloud_pool.py tests/test_icloud_pickup_page.py tests/test_icloud_mail_client.py tests/test_icloud_email_provider.py tests/test_sms_provider_sms_activate.py -q
 ```
 
 Expected: all focused tests pass, including the existing HeroSMS provider and WebUI coverage.
