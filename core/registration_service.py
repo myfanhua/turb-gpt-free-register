@@ -104,7 +104,7 @@ def _random_display_name() -> str:
     return f"{first} {last}"
 
 
-def _prepare_registration_args() -> tuple[str, str, str]:
+def _prepare_registration_args(email_source: str | None = None) -> tuple[str, str, str]:
     """复用 CLI 的默认规则，为旧 Web 任务入口补齐注册参数。"""
     # 用模块属性读，支持 WebUI 热加载
     from config import register as _r, email as _e
@@ -126,7 +126,7 @@ def _prepare_registration_args() -> tuple[str, str, str]:
     # 邮箱领取会把池状态置为 used，因此放在所有其他准备逻辑之后。
     if not email:
         if _e.USE_EMAIL_SERVICE:
-            email = acquire_email()
+            email = acquire_email(email_source)
         else:
             raise RuntimeError(
                 "手动模式未配置邮箱。请在 WebUI 配置页设置 REGISTER_EMAIL，"
@@ -305,7 +305,8 @@ def _run_one_job(job_id: int, log_file: str) -> None:
         with _JobLogContext(log_file):
             from main import run_registration
             log_logger.info(f"[Job {job_id}] 开始注册任务")
-            email, name, birthday = _prepare_registration_args()
+            job_email_source = str(current.get("email_source") or "").strip()
+            email, name, birthday = _prepare_registration_args(job_email_source)
             db.update_job(job_id, email=email)
             check_stop_requested()
             result = run_registration(email=email, name=name, birthday=birthday)
@@ -437,14 +438,14 @@ def _run_codex_retry_job(job_id: int, log_file: str, email: str, account_id: int
 def submit_registration(count: int = 1, email_source: str | None = None, workers: int | None = None) -> list[dict]:
     """
     创建 N 个注册任务并提交到线程池。
-    email_source 仅记录到 DB；实际邮箱来源固定为 Outlook 账号池。
+    email_source 会在批次提交时规范化并保存到每个任务，执行时使用该快照领取邮箱。
 
     Returns:
         N 个新创建的 job dict
     """
-    if email_source is None:
-        from config import email as _email_cfg
-        email_source = _email_cfg.EMAIL_SOURCE
+    from core.email_provider import snapshot_registration_source
+
+    email_source = snapshot_registration_source(email_source)
 
     # 创建/切换线程池和提交本批任务必须整体串行化：否则另一请求在本批提交中途
     # 切换 workers 并 shutdown 旧池，会导致后续 submit 报 cannot schedule new futures after shutdown。
