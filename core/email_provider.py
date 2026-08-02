@@ -28,7 +28,38 @@ _VALID_SOURCES = (
     "mailnest",
     "cloudmail",
     "icloud_api",
+    "icloud_api_token",
+    "icloud_url",
 )
+
+_REGISTRATION_SOURCE_OPTIONS = (
+    {"value": "icloud_api", "label": "iCloud 全部"},
+    {"value": "icloud_api_token", "label": "iCloud API"},
+    {"value": "icloud_url", "label": "iCloud 独立 URL"},
+    {"value": "outlook", "label": "Outlook"},
+    {"value": "generic_api", "label": "通用 API"},
+    {"value": "cloudflare_domain", "label": "Cloudflare 域名邮箱"},
+    {"value": "cloudflare", "label": "Cloudflare 临时邮箱"},
+    {"value": "gptmail", "label": "GPTMail"},
+    {"value": "mailnest", "label": "MailNest"},
+    {"value": "cloudmail", "label": "CloudMail"},
+)
+
+
+def registration_source_options() -> list[dict]:
+    return [dict(item) for item in _REGISTRATION_SOURCE_OPTIONS]
+
+
+def canonical_email_source(source: str) -> str:
+    value = str(source or "").strip()
+    return "icloud_api" if value in {"icloud_api_token", "icloud_url"} else value
+
+
+def snapshot_registration_source(value=None) -> str:
+    if value is None or not str(value).strip():
+        from config import email as _email_cfg
+        value = _email_cfg.EMAIL_SOURCE
+    return ",".join(parse_email_sources(value))
 
 
 def parse_email_sources(value=None) -> list[str]:
@@ -77,14 +108,20 @@ def _pick_from_source(source: str) -> str:
         return pick_account().email
     if source == "icloud_api":
         from core.icloud_mail_client import pick_account
-        return pick_account().email
+        return pick_account(selection="all").email
+    if source == "icloud_api_token":
+        from core.icloud_mail_client import pick_account
+        return pick_account(selection="token").email
+    if source == "icloud_url":
+        from core.icloud_mail_client import pick_account
+        return pick_account(selection="url").email
     from core.outlook_client import pick_account
     return pick_account().email
 
 
-def acquire_email() -> str:
+def acquire_email(value=None) -> str:
     """根据 EMAIL_SOURCE 领取一个用于注册的邮箱地址；多个来源时按顺序兜底。"""
-    sources = parse_email_sources()
+    sources = parse_email_sources(value)
     last_exc: Exception | None = None
     for source in sources:
         try:
@@ -130,7 +167,7 @@ def resolve_email_source(email: str) -> str:
             return "cloudflare_domain"
     except Exception:
         pass
-    return parse_email_sources()[0]
+    return canonical_email_source(parse_email_sources()[0])
 
 
 def wait_for_otp(
