@@ -241,6 +241,40 @@ class ICloudPoolTests(unittest.TestCase):
         row = db.get_icloud_email_by_email("one@icloud.com", include_token=True)
         self.assertNotIn("claimed_pickup_mode", row)
 
+    def test_released_available_mailbox_moves_to_claim_queue_tail(self):
+        db.import_icloud_emails([
+            {
+                "email": "first@icloud.com",
+                "token": "",
+                "pickup_url": "https://pickup.example/show/secret/first@icloud.com",
+            },
+            {
+                "email": "second@icloud.com",
+                "token": "",
+                "pickup_url": "https://pickup.example/show/secret/second@icloud.com",
+            },
+        ])
+        first = db.claim_next_icloud_email(pickup_filter="url")
+        self.assertEqual(first["email"], "first@icloud.com")
+
+        db.release_icloud_email("first@icloud.com", status="available", note="stopped")
+        next_claim = db.claim_next_icloud_email(pickup_filter="url")
+
+        self.assertEqual(next_claim["email"], "second@icloud.com")
+
+    def test_unconsumed_mailbox_moves_to_claim_queue_tail(self):
+        db.import_icloud_emails([
+            {"email": "first@icloud.com", "token": "tok_first"},
+            {"email": "second@icloud.com", "token": "tok_second"},
+        ])
+        first = db.claim_next_icloud_email(pickup_filter="token")
+        self.assertEqual(first["email"], "first@icloud.com")
+
+        self.assertTrue(db.release_unconsumed_icloud_email("first@icloud.com", note="retry"))
+        next_claim = db.claim_next_icloud_email(pickup_filter="token")
+
+        self.assertEqual(next_claim["email"], "second@icloud.com")
+
     def test_filtered_summary_counts_only_eligible_available_mailboxes(self):
         db.import_icloud_emails([
             {"email": "token@icloud.com", "token": "tok_only"},

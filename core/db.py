@@ -1814,11 +1814,17 @@ def _icloud_row_matches_filter(row: dict, pickup_filter: str) -> bool:
     return True
 
 
+def _move_icloud_row_to_queue_tail(rows: list[dict], row: dict) -> None:
+    """Keep available iCloud mailboxes in FIFO order after a release/retry."""
+    rows.remove(row)
+    rows.append(row)
+
+
 def claim_next_icloud_email(pickup_filter: str = "all") -> dict | None:
     """原子领取一条可用 iCloud 邮箱，并返回包含 Token 的任务上下文。"""
     pickup_filter = str(pickup_filter or "all").strip().lower()
     with _LOCK:
-        rows = sorted(_load_icloud_emails(), key=lambda item: int(item.get("id") or 0))
+        rows = _load_icloud_emails()
         row = next((
             item
             for item in rows
@@ -1859,6 +1865,7 @@ def release_icloud_email(email: str, status: str = "available", note: str | None
             row.pop("claimed_pickup_mode", None)
         if status == "available":
             row["used_at"] = None
+            _move_icloud_row_to_queue_tail(rows, row)
         else:
             row["used_at"] = row.get("used_at") or _now()
         if note is not None:
@@ -1881,6 +1888,7 @@ def release_unconsumed_icloud_email(email: str, note: str | None = None) -> bool
         row.pop("claimed_pickup_mode", None)
         if note is not None:
             row["note"] = note
+        _move_icloud_row_to_queue_tail(rows, row)
         _save_icloud_emails(rows)
         return True
 
