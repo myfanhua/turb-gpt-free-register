@@ -519,6 +519,13 @@ def _select_sms_channel_or_raise(driver) -> None:
     has_sms = any(str(r.get('value','')).lower() in ('sms', 'text', 'text_message', 'text-message') for r in radios)
     if has_whatsapp and not has_sms:
         raise RuntimeError(f"whatsapp_channel: 页面仅提供 WhatsApp 通道 state={state}")
+    if any(
+        str(r.get('value', '')).lower() in ('sms', 'text', 'text_message', 'text-message')
+        and r.get('checked')
+        for r in radios
+    ):
+        logger.info("[Codex][Browser] SMS 短信通道已经选中，不重复触发")
+        return
     # 选择 SMS/text radio。无 radio 时可能默认 SMS。
     selected = driver.execute_script(r"""
     const radios = [...document.querySelectorAll('input[type=radio]')];
@@ -629,6 +636,16 @@ def _phone_values_match(expected_e164: str, visible_value: str, hidden_value: st
         and len(visible_digits) >= 7
         and expected_digits.endswith(visible_digits)
     )
+
+
+def _type_phone_input_element(phone_input, visible_value: str) -> None:
+    """Use WebDriver keystrokes so React receives trusted keyboard/input events."""
+    from selenium.webdriver.common.keys import Keys
+
+    phone_input.click()
+    phone_input.send_keys(Keys.CONTROL, "a")
+    phone_input.send_keys(Keys.BACKSPACE)
+    phone_input.send_keys(str(visible_value or ""))
 
 
 def _has_strict_add_phone_form(driver) -> bool:
@@ -762,7 +779,8 @@ def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
         ? {opt: hintedMatch, code: optionDialCode(hintedMatch) || hintedDialCode}
         : prefixMatch;
       if (matched && select.value !== matched.opt.value) {
-        select.value = matched.opt.value;
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+        if (setter) setter.call(select, matched.opt.value); else select.value = matched.opt.value;
         select.dispatchEvent(new Event('input', {bubbles:true}));
         select.dispatchEvent(new Event('change', {bubbles:true}));
         selectedChanged = true;
@@ -782,27 +800,7 @@ def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
       if (!visibleValue) visibleValue = e164;
     }
 
-    const setNativeValue = (el, value) => {
-      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-      el.focus();
-      if (setter) setter.call(el, ''); else el.value = '';
-      el.dispatchEvent(new Event('input', {bubbles:true}));
-      el.dispatchEvent(new Event('change', {bubbles:true}));
-      if (setter) setter.call(el, value); else el.value = value;
-      el.dispatchEvent(new Event('input', {bubbles:true}));
-      el.dispatchEvent(new Event('change', {bubbles:true}));
-    };
-
     phoneInput.scrollIntoView({block:'center'});
-    setNativeValue(phoneInput, visibleValue);
-    if (hiddenPhoneNumberInput) {
-      hiddenPhoneNumberInput.value = e164;
-      hiddenPhoneNumberInput.dispatchEvent(new Event('input', {bubbles:true}));
-      hiddenPhoneNumberInput.dispatchEvent(new Event('change', {bubbles:true}));
-    }
-    phoneInput.blur();
-    document.body?.focus?.();
     return {
       ok: true,
       e164,
@@ -819,6 +817,36 @@ def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
     """, phone, country_hints)
     if not result or not result.get("ok"):
         raise RuntimeError(f"手机号写入失败 result={result} state={_phone_page_state(driver)}")
+    phone_input = _find_any(driver, _PHONE_INPUT_SELECTORS, timeout=timeout)
+    _type_phone_input_element(phone_input, str(result.get("visibleValue") or ""))
+    # Let the phone component format the visible value and derive its hidden
+    # E.164 field from real keyboard events instead of mutating DOM-only state.
+    settle_deadline = time.time() + 3
+    while time.time() < settle_deadline:
+        settled = driver.execute_script(r"""
+        const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+        const form = document.querySelector('form[action*="/add-phone" i]')
+          || [...document.querySelectorAll('form')].find(f => /add-phone/i.test(f.getAttribute('action') || ''));
+        const input = form && [...form.querySelectorAll('input[type="tel"], input[name="__reservedForPhoneNumberInput_tel"], input[autocomplete="tel"], input[name="phone"], input[name="phone_number"]')].find(visible);
+        const hidden = form && form.querySelector('input[name="phoneNumber"]');
+        return {
+          actualVisible: String(input?.value || ''),
+          hiddenValue: String(hidden?.value || ''),
+          ariaInvalid: String(input?.getAttribute('aria-invalid') || ''),
+        };
+        """) or {}
+        result.update(settled)
+        if _phone_values_match(
+            str(result.get("e164") or ""),
+            str(result.get("actualVisible") or ""),
+            str(result.get("hiddenValue") or ""),
+        ):
+            break
+        time.sleep(0.1)
+    try:
+        phone_input.send_keys("\ue004")  # TAB: commit React-Aria field state via a real blur.
+    except Exception:
+        pass
     actual = str(result.get("actualVisible") or "").strip()
     visible_value = str(result.get("visibleValue") or "").strip()
     hidden_value = str(result.get("hiddenValue") or "").strip()
@@ -1074,14 +1102,21 @@ def _wait_after_phone_otp_submit(driver, timeout: int = 20) -> str:
 def _classify_phone_page_failure(state: dict) -> str:
     if _is_phone_code_state(state):
         return ''
-    # WhatsApp 用 DOM radio value 判断；其它发送失败用服务端/页面错误文本兜底。
     radios = state.get('radios') or []
+    text = str(state.get('bodyText') or '').lower()
+    if any(k in text for k in (
+        'phone number required', 'phone number is required', 'add a phone number',
+        '电话号码必填', '手机号必填', '请添加电话号码',
+        '전화번호 필수', '전화번호를 추가',
+    )):
+        return 'phone_required'
+    # WhatsApp 用 DOM radio value 判断；其它发送失败用服务端/页面错误文本兜底。
     if any('whatsapp' in str(r.get('value','')).lower().replace(' ', '') and r.get('checked') for r in radios):
         return 'whatsapp_channel'
-    text = str(state.get('bodyText') or '').lower()
     if 'invalid_auth_step' in text or 'invalid auth step' in text:
         return 'invalid_auth_step'
-    if 'whatsapp' in text or 'whats app' in text:
+    has_sms_radio = any(str(r.get('value','')).lower() in ('sms', 'text', 'text_message', 'text-message') for r in radios)
+    if ('whatsapp' in text or 'whats app' in text) and not has_sms_radio:
         return 'whatsapp_channel'
     if any(k in text for k in ('invalid phone', 'not a valid phone', 'phone number is not valid', '号码无效', '手机号无效')):
         return 'invalid_phone'
@@ -1102,6 +1137,24 @@ def _sleep_before_phone_retry(attempt: int, max_retries: int, *, prefix: str = "
     seconds = random.uniform(3.0, 8.0)
     logger.info("%s 换号前随机等待 %.1f 秒", prefix, seconds)
     time.sleep(seconds)
+
+
+def _prepare_phone_submission(driver, phone_e164: str) -> tuple[dict, dict]:
+    """Select the delivery channel first, then type and validate the phone number."""
+    logger.info("[Codex][Browser] 检查并选择 SMS 短信通道")
+    _select_sms_channel_or_raise(driver)
+    _blur_active_input_and_wait(driver, label="短信通道确认完成")
+
+    phone_fill = _set_phone_value(driver, phone_e164, timeout=10)
+    logger.info(
+        "[Codex][Browser] 已重新设置手机号：e164=%s visible=%s hidden=%s dialCode=%s country=%s",
+        phone_fill.get("e164"), phone_fill.get("actualVisible"), phone_fill.get("hiddenValue") or "-",
+        phone_fill.get("dialCode") or "-", (str(phone_fill.get("selectedText") or "-") + (" [changed]" if phone_fill.get("selectedChanged") else "")),
+    )
+    _blur_active_input_and_wait(driver, label="手机号输入完成")
+    phone_verify = _verify_add_phone_value_before_submit(driver, str(phone_fill.get("e164") or phone_e164))
+    logger.info("[Codex][Browser] 手机号提交前校验通过：visible=%s hidden=%s", phone_verify.get("visibleValue"), phone_verify.get("hiddenValue") or "-")
+    return phone_fill, phone_verify
 
 
 def _do_phone_verification_if_present(driver) -> None:
@@ -1132,18 +1185,7 @@ def _do_phone_verification_if_present(driver) -> None:
                 logger.info("[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s", attempt, max_retries, provider, phone)
                 logger.info("[Codex][Browser] 准备手机号输入页，重新设置新手机号")
                 _ensure_add_phone_input(driver, reason=f"attempt-{attempt}")
-                phone_fill = _set_phone_value(driver, f"+{phone}", timeout=10)
-                logger.info(
-                    "[Codex][Browser] 已重新设置手机号：e164=%s visible=%s hidden=%s dialCode=%s country=%s",
-                    phone_fill.get("e164"), phone_fill.get("actualVisible"), phone_fill.get("hiddenValue") or "-",
-                    phone_fill.get("dialCode") or "-", (str(phone_fill.get("selectedText") or "-") + (" [changed]" if phone_fill.get("selectedChanged") else "")),
-                )
-                _blur_active_input_and_wait(driver, label="手机号输入完成")
-                phone_verify = _verify_add_phone_value_before_submit(driver, str(phone_fill.get("e164") or f"+{phone}"))
-                logger.info("[Codex][Browser] 手机号提交前校验通过：visible=%s hidden=%s", phone_verify.get("visibleValue"), phone_verify.get("hiddenValue") or "-")
-                logger.info("[Codex][Browser] 检查并选择 SMS 短信通道")
-                _select_sms_channel_or_raise(driver)
-                _blur_active_input_and_wait(driver, label="短信通道确认完成")
+                _prepare_phone_submission(driver, f"+{phone}")
                 submit_info = _click_add_phone_continue_button(driver, timeout=10)
                 logger.info("[Codex][Browser] 已点击手机号 Continue/続行 按钮：%s，等待进入短信验证码页", submit_info)
                 _wait_page_settle_after_submit()
