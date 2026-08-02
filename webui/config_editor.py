@@ -508,21 +508,46 @@ EDITABLE_FIELDS = [
     },
     # ---- 提链 ----
     {
+        "key": "EXTRACT_LINK_PROVIDER", "file": "extract_link.py", "type": "str", "group": "提链",
+        "label": "通用·默认提链服务", "help": "legacy=旧接口；kakao_batch=Kakao 异步批量接口",
+    },
+    {
         "key": "EXTRACT_LINK_API_BASE", "file": "extract_link.py", "type": "str", "group": "提链",
-        "label": "提链服务地址", "help": "填写提链服务 API 地址",
+        "label": "旧接口·服务地址", "help": "旧版 /api/extract + SSE 提链服务地址",
     },
     {
         "key": "EXTRACT_LINK_CDK", "file": "extract_link.py", "type": "str", "group": "提链",
-        "label": "提链 CDK", "help": "创建提链任务和监听任务事件使用；成功提链扣 1 次",
+        "label": "旧接口·CDK", "help": "旧接口创建任务和监听任务事件使用；成功提链扣 1 次",
         "storage": "env", "secret": True,
     },
     {
         "key": "EXTRACT_LINK_TYPE", "file": "extract_link.py", "type": "str", "group": "提链",
-        "label": "提链类型", "help": "支持 pix / upi / kakao_pay / ideal",
+        "label": "旧接口·提链类型", "help": "支持 pix / upi / kakao_pay / ideal",
     },
     {
         "key": "EXTRACT_LINK_WORKERS", "file": "extract_link.py", "type": "int", "group": "提链",
-        "label": "提链并发数", "help": "批量提链后台线程数，建议 1-4",
+        "label": "通用·提链并发数", "help": "两个 provider 共用的后台线程数，建议 1-4",
+    },
+    {
+        "key": "KAKAO_EXTRACT_API_BASE", "file": "extract_link.py", "type": "str", "group": "提链",
+        "label": "Kakao API·服务地址", "help": "异步批量提链 API 基址",
+    },
+    {
+        "key": "KAKAO_EXTRACT_CDK", "file": "extract_link.py", "type": "str", "group": "提链",
+        "label": "Kakao API·CDK", "help": "Kakao 批量提链专用 CDK；与旧接口分开保存",
+        "storage": "env", "secret": True,
+    },
+    {
+        "key": "KAKAO_EXTRACT_BATCH_SIZE", "file": "extract_link.py", "type": "int", "group": "提链",
+        "label": "Kakao API·默认每批数量", "help": "账号页默认每批提交数量，范围 1-5",
+    },
+    {
+        "key": "KAKAO_EXTRACT_TIMEOUT_SECONDS", "file": "extract_link.py", "type": "int", "group": "提链",
+        "label": "Kakao API·任务超时", "help": "服务端批次最大运行时间，默认 930 秒，范围 30-1200",
+    },
+    {
+        "key": "KAKAO_EXTRACT_POLL_INTERVAL", "file": "extract_link.py", "type": "float", "group": "提链",
+        "label": "Kakao API·轮询间隔", "help": "查询批次结果的间隔秒数，默认 4 秒",
     },
     # ---- Codex 配置 ----
     {
