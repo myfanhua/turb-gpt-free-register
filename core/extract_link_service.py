@@ -19,6 +19,12 @@ except Exception:  # WebUI 环境未装 curl_cffi 时使用标准库兜底
 
 from config import extract_link as cfg
 from core import db
+from core.kakao_extract_link_provider import (
+    build_kakao_batches,
+    KakaoBatchPlan,
+    KakaoExtractLinkClient,
+    map_kakao_results,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +53,43 @@ def _int_setting(name: str, default: int, lower: int, upper: int) -> int:
     return max(lower, min(upper, value))
 
 
+def _float_setting(name: str, default: float, lower: float, upper: float) -> float:
+    try:
+        value = float(_runtime_setting(name, default) or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(lower, min(upper, value))
+
+
 SUPPORTED_LINK_TYPES = {"pix", "upi", "kakao_pay", "ideal"}
+SUPPORTED_PROVIDERS = {"legacy", "kakao_batch"}
+
+
+def provider_name(value: str | None = None) -> str:
+    raw = str(value or _runtime_setting("EXTRACT_LINK_PROVIDER", "legacy") or "legacy").strip().lower()
+    aliases = {
+        "legacy": "legacy",
+        "old": "legacy",
+        "sse": "legacy",
+        "kakao": "kakao_batch",
+        "kakao_batch": "kakao_batch",
+        "kakao-batch": "kakao_batch",
+    }
+    provider = aliases.get(raw)
+    if provider not in SUPPORTED_PROVIDERS:
+        raise ValueError("提链 provider 无效，仅支持 legacy / kakao_batch")
+    return provider
+
+
+def kakao_batch_size(value: int | str | None = None) -> int:
+    raw = value if value is not None else _runtime_setting("KAKAO_EXTRACT_BATCH_SIZE", 5)
+    try:
+        size = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Kakao 每批数量必须为 1-5") from exc
+    if not 1 <= size <= 5:
+        raise ValueError("Kakao 每批数量必须为 1-5")
+    return size
 
 
 def _link_type(value: str | None = None) -> str:
@@ -69,6 +111,23 @@ def _cdk(value: str | None = None) -> str:
     if not cdk:
         raise ValueError("EXTRACT_LINK_CDK/CDK 为空")
     return cdk
+
+
+def _kakao_cdk(value: str | None = None) -> str:
+    cdk = str(value or _runtime_setting("KAKAO_EXTRACT_CDK", "") or "").strip()
+    if not cdk:
+        raise ValueError("KAKAO_EXTRACT_CDK/CDK 为空")
+    return cdk
+
+
+def _make_kakao_client(*, cdk: str | None = None) -> KakaoExtractLinkClient:
+    return KakaoExtractLinkClient(
+        api_base=str(_runtime_setting("KAKAO_EXTRACT_API_BASE", "https://tiqu.dxmcs.xin") or "").strip(),
+        cdk=_kakao_cdk(cdk),
+        timeout_seconds=_int_setting("KAKAO_EXTRACT_TIMEOUT_SECONDS", 930, 30, 1200),
+        poll_interval=_float_setting("KAKAO_EXTRACT_POLL_INTERVAL", 4.0, 0.5, 30.0),
+        request_timeout=_int_setting("EXTRACT_LINK_REQUEST_TIMEOUT", 30, 5, 300),
+    )
 
 
 _WORKERS = _int_setting("EXTRACT_LINK_WORKERS", 3, 1, 16)
@@ -342,3 +401,311 @@ def enqueue_account_extract(*, account_id: int, email: str, access_token: str, t
     except Exception:
         _QUEUE_SLOTS.release()
         raise
+
+
+def _account_response_item(account: dict, **extra) -> dict:
+    item = {
+        "id": int(account.get("id") or account.get("account_id") or 0),
+        "email": str(account.get("email") or ""),
+    }
+    item.update(extra)
+    return item
+
+
+def _run_kakao_batch(
+    *,
+    plan: KakaoBatchPlan,
+    client: KakaoExtractLinkClient,
+    trigger: str,
+    existing_batch_id: str | None = None,
+) -> dict:
+    batch_id = str(existing_batch_id or "").strip()
+    account_ids = [
+        account_id
+        for ids in plan.account_ids_by_result_index.values()
+        for account_id in ids
+    ]
+    try:
+        if not batch_id:
+            accepted = client.submit(plan.tokens)
+            batch_id = accepted.batch_id
+        for result_index, ids in plan.account_ids_by_result_index.items():
+            for account_id in ids:
+                db.mark_account_extract_running(account_id)
+                db.update_account_extract(account_id, {
+                    "ok": False,
+                    "status": "running",
+                    "provider": "kakao_batch",
+                    "batch_id": batch_id,
+                    "batch_number": plan.batch_number,
+                    "batch_total": plan.batch_total,
+                    "result_index": result_index,
+                    "link_type": "kakao_pay",
+                    "message": f"Kakao 第 {plan.batch_number}/{plan.batch_total} 批处理中",
+                })
+
+        completed = client.poll(batch_id)
+        mapped = map_kakao_results(plan, completed.results)
+        for result_index, ids in plan.account_ids_by_result_index.items():
+            for account_id in ids:
+                final = dict(mapped.get(account_id) or {
+                    "ok": False,
+                    "status": "failed",
+                    "error": "Kakao 服务未返回该账号结果",
+                    "message": "Kakao 服务未返回该账号结果",
+                })
+                final.update({
+                    "provider": "kakao_batch",
+                    "batch_id": batch_id,
+                    "batch_number": plan.batch_number,
+                    "batch_total": plan.batch_total,
+                    "result_index": result_index,
+                    "charged_count": completed.charged_count,
+                    "cdk_remaining": completed.remaining_count,
+                })
+                db.update_account_extract(account_id, final)
+        logger.info(
+            "[提链] Kakao 批次完成: batch=%s accounts=%s success=%s failed=%s",
+            batch_id,
+            len(account_ids),
+            completed.success_count,
+            completed.failure_count,
+        )
+        return {
+            "ok": True,
+            "batch_id": batch_id,
+            "account_count": len(account_ids),
+        }
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {str(exc)}"[:500]
+        for result_index, ids in plan.account_ids_by_result_index.items():
+            for account_id in ids:
+                db.update_account_extract(account_id, {
+                    "ok": False,
+                    "status": "failed",
+                    "provider": "kakao_batch",
+                    "batch_id": batch_id or None,
+                    "batch_number": plan.batch_number,
+                    "batch_total": plan.batch_total,
+                    "result_index": result_index,
+                    "error": reason,
+                    "message": reason,
+                })
+        logger.exception("[提链] Kakao 批次失败: batch=%s trigger=%s", batch_id or "unsubmitted", trigger)
+        return {"ok": False, "batch_id": batch_id, "error": reason}
+    finally:
+        _QUEUE_SLOTS.release()
+
+
+def _enqueue_legacy_accounts(
+    *,
+    accounts: list[dict],
+    trigger: str,
+    link_type: str | None,
+    cdk: str | None,
+) -> dict:
+    started, busy, failed = [], [], []
+    for account in accounts:
+        try:
+            queued = enqueue_account_extract(
+                account_id=int(account.get("id") or account.get("account_id") or 0),
+                email=str(account.get("email") or ""),
+                access_token=str(account.get("access_token") or ""),
+                trigger=trigger,
+                link_type=link_type,
+                cdk=cdk,
+            )
+        except Exception as exc:
+            failed.append(_account_response_item(account, error=f"{type(exc).__name__}: {exc}"))
+            continue
+        item = _account_response_item(
+            account,
+            **{key: value for key, value in queued.items() if key != "future"},
+        )
+        if queued.get("accepted"):
+            started.append(item)
+        elif queued.get("busy"):
+            busy.append(item)
+        else:
+            failed.append(item)
+    return {
+        "provider": "legacy",
+        "batch_count": len(started),
+        "started": started,
+        "started_count": len(started),
+        "busy": busy,
+        "busy_count": len(busy),
+        "failed": failed,
+        "failed_count": len(failed),
+    }
+
+
+def enqueue_accounts_extract(
+    *,
+    accounts: list[dict],
+    trigger: str = "manual_bulk",
+    provider: str | None = None,
+    batch_size: int | str | None = None,
+    link_type: str | None = None,
+    cdk: str | None = None,
+) -> dict:
+    selected_provider = provider_name(provider)
+    if selected_provider == "legacy":
+        return _enqueue_legacy_accounts(
+            accounts=accounts,
+            trigger=trigger,
+            link_type=link_type,
+            cdk=cdk,
+        )
+
+    size = kakao_batch_size(batch_size)
+    claimed_accounts: list[dict] = []
+    busy: list[dict] = []
+    failed: list[dict] = []
+    for account in accounts:
+        account_id = int(account.get("id") or account.get("account_id") or 0)
+        if db.claim_account_extract(
+            account_id,
+            trigger=trigger,
+            link_type="kakao_pay",
+            provider="kakao_batch",
+        ):
+            claimed_accounts.append({
+                "id": account_id,
+                "account_id": account_id,
+                "email": str(account.get("email") or ""),
+                "access_token": str(account.get("access_token") or ""),
+            })
+        else:
+            busy.append(_account_response_item(account, busy=True, error="该账号正在提链中"))
+
+    plans = build_kakao_batches(claimed_accounts, size) if claimed_accounts else []
+    account_by_id = {int(account["id"]): account for account in claimed_accounts}
+    started: list[dict] = []
+    scheduled_batches = 0
+    for plan in plans:
+        ids = [
+            account_id
+            for group in plan.account_ids_by_result_index.values()
+            for account_id in group
+        ]
+        for result_index, result_ids in plan.account_ids_by_result_index.items():
+            for account_id in result_ids:
+                db.update_account_extract(account_id, {
+                    "ok": False,
+                    "status": "queued",
+                    "provider": "kakao_batch",
+                    "batch_number": plan.batch_number,
+                    "batch_total": plan.batch_total,
+                    "result_index": result_index,
+                    "link_type": "kakao_pay",
+                    "message": f"Kakao 第 {plan.batch_number}/{plan.batch_total} 批已入队",
+                })
+        if not _QUEUE_SLOTS.acquire(blocking=False):
+            db.release_account_extract_claims(ids, error="提链队列已满")
+            failed.extend(
+                _account_response_item(account_by_id[account_id], error="提链队列已满")
+                for account_id in ids
+            )
+            continue
+        try:
+            client = _make_kakao_client(cdk=cdk)
+            _EXECUTOR.submit(
+                _run_kakao_batch,
+                plan=plan,
+                client=client,
+                trigger=trigger,
+                existing_batch_id=None,
+            )
+        except Exception as exc:
+            _QUEUE_SLOTS.release()
+            reason = f"{type(exc).__name__}: {exc}"[:500]
+            db.release_account_extract_claims(ids, error=reason)
+            failed.extend(
+                _account_response_item(account_by_id[account_id], error=reason)
+                for account_id in ids
+            )
+            continue
+        scheduled_batches += 1
+        started.extend(
+            _account_response_item(
+                account_by_id[account_id],
+                accepted=True,
+                busy=False,
+                provider="kakao_batch",
+                batch_number=plan.batch_number,
+                batch_total=plan.batch_total,
+            )
+            for account_id in ids
+        )
+
+    return {
+        "provider": "kakao_batch",
+        "batch_size": size,
+        "batch_count": scheduled_batches,
+        "started": started,
+        "started_count": len(started),
+        "busy": busy,
+        "busy_count": len(busy),
+        "failed": failed,
+        "failed_count": len(failed),
+    }
+
+
+def resume_interrupted_kakao_batches(batches: list[dict]) -> dict:
+    resumed = 0
+    failed = 0
+    for raw in batches or []:
+        batch_id = str((raw or {}).get("batch_id") or "").strip()
+        accounts = (raw or {}).get("accounts") or []
+        mapping: dict[int, list[int]] = {}
+        for item in accounts:
+            try:
+                account_id = int(item.get("account_id"))
+                result_index = int(item.get("result_index") or 0)
+            except (TypeError, ValueError):
+                continue
+            mapping.setdefault(result_index, []).append(account_id)
+        ids = [account_id for group in mapping.values() for account_id in group]
+        if not batch_id or not ids:
+            failed += 1
+            continue
+        if not _QUEUE_SLOTS.acquire(blocking=False):
+            for account_id in ids:
+                db.update_account_extract(account_id, {
+                    "ok": False,
+                    "status": "failed",
+                    "error": "恢复 Kakao 批次时提链队列已满，请重新提链",
+                    "message": "恢复 Kakao 批次时提链队列已满，请重新提链",
+                })
+            failed += 1
+            continue
+        plan = KakaoBatchPlan(
+            batch_number=int((raw or {}).get("batch_number") or 1),
+            batch_total=int((raw or {}).get("batch_total") or 1),
+            tokens=[],
+            account_ids_by_result_index=mapping,
+        )
+        try:
+            client = _make_kakao_client()
+            _EXECUTOR.submit(
+                _run_kakao_batch,
+                plan=plan,
+                client=client,
+                trigger="startup_recovery",
+                existing_batch_id=batch_id,
+            )
+        except Exception as exc:
+            _QUEUE_SLOTS.release()
+            reason = f"恢复 Kakao 批次失败: {type(exc).__name__}: {exc}"[:500]
+            for account_id in ids:
+                db.update_account_extract(account_id, {
+                    "ok": False,
+                    "status": "failed",
+                    "error": reason,
+                    "message": reason,
+                })
+            failed += 1
+            continue
+        resumed += 1
+    return {"resumed_batches": resumed, "failed_batches": failed}
