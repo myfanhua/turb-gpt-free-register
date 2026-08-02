@@ -34,6 +34,8 @@ class SmsActivateProviderTests(unittest.TestCase):
 
         self.assertIn("SMS_API_BASE", fields)
         self.assertEqual(fields["SMS_API_BASE"].get("storage"), "env")
+        self.assertIn("SMS_MAX_PRICE", fields)
+        self.assertEqual(fields["SMS_MAX_PRICE"].get("storage"), "env")
         self.assertIn("SMS_CANCEL_DELAY", fields)
         self.assertTrue(hasattr(codex_config, "SMS_API_BASE"))
         self.assertTrue(hasattr(codex_config, "SMS_CANCEL_DELAY"))
