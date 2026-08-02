@@ -6,12 +6,17 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 import requests
 
 from config import email as _email_cfg
 from core import db
+from core.icloud_pickup_page import (
+    ICloudPickupPageError,
+    parse_pickup_page,
+    with_message_limit,
+)
 from core.otp_utils import extract_otp, looks_like_openai_email
 
 logger = logging.getLogger(__name__)
@@ -30,6 +35,7 @@ class ICloudMailAccount:
     email: str
     token: str
     pickup_url: str = ""
+    pickup_mode: str = "api_token"
 
 
 _CONTEXT_CACHE: dict[str, ICloudMailAccount] = {}
@@ -82,6 +88,7 @@ def pick_account() -> ICloudMailAccount:
         email=row["email"],
         token=row["token"],
         pickup_url=str(row.get("pickup_url") or row.get("pickupUrl") or "").strip(),
+        pickup_mode=str(row.get("pickup_mode") or "api_token").strip(),
     )
     _CONTEXT_CACHE[_cache_key(account.email)] = account
     logger.info("[iCloud] 已领取邮箱: %s（DB id=%s）", account.email, row.get("id"))
@@ -100,6 +107,7 @@ def get_account_context(email: str) -> ICloudMailAccount | None:
         email=row["email"],
         token=row["token"],
         pickup_url=str(row.get("pickup_url") or row.get("pickupUrl") or "").strip(),
+        pickup_mode=str(row.get("pickup_mode") or "api_token").strip(),
     )
     _CONTEXT_CACHE[key] = account
     return account
@@ -196,6 +204,36 @@ def _request_latest(account: ICloudMailAccount):
     }
     timeout = max(1, int(getattr(_email_cfg, "ICLOUD_PICKUP_TIMEOUT", 15) or 15))
     return requests.get(_api_url(account.pickup_url), headers=headers, timeout=timeout)
+
+
+def _request_independent_page(account: ICloudMailAccount):
+    headers = {
+        "Accept": "text/html",
+        "User-Agent": "Mozilla/5.0 (compatible; turb-gpt-register/1.0)",
+    }
+    timeout = max(1, int(getattr(_email_cfg, "ICLOUD_PICKUP_TIMEOUT", 15) or 15))
+    return requests.get(
+        with_message_limit(account.pickup_url, limit=10),
+        headers=headers,
+        timeout=timeout,
+    )
+
+
+def _redact_account_secrets(value: object, account: ICloudMailAccount) -> str:
+    text = str(value or "")
+    if account.token:
+        text = text.replace(account.token, "***")
+    if account.pickup_url:
+        text = text.replace(account.pickup_url, "***")
+        parsed = urlsplit(account.pickup_url)
+        if parsed.path:
+            text = text.replace(parsed.path, "/***")
+        if parsed.query:
+            text = text.replace(parsed.query, "***")
+    profile_token = _profile_token()
+    if profile_token:
+        text = text.replace(profile_token, "***")
+    return text
 
 
 def _profile_token() -> str:
@@ -314,6 +352,62 @@ def _profile_response_message(
     return fallback
 
 
+def _independent_response_message(
+    html_text: str,
+    target: str,
+    after_ts: float | None,
+) -> tuple[dict, float, str] | None:
+    try:
+        cards = parse_pickup_page(html_text)
+    except ICloudPickupPageError as exc:
+        raise ICloudMailError(str(exc)) from exc
+    candidates: list[tuple[dict, float, str]] = []
+    for index, card in enumerate(cards):
+        message = {
+            "uid": f"html-{index}",
+            "to": target,
+            "date": card.get("date") or "",
+            "from": card.get("from") or "",
+            "subject": card.get("subject") or "",
+            "text": card.get("body") or "",
+            "html": "",
+        }
+        try:
+            candidates.append(
+                _response_message(
+                    {"email": target, "message": message},
+                    target,
+                    after_ts,
+                )
+            )
+        except ICloudMailError:
+            continue
+    if not candidates:
+        return None
+    fallback = None
+    for result in sorted(candidates, key=lambda item: item[1], reverse=True):
+        if fallback is None:
+            fallback = result
+        message, _stamp, freshness = result
+        if freshness == "new" and looks_like_openai_email(message) and extract_otp(message):
+            return result
+    return fallback
+
+
+def _account_sources(account: ICloudMailAccount) -> list[tuple[str, str, object]]:
+    mode = str(account.pickup_mode or "api_token").strip().lower()
+    sources: list[tuple[str, str, object]] = []
+    if mode in {"independent_url", "independent_url_with_token"} and account.pickup_url:
+        sources.append(("html", "iCloud 独立取件页", lambda: _request_independent_page(account)))
+    if mode in {"api_token", "independent_url_with_token"} and account.token:
+        sources.append(("pickup", "iCloud Pickup", lambda: _request_latest(account)))
+    if account.token and _profile_token():
+        sources.append(("profile", "iCloud Profile", _request_profile_sync))
+    if not sources:
+        raise ICloudMailError(f"iCloud 邮箱没有可用取件材料: {account.email}")
+    return sources
+
+
 def fetch_latest_otp(
     email: str,
     after_ts: float | None = None,
@@ -339,32 +433,29 @@ def fetch_latest_otp(
     # single-shot callers and deterministic status/identity error reporting.
     while first_attempt or time.monotonic() <= deadline:
         first_attempt = False
-        has_profile = bool(_profile_token())
-        sources = [
-            (False, "iCloud Pickup", lambda: _request_latest(account)),
-        ]
-        if has_profile:
-            sources.append((True, "iCloud Profile", _request_profile_sync))
+        sources = _account_sources(account)
         unavailable_details: list[str] = []
 
-        for using_profile, source_name, request_source in sources:
+        for source_index, (source_kind, source_name, request_source) in enumerate(sources):
+            using_profile = source_kind == "profile"
+            has_fallback = source_index < len(sources) - 1
             try:
                 response = request_source()
                 status = int(response.status_code)
                 if status in {401, 403}:
-                    if not using_profile and has_profile:
-                        last_error = f"{source_name} HTTP {status}: 尝试 Profile 同步"
+                    if has_fallback:
+                        last_error = f"{source_name} HTTP {status}: 尝试同邮箱后备来源"
                         continue
                     if not using_profile:
                         db.release_icloud_email(
                             account.email,
                             status="disabled",
-                            note=f"iCloud Pickup HTTP {status}",
+                            note=f"{source_name} HTTP {status}",
                         )
                     raise ICloudMailError(f"{source_name} HTTP {status}: 凭据无效、到期或停用")
                 if status == 404:
                     last_error = "当前邮箱没有可读取的邮件"
-                    if not using_profile and has_profile:
+                    if has_fallback:
                         continue
                 elif status == 429:
                     retry_after = response.headers.get("Retry-After", "")
@@ -373,42 +464,43 @@ def fetch_latest_otp(
                     except (TypeError, ValueError):
                         interval = max(interval, 3)
                     last_error = "请求过于频繁"
-                    if not using_profile and has_profile:
+                    if has_fallback:
                         continue
                 elif status == 503:
                     last_error = "邮箱正在初始化或暂时无法刷新"
                     unavailable_details.append(f"{source_name} HTTP {status}")
-                    if not using_profile and has_profile:
+                    if has_fallback:
                         continue
                 elif status >= 500:
                     last_error = f"服务暂时异常: HTTP {status}"
                     unavailable_details.append(f"{source_name} HTTP {status}")
-                    if not using_profile and has_profile:
+                    if has_fallback:
                         continue
                 elif status != 200:
-                    if not using_profile and has_profile:
-                        last_error = f"{source_name} HTTP {status}: 尝试 Profile 同步"
+                    if has_fallback:
+                        last_error = f"{source_name} HTTP {status}: 尝试同邮箱后备来源"
                         continue
                     raise ICloudMailError(f"{source_name} HTTP {status}: email={account.email}")
                 else:
-                    result = (
-                        _profile_response_message(response.json(), account.email, after_ts)
-                        if using_profile
-                        else _response_message(response.json(), account.email, after_ts)
-                    )
+                    if source_kind == "html":
+                        result = _independent_response_message(response.text, account.email, after_ts)
+                    elif using_profile:
+                        result = _profile_response_message(response.json(), account.email, after_ts)
+                    else:
+                        result = _response_message(response.json(), account.email, after_ts)
                     if result is None:
-                        last_error = "浏览器资料中尚未出现该邮箱的新邮件"
-                        if not using_profile and has_profile:
+                        last_error = f"{source_name}中尚未出现该邮箱的新邮件"
+                        if has_fallback:
                             continue
                     else:
                         message, stamp, freshness = result
                         if freshness == "old":
                             last_error = "最新邮件早于本次验证码请求"
-                            if not using_profile and has_profile:
+                            if has_fallback:
                                 continue
                         elif not looks_like_openai_email(message):
                             last_error = "最新邮件不是 OpenAI 验证邮件"
-                            if not using_profile and has_profile:
+                            if has_fallback:
                                 continue
                         else:
                             code = extract_otp(message)
@@ -420,31 +512,21 @@ def fetch_latest_otp(
                                     settle_until = time.monotonic() + settle
                                 break
             except ICloudMailError:
-                if not using_profile and has_profile:
+                if has_fallback:
                     continue
                 raise
             except requests.RequestException as exc:
-                detail = str(exc)
-                if account.token:
-                    detail = detail.replace(account.token, "***")
-                profile_token = _profile_token()
-                if profile_token:
-                    detail = detail.replace(profile_token, "***")
+                detail = _redact_account_secrets(exc, account)
                 last_error = f"{type(exc).__name__}: {detail}"
                 unavailable_details.append(f"{source_name} {type(exc).__name__}")
-                if not using_profile and has_profile:
+                if has_fallback:
                     continue
             except Exception as exc:
                 # Keep diagnostic context useful while ensuring mailbox and
                 # profile credentials are never included in errors or logs.
-                detail = str(exc)
-                if account.token:
-                    detail = detail.replace(account.token, "***")
-                profile_token = _profile_token()
-                if profile_token:
-                    detail = detail.replace(profile_token, "***")
+                detail = _redact_account_secrets(exc, account)
                 last_error = f"{type(exc).__name__}: {detail}"
-                if not using_profile and has_profile:
+                if has_fallback:
                     continue
 
         if len(unavailable_details) == len(sources):

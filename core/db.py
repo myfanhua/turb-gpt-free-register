@@ -131,11 +131,19 @@ def _mask_icloud_token(token: str) -> str:
     return f"{prefix}****{suffix}"
 
 
+def _is_icloud_json_pickup_url(pickup_url: str) -> bool:
+    parsed = urlparse(str(pickup_url or "").strip())
+    path = parsed.path.rstrip("/").lower()
+    return path.endswith("/messages/latest") or (
+        "/api/" in path and path.endswith("/pickup")
+    )
+
+
 def _icloud_pickup_mode(token: str, pickup_url: str) -> str:
-    if pickup_url and token:
+    if pickup_url and token and not _is_icloud_json_pickup_url(pickup_url):
         return "independent_url_with_token"
     if pickup_url:
-        return "independent_url"
+        return "api_token" if token else "independent_url"
     return "api_token"
 
 

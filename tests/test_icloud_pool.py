@@ -58,8 +58,10 @@ class ICloudPoolTests(unittest.TestCase):
 
         claimed = db.claim_next_icloud_email()
         self.assertEqual(claimed["pickup_url"], pickup_url)
+        self.assertEqual(claimed["pickup_mode"], "api_token")
         row = db.get_icloud_email_by_email("one@icloud.com", include_token=True)
         self.assertEqual(row["pickup_url"], pickup_url)
+        self.assertEqual(row["pickup_mode"], "api_token")
 
     def test_import_accepts_url_only_and_hides_raw_url_from_public_rows(self):
         pickup_url = "https://pickup.example/show/secret-value/one@icloud.com"

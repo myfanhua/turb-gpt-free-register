@@ -64,6 +64,28 @@ def profile_response(
     return item
 
 
+def html_response(
+    status=200,
+    *,
+    sender="ChatGPT <noreply@tm.openai.com>",
+    subject="Your verification code is 654321",
+    date=MESSAGE_DATE,
+    body="Use verification code 654321",
+):
+    item = Mock(status_code=status, headers={})
+    item.text = f"""
+    <html><body><div class="cnt">1 封</div>
+      <div class="card">
+        <div class="fr">{sender}</div>
+        <div class="su">{subject}</div>
+        <div class="dt">{date}</div>
+        <div class="bd">{body}</div>
+      </div>
+    </body></html>
+    """
+    return item
+
+
 class ICloudMailClientTests(unittest.TestCase):
     def setUp(self):
         self.profile_token = getattr(client._email_cfg, "ICLOUD_PROFILE_TOKEN", "")
@@ -288,6 +310,113 @@ class ICloudMailClientTests(unittest.TestCase):
 
         self.assertEqual(client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0), "654321")
         self.assertEqual(get.call_args.args[0], "https://pickup.example/messages/latest?mail=one%40icloud.com")
+
+    @patch("core.icloud_mail_client.requests.post")
+    @patch("core.icloud_mail_client.requests.get")
+    def test_url_only_account_reads_html_without_token_or_profile(self, get, post):
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
+        get.return_value = html_response()
+        client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
+            email="one@icloud.com",
+            token="",
+            pickup_url="https://pickup.example/show/credential/one@icloud.com",
+            pickup_mode="independent_url",
+        )
+
+        code = client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0)
+
+        self.assertEqual(code, "654321")
+        called_url = get.call_args.args[0]
+        self.assertIn("/show/credential/one@icloud.com", called_url)
+        self.assertIn("n=10", called_url)
+        self.assertEqual(get.call_args.kwargs["headers"]["Accept"], "text/html")
+        self.assertNotIn("Authorization", get.call_args.kwargs["headers"])
+        post.assert_not_called()
+
+    @patch("core.icloud_mail_client.time.sleep")
+    @patch("core.icloud_mail_client.requests.get")
+    def test_url_only_empty_page_then_new_html_message_returns_otp(self, get, sleep):
+        empty = Mock(status_code=200, headers={})
+        empty.text = '<div class="cnt">0 封</div><div class="no">等待接收邮件</div>'
+        get.side_effect = [empty, html_response(subject="OpenAI code 222222", body="Code 222222")]
+        client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
+            email="one@icloud.com",
+            token="",
+            pickup_url="https://pickup.example/show/credential/one@icloud.com",
+            pickup_mode="independent_url",
+        )
+
+        code = client.fetch_latest_otp("one@icloud.com", AFTER_TS, 5, 1, 0)
+
+        self.assertEqual(code, "222222")
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(sleep.call_count, 1)
+
+    @patch("core.icloud_mail_client.requests.post")
+    @patch("core.icloud_mail_client.requests.get")
+    def test_mixed_mode_falls_back_from_html_to_same_mailbox_token(self, get, post):
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
+        unavailable = Mock(status_code=500, headers={})
+        unavailable.text = "upstream error"
+        get.side_effect = [unavailable, response(subject="OpenAI code 333333")]
+        client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
+            email="one@icloud.com",
+            token="tok_one_1234",
+            pickup_url="https://pickup.example/show/credential/one@icloud.com",
+            pickup_mode="independent_url_with_token",
+        )
+
+        code = client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0)
+
+        self.assertEqual(code, "333333")
+        self.assertEqual(get.call_count, 2)
+        self.assertIn("n=10", get.call_args_list[0].args[0])
+        self.assertEqual(
+            get.call_args_list[1].kwargs["headers"]["Authorization"],
+            "Bearer tok_one_1234",
+        )
+        post.assert_not_called()
+
+    @patch("core.icloud_mail_client.requests.get")
+    def test_two_url_mailboxes_keep_their_own_pickup_pages(self, get):
+        client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
+            email="one@icloud.com",
+            token="",
+            pickup_url="https://pickup.example/show/first/one@icloud.com",
+            pickup_mode="independent_url",
+        )
+        client._CONTEXT_CACHE["two@icloud.com"] = client.ICloudMailAccount(
+            email="two@icloud.com",
+            token="",
+            pickup_url="https://pickup.example/show/second/two@icloud.com",
+            pickup_mode="independent_url",
+        )
+        get.side_effect = [
+            html_response(subject="OpenAI code 111111", body="Code 111111"),
+            html_response(subject="OpenAI code 222222", body="Code 222222"),
+        ]
+
+        self.assertEqual(client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0), "111111")
+        self.assertEqual(client.fetch_latest_otp("two@icloud.com", AFTER_TS, 1, 1, 0), "222222")
+        self.assertIn("/first/one@icloud.com", get.call_args_list[0].args[0])
+        self.assertIn("/second/two@icloud.com", get.call_args_list[1].args[0])
+
+    @patch("core.icloud_mail_client.requests.get")
+    def test_url_network_error_hides_full_credential_url(self, get):
+        pickup_url = "https://pickup.example/show/top-secret/one@icloud.com"
+        client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
+            email="one@icloud.com",
+            token="",
+            pickup_url=pickup_url,
+            pickup_mode="independent_url",
+        )
+        get.side_effect = requests.ConnectionError(f"network down for {pickup_url}?n=10")
+
+        with self.assertRaises(client.ICloudMailError) as raised:
+            client.fetch_latest_otp("one@icloud.com", AFTER_TS, 0, 1, 0)
+
+        self.assertNotIn("top-secret", str(raised.exception))
+        self.assertNotIn(pickup_url, str(raised.exception))
 
     @patch("core.icloud_mail_client.requests.get")
     def test_fetch_ignores_browser_render_pickup_url(self, get):
