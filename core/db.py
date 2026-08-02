@@ -1090,7 +1090,16 @@ def update_account_plan_check(acc_id: int | None = None, email: str | None = Non
         return True
 
 
-def claim_account_extract(acc_id: int, trigger: str = "manual", link_type: str = "pix") -> bool:
+def claim_account_extract(
+    acc_id: int,
+    trigger: str = "manual",
+    link_type: str = "pix",
+    *,
+    provider: str = "legacy",
+    batch_number: int | None = None,
+    batch_total: int | None = None,
+    result_index: int | None = None,
+) -> bool:
     """原子占用账号提链任务；已有未超时任务时返回 False。"""
     with _LOCK:
         accounts = _load_accounts()
@@ -1112,6 +1121,11 @@ def claim_account_extract(acc_id: int, trigger: str = "manual", link_type: str =
         row["extract_link_ok"] = False
         row["extract_link_trigger"] = str(trigger or "manual")
         row["extract_link_type"] = str(link_type or "pix").lower()
+        row["extract_link_provider"] = str(provider or "legacy").strip().lower() or "legacy"
+        row["extract_link_batch_id"] = None
+        row["extract_link_batch_number"] = batch_number
+        row["extract_link_batch_total"] = batch_total
+        row["extract_link_result_index"] = result_index
         row["extract_link_queued_at"] = now
         row["extract_link_started_at"] = None
         row["extract_link_completed_at"] = None
@@ -1158,6 +1172,18 @@ def update_account_extract(acc_id: int, result: dict | None = None) -> bool:
             row["extract_link_message"] = result.get("message")
         if result.get("job_id") is not None:
             row["extract_link_job_id"] = result.get("job_id")
+        if result.get("provider") is not None:
+            row["extract_link_provider"] = result.get("provider")
+        if result.get("batch_id") is not None:
+            row["extract_link_batch_id"] = result.get("batch_id")
+        if result.get("batch_number") is not None:
+            row["extract_link_batch_number"] = result.get("batch_number")
+        if result.get("batch_total") is not None:
+            row["extract_link_batch_total"] = result.get("batch_total")
+        if result.get("result_index") is not None:
+            row["extract_link_result_index"] = result.get("result_index")
+        if result.get("charged_count") is not None:
+            row["extract_link_charged_count"] = result.get("charged_count")
         if result.get("link_type") is not None:
             row["extract_link_type"] = result.get("link_type")
         if result.get("cdk_remaining") is not None:
@@ -1179,24 +1205,78 @@ def update_account_extract(acc_id: int, result: dict | None = None) -> bool:
         return True
 
 
-def recover_interrupted_extract_links() -> int:
+def release_account_extract_claims(account_ids: list[int], error: str = "提链任务加入队列失败") -> int:
+    """释放仍处于 queued 的提链占用；运行中的任务不受影响。"""
+    ids = {int(value) for value in account_ids}
+    with _LOCK:
+        accounts = _load_accounts()
+        released = 0
+        now = _now()
+        for row in accounts:
+            if int(row.get("id") or 0) not in ids:
+                continue
+            if row.get("extract_link_status") != "queued":
+                continue
+            row["extract_link_status"] = "failed"
+            row["extract_link_ok"] = False
+            row["extract_link_error"] = str(error or "提链任务加入队列失败")[:500]
+            row["extract_link_message"] = row["extract_link_error"]
+            row["extract_link_completed_at"] = now
+            row["updated_at"] = now
+            released += 1
+        if released:
+            _save_accounts(accounts)
+        return released
+
+
+def recover_interrupted_extract_links() -> dict:
     """服务启动时恢复上次进程中断的提链状态。"""
     with _LOCK:
         accounts = _load_accounts()
-        recovered = 0
+        failed_count = 0
+        kakao_by_batch: dict[str, dict] = {}
         now = _now()
         for row in accounts:
             if row.get("extract_link_status") not in {"queued", "running"}:
                 continue
+            provider = str(row.get("extract_link_provider") or "legacy").strip().lower()
+            batch_id = str(row.get("extract_link_batch_id") or "").strip()
+            if provider == "kakao_batch" and batch_id:
+                row["extract_link_status"] = "queued"
+                row["extract_link_ok"] = False
+                row["extract_link_message"] = "WebUI 重启后恢复 Kakao 批次轮询"
+                row["extract_link_error"] = None
+                row["extract_link_queued_at"] = now
+                row["extract_link_started_at"] = None
+                row["updated_at"] = now
+                batch = kakao_by_batch.setdefault(batch_id, {
+                    "batch_id": batch_id,
+                    "batch_number": row.get("extract_link_batch_number"),
+                    "batch_total": row.get("extract_link_batch_total"),
+                    "accounts": [],
+                })
+                batch["accounts"].append({
+                    "account_id": int(row.get("id") or 0),
+                    "result_index": int(row.get("extract_link_result_index") or 0),
+                })
+                continue
             row["extract_link_status"] = "failed"
             row["extract_link_ok"] = False
             row["extract_link_error"] = "WebUI 重启导致提链任务中断，请重新提链"
+            row["extract_link_message"] = row["extract_link_error"]
             row["extract_link_completed_at"] = now
             row["updated_at"] = now
-            recovered += 1
-        if recovered:
+            failed_count += 1
+        if failed_count or kakao_by_batch:
             _save_accounts(accounts)
-        return recovered
+        batches = list(kakao_by_batch.values())
+        for batch in batches:
+            batch["accounts"].sort(key=lambda item: (item["result_index"], item["account_id"]))
+        batches.sort(key=lambda item: item["batch_id"])
+        return {
+            "failed_count": failed_count,
+            "kakao_batches": batches,
+        }
 
 
 def _account_matches_query(row: dict, q: str | None) -> bool:
