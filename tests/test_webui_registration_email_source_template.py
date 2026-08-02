@@ -31,6 +31,11 @@ class RegistrationEmailSourceTemplateTests(unittest.TestCase):
         self.assertNotIn("localStorage.setItem('regEmailSource'", self.template)
         self.assertNotIn('localStorage.setItem("regEmailSource"', self.template)
 
+    def test_source_hint_distinguishes_batch_selection_from_default_config(self):
+        self.assertIn("当前默认配置", self.template)
+        self.assertIn("本次选择", self.template)
+        self.assertIn("configured_label", self.template)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -379,6 +379,45 @@ class ICloudPoolTests(unittest.TestCase):
         account = db.get_account_by_email("one@icloud.com")
         self.assertNotIn("tok_one_1234", str(account))
 
+    def test_insert_account_marks_independent_url_mailbox_registered(self):
+        db.import_icloud_emails([{
+            "email": "url@icloud.com",
+            "token": "",
+            "pickup_url": "https://pickup.example/show/secret/url@icloud.com",
+        }])
+        db.claim_next_icloud_email(pickup_filter="url")
+
+        db.insert_account(
+            email="url@icloud.com",
+            access_token="access-123",
+            email_source="icloud_url",
+        )
+
+        pool_row = db.get_icloud_email_by_email("url@icloud.com", include_token=True)
+        account = db.get_account_by_email("url@icloud.com")
+        self.assertEqual(pool_row["status"], "registered")
+        self.assertEqual(account["email_source"], "icloud_url")
+
+    def test_repair_icloud_account_sources_uses_mailbox_pickup_mode(self):
+        db.import_icloud_emails([{
+            "email": "url@icloud.com",
+            "token": "",
+            "pickup_url": "https://pickup.example/show/secret/url@icloud.com",
+        }])
+        db.insert_account(
+            email="url@icloud.com",
+            access_token="access-123",
+            email_source="icloud_api",
+        )
+
+        changed = db.repair_icloud_account_sources()
+
+        self.assertEqual(changed, 1)
+        self.assertEqual(
+            db.get_account_by_email("url@icloud.com")["email_source"],
+            "icloud_url",
+        )
+
     def test_insert_account_does_not_consume_unclaimed_icloud_mailbox(self):
         db.import_icloud_emails([{"email": "one@icloud.com", "token": "tok_one_1234"}])
 

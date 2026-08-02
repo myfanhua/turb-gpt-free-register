@@ -18,6 +18,7 @@ class RegistrationEmailSourceWebUiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertEqual(payload["configured"], "icloud_api")
+        self.assertEqual(payload["configured_label"], "iCloud 全部")
         self.assertIn(
             {"value": "icloud_url", "label": "iCloud 独立 URL"},
             payload["options"],

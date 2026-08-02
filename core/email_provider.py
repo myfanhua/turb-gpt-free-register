@@ -57,9 +57,31 @@ def canonical_email_source(source: str) -> str:
     return "icloud_api" if value in {"icloud_api_token", "icloud_url"} else value
 
 
+def _specific_icloud_source_from_mode(pickup_mode: str) -> str:
+    mode = str(pickup_mode or "").strip().lower()
+    return "icloud_url" if mode.startswith("independent_url") else "icloud_api_token"
+
+
+def _resolved_acquired_source(email: str, requested_source: str) -> str:
+    source = str(requested_source or "").strip()
+    if source in {"icloud_api_token", "icloud_url"}:
+        return source
+    if source != "icloud_api":
+        return source
+    try:
+        from core.icloud_mail_client import get_account_context
+
+        account = get_account_context(email)
+        if account is not None:
+            return _specific_icloud_source_from_mode(account.pickup_mode)
+    except Exception:
+        pass
+    return source
+
+
 def _remember_acquired_email_source(email: str, source: str) -> None:
     _ACQUIRED_SOURCE_CONTEXT.email = str(email or "").strip().lower()
-    _ACQUIRED_SOURCE_CONTEXT.source = canonical_email_source(source)
+    _ACQUIRED_SOURCE_CONTEXT.source = str(source or "").strip()
 
 
 def clear_acquired_email_source_context() -> None:
@@ -148,8 +170,9 @@ def acquire_email(value=None) -> str:
     for source in sources:
         try:
             email = _pick_from_source(source)
-            _remember_acquired_email_source(email, source)
-            logger.info(f"[EmailProvider] 使用邮箱来源: {source}, email={email}")
+            actual_source = _resolved_acquired_source(email, source)
+            _remember_acquired_email_source(email, actual_source)
+            logger.info(f"[EmailProvider] 使用邮箱来源: {actual_source}, email={email}")
             return email
         except Exception as exc:
             last_exc = exc
@@ -178,8 +201,9 @@ def resolve_email_source(email: str) -> str:
         return "cloudmail"
 
     from core import db
-    if db.get_icloud_email_by_email(email):
-        return "icloud_api"
+    icloud_row = db.get_icloud_email_by_email(email)
+    if icloud_row:
+        return _specific_icloud_source_from_mode(icloud_row.get("pickup_mode"))
     if db.get_generic_api_email_by_email(email):
         return "generic_api"
     if db.get_outlook_by_email(email):
@@ -235,7 +259,7 @@ def wait_for_otp(
     if settle_seconds is not None:
         extra_kwargs["settle_seconds"] = settle_seconds
 
-    source = resolve_email_source(email)
+    source = canonical_email_source(resolve_email_source(email))
     if source == "gptmail":
         from core.gptmail_client import fetch_latest_otp
         return fetch_latest_otp(email, after_ts=after_ts, **extra_kwargs)
@@ -263,7 +287,8 @@ def wait_for_otp(
 
 def release_email(email: str, status: str = "available", note: str | None = None) -> str:
     """按邮箱实际来源回收状态，返回来源名。"""
-    source = resolve_email_source(email)
+    exact_source = resolve_email_source(email)
+    source = canonical_email_source(exact_source)
     if source == "gptmail":
         from core.gptmail_client import release_account
         release_account(email, status=status, note=note)
@@ -288,7 +313,7 @@ def release_email(email: str, status: str = "available", note: str | None = None
     else:
         from core.outlook_client import release_account
         release_account(email, status=status, note=note)
-    return source
+    return exact_source
 
 
 def release_email_if_unconsumed(email: str, note: str | None = None) -> bool:
@@ -296,7 +321,8 @@ def release_email_if_unconsumed(email: str, note: str | None = None) -> bool:
     if not (email or "").strip():
         return False
 
-    source = resolve_email_source(email)
+    exact_source = resolve_email_source(email)
+    source = canonical_email_source(exact_source)
     from core import db
 
     if source == "outlook":

@@ -787,7 +787,9 @@ def insert_account(
         # it never copies the mailbox Token into the registered account row.
         if (
             icloud_row
-            and str(email_source or "").strip().lower() == "icloud_api"
+            and str(email_source or "").strip().lower() in {
+                "icloud_api", "icloud_api_token", "icloud_url"
+            }
             and icloud_row.get("status") == "used"
         ):
             icloud_row["status"] = "registered"
@@ -803,6 +805,32 @@ def insert_account(
         if icloud_row is not None or icloud_rows:
             _save_icloud_emails(icloud_rows)
         return row_id
+
+
+def repair_icloud_account_sources() -> int:
+    """Backfill legacy generic iCloud account sources from mailbox pickup mode."""
+    with _LOCK:
+        accounts = _load_accounts()
+        icloud_rows = _load_icloud_emails()
+        changed = 0
+        for row in accounts:
+            if str(row.get("email_source") or "").strip().lower() != "icloud_api":
+                continue
+            mailbox = _find_by_email(icloud_rows, row.get("email") or "")
+            if mailbox is None:
+                continue
+            mode = _icloud_pickup_mode(
+                str(mailbox.get("token") or ""),
+                _icloud_row_pickup_url(mailbox),
+            )
+            source = "icloud_url" if mode.startswith("independent_url") else "icloud_api_token"
+            if row.get("email_source") == source:
+                continue
+            row["email_source"] = source
+            changed += 1
+        if changed:
+            _save_accounts(accounts)
+        return changed
 
 
 def update_account_codex_status(email: str, codex_status: str, codex_error: str | None = None) -> bool:

@@ -2069,8 +2069,10 @@ def create_app(auth_code: str | None = None) -> Flask:
     def api_email_sources():
         from core.email_provider import registration_source_options, snapshot_registration_source
 
+        configured = snapshot_registration_source()
         return jsonify({
-            "configured": snapshot_registration_source(),
+            "configured": configured,
+            "configured_label": _registration_source_label(configured),
             "options": registration_source_options(),
         })
 

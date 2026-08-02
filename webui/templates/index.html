@@ -813,6 +813,19 @@ async function loadSummary() {
 
 // ---------- 注册 / 任务 ----------
 let REG_EMAIL_SOURCE_LABELS = {};
+let REG_EMAIL_SOURCE_CONFIGURED_LABEL = '-';
+
+function updateRegistrationEmailSourceHint() {
+  const select = $('#regEmailSource');
+  const hint = $('#regEmailSourceHint');
+  if (!hint) return;
+  const selected = select?.value || '';
+  if (selected) {
+    hint.textContent = `本次选择：${REG_EMAIL_SOURCE_LABELS[selected] || selected}；当前默认配置：${REG_EMAIL_SOURCE_CONFIGURED_LABEL}`;
+  } else {
+    hint.textContent = `当前默认配置：${REG_EMAIL_SOURCE_CONFIGURED_LABEL}`;
+  }
+}
 
 async function loadRegistrationEmailSources() {
   try {
@@ -820,12 +833,13 @@ async function loadRegistrationEmailSources() {
     const select = $('#regEmailSource');
     const options = Array.isArray(response.options) ? response.options : [];
     REG_EMAIL_SOURCE_LABELS = Object.fromEntries(options.map(item => [item.value, item.label]));
+    REG_EMAIL_SOURCE_CONFIGURED_LABEL = response.configured_label || response.configured || '-';
     if (select && options.length) {
       select.innerHTML = '<option value="">跟随当前配置</option>' +
         options.map(item => `<option value="${esc(item.value)}">${esc(item.label)}</option>`).join('');
+      select.addEventListener('change', updateRegistrationEmailSourceHint);
     }
-    const hint = $('#regEmailSourceHint');
-    if (hint) hint.textContent = `当前配置：${response.configured || '-'}`;
+    updateRegistrationEmailSourceHint();
   } catch(e) {
     const hint = $('#regEmailSourceHint');
     if (hint) hint.textContent = `来源列表加载失败：${e.message}`;
@@ -1516,7 +1530,7 @@ function renderAccounts() {
       <td><input type="checkbox" class="account-row-check" data-account-id="${esc(r.id)}" ${ACCOUNT_SELECTED.has(Number(r.id)) ? 'checked' : ''}></td>
       <td class="muted">#${esc(r.id)}</td>
       <td><div class="main-cell">${esc(r.email)}${r.archived ? ' <span class="pill status-used" title="该账号已归档">归档</span>' : ''}</div><div class="sub-cell">${esc(r.user_name || '-')}</div></td>
-      <td>${esc(r.email_source || '-')}</td>
+      <td>${esc(REG_EMAIL_SOURCE_LABELS[r.email_source] || r.email_source || '-')}</td>
       <td><span class="mono" title="列表仅显示预览，完整 Token 请点复制">${r.has_access_token ? '有Token' : '<span class="muted">无Token</span>'}</span></td>
       <td>${_planCell(r)}<div class="sub-cell">${_extractLinkCell(r)}</div></td>
       <td class="wrap" title="${esc(r.note || '')}">${r.note ? esc(short(r.note, 80)) : '<span class="muted">-</span>'}</td>

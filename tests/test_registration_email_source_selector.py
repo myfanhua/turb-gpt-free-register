@@ -58,6 +58,7 @@ class RegistrationEmailSourceSelectorTests(unittest.TestCase):
     @patch("core.icloud_mail_client.pick_account")
     def test_virtual_icloud_selectors_choose_requested_claim_filter(self, pick):
         pick.return_value.email = "one@icloud.com"
+        pick.return_value.pickup_mode = "api_token"
 
         self.assertEqual(email_provider._pick_from_source("icloud_api_token"), "one@icloud.com")
         pick.assert_called_once_with(selection="token")
@@ -106,7 +107,31 @@ class RegistrationEmailSourceSelectorTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as executor:
             results = list(executor.map(acquire_and_resolve, ["outlook", "icloud_url"]))
 
-        self.assertEqual(results, ["outlook", "icloud_api"])
+        self.assertEqual(results, ["outlook", "icloud_url"])
+
+    @patch("core.icloud_mail_client.get_account_context")
+    @patch("core.email_provider._pick_from_source", return_value="url@icloud.com")
+    def test_acquire_email_records_independent_url_as_exact_source(self, pick, get_context):
+        get_context.return_value.pickup_mode = "independent_url"
+
+        email = email_provider.acquire_email("icloud_api")
+
+        self.assertEqual(email_provider.resolve_email_source(email), "icloud_url")
+
+    @patch("core.icloud_mail_client.fetch_latest_otp", return_value="112233")
+    @patch("core.icloud_mail_client.get_account_context")
+    @patch("core.email_provider._pick_from_source", return_value="url@icloud.com")
+    def test_independent_url_source_still_routes_otp_through_icloud_client(
+        self,
+        pick,
+        get_context,
+        fetch,
+    ):
+        get_context.return_value.pickup_mode = "independent_url"
+        email = email_provider.acquire_email("icloud_url")
+
+        self.assertEqual(email_provider.wait_for_otp(email, after_ts=10), "112233")
+        fetch.assert_called_once_with(email, after_ts=10)
 
 
 if __name__ == "__main__":
