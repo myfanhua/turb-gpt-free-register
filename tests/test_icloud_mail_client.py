@@ -428,6 +428,31 @@ class ICloudMailClientTests(unittest.TestCase):
         self.assertEqual(code, "444444")
         self.assertEqual(sleep.call_count, 1)
 
+    def test_repeated_pickup_and_profile_5xx_fail_fast_as_provider_outage(self):
+        client._email_cfg.ICLOUD_PROFILE_TOKEN = "profile_secret_1234"
+        pickup_error = Mock(status_code=502, headers={})
+        profile_error = Mock(status_code=500, headers={})
+
+        with patch("core.icloud_mail_client.requests.get", return_value=pickup_error) as get, \
+             patch("core.icloud_mail_client.requests.post", return_value=profile_error) as post, \
+             patch("core.icloud_mail_client.time.sleep") as sleep, \
+             patch("core.icloud_mail_client.time.monotonic", side_effect=[0, 0, 0, 1, 1, 2]):
+            with self.assertRaisesRegex(
+                client.ICloudProviderUnavailableError,
+                "Pickup HTTP 502.*Profile HTTP 500",
+            ):
+                client.fetch_latest_otp(
+                    "one@icloud.com",
+                    after_ts=AFTER_TS,
+                    max_wait=90,
+                    poll_interval=3,
+                    settle_seconds=0,
+                )
+
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(sleep.call_count, 1)
+
     @patch("core.icloud_mail_client.requests.get")
     def test_network_error_is_reported_without_exposing_token(self, get):
         get.side_effect = requests.ConnectionError("network down for tok_one_1234")

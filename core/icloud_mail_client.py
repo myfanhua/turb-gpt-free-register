@@ -21,6 +21,10 @@ class ICloudMailError(RuntimeError):
     pass
 
 
+class ICloudProviderUnavailableError(ICloudMailError):
+    pass
+
+
 @dataclass(frozen=True)
 class ICloudMailAccount:
     email: str
@@ -34,6 +38,7 @@ _PROFILE_SYNC_CACHE_TOKEN = ""
 _PROFILE_SYNC_CACHE_AT = 0.0
 _PROFILE_SYNC_CACHE_PAYLOAD: object | None = None
 _PROFILE_SYNC_CACHE_TTL = 1.0
+_PROVIDER_UNAVAILABLE_ROUNDS = 2
 
 
 @dataclass(frozen=True)
@@ -328,6 +333,7 @@ def fetch_latest_otp(
     settle_until: float | None = None
     last_error = "尚未出现新的 OpenAI 验证码"
     first_attempt = True
+    consecutive_unavailable_rounds = 0
 
     # max_wait=0 still performs one request, which is useful for explicit
     # single-shot callers and deterministic status/identity error reporting.
@@ -339,6 +345,7 @@ def fetch_latest_otp(
         ]
         if has_profile:
             sources.append((True, "iCloud Profile", _request_profile_sync))
+        unavailable_details: list[str] = []
 
         for using_profile, source_name, request_source in sources:
             try:
@@ -370,10 +377,12 @@ def fetch_latest_otp(
                         continue
                 elif status == 503:
                     last_error = "邮箱正在初始化或暂时无法刷新"
+                    unavailable_details.append(f"{source_name} HTTP {status}")
                     if not using_profile and has_profile:
                         continue
                 elif status >= 500:
                     last_error = f"服务暂时异常: HTTP {status}"
+                    unavailable_details.append(f"{source_name} HTTP {status}")
                     if not using_profile and has_profile:
                         continue
                 elif status != 200:
@@ -414,6 +423,17 @@ def fetch_latest_otp(
                 if not using_profile and has_profile:
                     continue
                 raise
+            except requests.RequestException as exc:
+                detail = str(exc)
+                if account.token:
+                    detail = detail.replace(account.token, "***")
+                profile_token = _profile_token()
+                if profile_token:
+                    detail = detail.replace(profile_token, "***")
+                last_error = f"{type(exc).__name__}: {detail}"
+                unavailable_details.append(f"{source_name} {type(exc).__name__}")
+                if not using_profile and has_profile:
+                    continue
             except Exception as exc:
                 # Keep diagnostic context useful while ensuring mailbox and
                 # profile credentials are never included in errors or logs.
@@ -426,6 +446,15 @@ def fetch_latest_otp(
                 last_error = f"{type(exc).__name__}: {detail}"
                 if not using_profile and has_profile:
                     continue
+
+        if len(unavailable_details) == len(sources):
+            consecutive_unavailable_rounds += 1
+            if consecutive_unavailable_rounds >= _PROVIDER_UNAVAILABLE_ROUNDS:
+                raise ICloudProviderUnavailableError(
+                    "iCloud 接码服务连续异常: " + "；".join(unavailable_details)
+                )
+        else:
+            consecutive_unavailable_rounds = 0
 
         now = time.monotonic()
         if best_otp and settle_until is not None and now >= settle_until:

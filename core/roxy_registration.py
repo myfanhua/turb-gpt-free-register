@@ -14,9 +14,14 @@ from config import twofa as _twofa_cfg
 from core.account_export import save_account_data
 from core.email_provider import wait_for_otp, resolve_email_source
 from core.humanize import delay as human_delay
+from core.icloud_mail_client import ICloudProviderUnavailableError
 from core.roxybrowser_client import RoxyBrowserClient, RoxyOpenResult
 
 logger = logging.getLogger(__name__)
+
+
+def _should_retry_otp_fetch(exc: Exception) -> bool:
+    return not isinstance(exc, ICloudProviderUnavailableError)
 
 
 def _log_prefix(driver=None) -> str:
@@ -1579,6 +1584,8 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
                 try:
                     current_otp = wait_for_otp(email, after_ts=otp_after_ts)
                 except Exception as exc:
+                    if not _should_retry_otp_fetch(exc):
+                        raise
                     if otp_attempt >= max_otp_attempts:
                         raise
                     logger.warning(
