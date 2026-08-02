@@ -54,6 +54,25 @@ def _detect_browser_kind(opened=None) -> str:
     return "Roxy"
 
 
+def _resolve_token_exchange_proxy(opened, explicit_proxy: str | None) -> str | None:
+    """Prefer the exact proxy attached to the Roxy profile for token exchange."""
+    registration_proxy = str(getattr(opened, "registration_proxy", "") or "").strip()
+    if registration_proxy:
+        return registration_proxy
+    fallback = str(explicit_proxy or "").strip()
+    return fallback or None
+
+
+def _preflight_token_exchange_transport(session, token_url: str) -> int:
+    """Confirm the token endpoint is reachable before email/SMS work begins."""
+    response = session.get(str(token_url or "").strip(), allow_redirects=False)
+    status = int(getattr(response, "status_code", 0) or 0)
+    if status in (407, 502, 503, 504):
+        raise RuntimeError(f"token_proxy_preflight_failed: status={status}")
+    logger.info("[Codex][Browser] Token 交换代理预检通过：status=%s", status or "-")
+    return status
+
+
 class _CodexLogger:
     """把流程内部统一占位前缀替换成当前真实浏览器类型。"""
     def __init__(self, base):
@@ -1342,6 +1361,7 @@ def _run_roxy_codex_oauth_once(
     browser_kind_token = _CODEX_BROWSER_KIND.set(_detect_browser_kind(opened))
     driver = existing_driver if reuse_existing_profile else None
     owns_driver = not reuse_existing_profile
+    token_session = None
     try:
         auth_source = proto._codex_auth_url_source()
         code_verifier = None
@@ -1362,6 +1382,13 @@ def _run_roxy_codex_oauth_once(
             logger.info("[Codex][Browser] 当前使用本地 PKCE 授权地址: %s", auth_url)
         else:
             raise RuntimeError(f"[Codex][Browser] 不支持的 CODEX_AUTH_URL_SOURCE={auth_source!r}")
+
+        if auth_source == "local":
+            token_proxy = _resolve_token_exchange_proxy(opened, proxy)
+            token_session = proto.BrowserSession(proxy=token_proxy, detect_exit_geo=False)
+            proxy_source = "Roxy 环境代理" if getattr(opened, "registration_proxy", None) else ("显式代理" if proxy else "代理池")
+            logger.info("[Codex][Browser] Token 交换将复用%s，先执行免费网络预检", proxy_source)
+            _preflight_token_exchange_transport(token_session, proto._cfg.CODEX_TOKEN_URL)
 
         if not driver:
             driver = _build_driver(opened)
@@ -1424,7 +1451,10 @@ def _run_roxy_codex_oauth_once(
 
         if not code_verifier:
             raise RuntimeError("[Codex][Browser] local 模式缺少 code_verifier")
-        session = proto.BrowserSession(proxy=proxy)
+        session = token_session or proto.BrowserSession(
+            proxy=_resolve_token_exchange_proxy(opened, proxy),
+            detect_exit_geo=False,
+        )
         token_resp = proto.exchange_codex_token(session, code, code_verifier)
         id_claims = proto._parse_id_token(token_resp.get("id_token", ""))
         effective_email = id_claims.get("email") or email

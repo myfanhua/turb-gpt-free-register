@@ -11,7 +11,9 @@ class ProxyRotationTests(unittest.TestCase):
             "socks5h://user-region-KR-sid-{sid}-t-3:password@"
             "us.1024proxy.io:3000"
         )
-        with patch.object(proxy, "PROXY_POOL", [template]), patch(
+        with patch.object(proxy, "PROXY_CHAIN_ENABLED", False), patch.object(
+            proxy, "PROXY_POOL", [template]
+        ), patch(
             "config.proxy.secrets.token_hex", side_effect=["aaa111", "bbb222"]
         ):
             first = proxy.pick_proxy()
