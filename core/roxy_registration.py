@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import random
 import string
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -18,6 +19,11 @@ from core.icloud_mail_client import ICloudProviderUnavailableError
 from core.roxybrowser_client import RoxyBrowserClient, RoxyOpenResult
 
 logger = logging.getLogger(__name__)
+
+# Roxy 本地 API 会在并发创建环境时返回“正在创建中”，两个新窗口同时执行
+# 首次重页面导航也容易让后启动的 Chrome renderer 卡住。这里只串行启动阶段；
+# 登录页与邮箱入口就绪后立即释放，邮箱提交、验证码和资料填写仍由注册线程并发执行。
+_ROXY_STARTUP_LOCK = threading.Lock()
 
 
 def _should_retry_otp_fetch(exc: Exception) -> bool:
@@ -275,16 +281,15 @@ def _click_email_entry_option(driver) -> bool:
     return bool(clicked)
 
 
-def _type_email_address(driver, email: str, timeout: int | None = None) -> None:
-    """进入邮箱登录/注册方式并填写邮箱。全程不依赖页面可见文字，避免非日本出口本地化后误点 Google。"""
+def _wait_for_email_input_ready(driver, timeout: int | None = None):
+    """等待邮箱入口变为可填写状态，必要时点击唯一的邮箱方式入口。"""
     end = time.time() + (timeout or int(_cfg.ROXY_SELENIUM_TIMEOUT))
     last_state = None
     clicked_email_option = False
     while time.time() < end:
         el = _find_visible_email_input_js(driver)
         if el:
-            _set_element_value(driver, el, email)
-            return
+            return el
         last_state = _email_entry_state(driver)
         if not clicked_email_option and _click_email_entry_option(driver):
             clicked_email_option = True
@@ -293,6 +298,12 @@ def _type_email_address(driver, email: str, timeout: int | None = None) -> None:
             continue
         time.sleep(0.4)
     raise RuntimeError(f"找不到邮箱输入框/邮箱入口（未使用文字识别），state={last_state}")
+
+
+def _type_email_address(driver, email: str, timeout: int | None = None) -> None:
+    """进入邮箱登录/注册方式并填写邮箱。全程不依赖页面可见文字，避免非日本出口本地化后误点 Google。"""
+    el = _wait_for_email_input_ready(driver, timeout)
+    _set_element_value(driver, el, email)
 
 
 def _submit_nearest_form_for_active_input(driver) -> bool:
@@ -1545,25 +1556,52 @@ def _check_manual_stop() -> None:
         return
 
 
+def _open_roxy_registration_browser(client: RoxyBrowserClient) -> tuple[RoxyOpenResult, object]:
+    """串行创建 Roxy 环境并完成首次登录页加载。"""
+    _check_manual_stop()
+    logger.info("[Roxy] 等待启动门控：创建环境、打开窗口并加载登录页")
+    with _ROXY_STARTUP_LOCK:
+        opened = None
+        driver = None
+        try:
+            _check_manual_stop()
+            logger.info("[Roxy] 已进入启动门控")
+            opened = client.open_profile()
+            driver = _build_driver(opened)
+            _center_browser_window(driver)
+            driver.set_page_load_timeout(int(_cfg.ROXY_SELENIUM_TIMEOUT))
+            logger.info("[Roxy注册] 开始启动浏览器，profile=%s", opened.profile_id)
+            logger.info("[Roxy注册] 打开登录页：https://chatgpt.com/auth/login")
+            driver.get("https://chatgpt.com/auth/login")
+            human_delay("navigate")
+            _maybe_accept(driver)
+            _wait_for_email_input_ready(driver, timeout=25)
+            logger.info("[Roxy注册] 登录页与邮箱输入框已就绪，释放启动门控")
+            return opened, driver
+        except BaseException:
+            if driver and not bool(_cfg.ROXY_KEEP_BROWSER_OPEN):
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
+            if opened is not None and not bool(_cfg.ROXY_KEEP_BROWSER_OPEN):
+                client.cleanup_profile(opened)
+            raise
+
+
 def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = None, otp_code: str = None, batch_dir: Path | None = None) -> dict:
     """Roxy 指纹浏览器自动化注册入口。"""
     client = RoxyBrowserClient()
-    opened = client.open_profile()
+    opened = None
     driver = None
     create_acknowledged = False
     openai_password: str | None = None
     try:
-        driver = _build_driver(opened)
-        _center_browser_window(driver)
-        driver.set_page_load_timeout(int(_cfg.ROXY_SELENIUM_TIMEOUT))
+        opened, driver = _open_roxy_registration_browser(client)
         logger.info("[Roxy注册] 开始：%s，profile=%s", email, opened.profile_id)
 
         otp_after_ts = time.time()
-        logger.info("[Roxy注册] 打开登录页：https://chatgpt.com/auth/login")
-        driver.get("https://chatgpt.com/auth/login")
-        human_delay("navigate")
-        logger.info("[Roxy注册] 登录页加载完成，准备填写邮箱")
-        _maybe_accept(driver)
+        logger.info("[Roxy注册] 准备填写邮箱")
         _check_manual_stop()
 
         # 填邮箱。OpenAI UI 会随出口 IP/语言变化；这里只按 DOM 技术属性找邮箱入口，
@@ -1716,5 +1754,5 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
                 driver.quit()
             except Exception:
                 pass
-        if not bool(_cfg.ROXY_KEEP_BROWSER_OPEN):
+        if opened is not None and not bool(_cfg.ROXY_KEEP_BROWSER_OPEN):
             client.cleanup_profile(opened)
