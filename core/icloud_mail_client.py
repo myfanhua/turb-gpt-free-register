@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """iCloud Pickup API client with per-mailbox credential isolation."""
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse, urlsplit
 
@@ -45,6 +46,8 @@ _PROFILE_SYNC_CACHE_AT = 0.0
 _PROFILE_SYNC_CACHE_PAYLOAD: object | None = None
 _PROFILE_SYNC_CACHE_TTL = 1.0
 _PROVIDER_UNAVAILABLE_ROUNDS = 2
+_HTML_PAGE_TIMEZONE = timezone(timedelta(hours=8))
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -138,7 +141,7 @@ def _api_url(pickup_url: str = "") -> str:
     return f"{base}/messages/latest"
 
 
-def _message_timestamp(raw) -> float | None:
+def _message_timestamp(raw, assume_timezone=None) -> float | None:
     if raw is None or raw == "":
         return None
     if isinstance(raw, (int, float)):
@@ -151,13 +154,16 @@ def _message_timestamp(raw) -> float | None:
     except ValueError:
         pass
     try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None and assume_timezone is not None:
+            parsed = parsed.replace(tzinfo=assume_timezone)
+        return parsed.timestamp()
     except ValueError:
         pass
     try:
         parsed = parsedate_to_datetime(text)
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.replace(tzinfo=assume_timezone or timezone.utc)
         return parsed.timestamp()
     except (TypeError, ValueError):
         return None
@@ -174,7 +180,12 @@ def _recipient_matches(value, target: str) -> bool:
     return False
 
 
-def _response_message(payload: object, target: str, after_ts: float | None) -> tuple[dict, float, str]:
+def _response_message(
+    payload: object,
+    target: str,
+    after_ts: float | None,
+    assume_timezone=None,
+) -> tuple[dict, float, str]:
     if not isinstance(payload, dict):
         raise ICloudMailError("iCloud Pickup 响应不是 JSON 对象")
     response_email = _cache_key(payload.get("email"))
@@ -187,7 +198,7 @@ def _response_message(payload: object, target: str, after_ts: float | None) -> t
         raise ICloudMailError("iCloud Pickup 响应缺少 message 对象")
     if not _recipient_matches(message.get("to"), target):
         raise ICloudMailError(f"iCloud Pickup 收件人不匹配: expected={target}")
-    stamp = _message_timestamp(message.get("date"))
+    stamp = _message_timestamp(message.get("date"), assume_timezone=assume_timezone)
     if stamp is None:
         raise ICloudMailError(f"iCloud Pickup 邮件时间无效: email={target}")
     if after_ts is not None and stamp < float(after_ts) - 30:
@@ -233,7 +244,18 @@ def _redact_account_secrets(value: object, account: ICloudMailAccount) -> str:
     profile_token = _profile_token()
     if profile_token:
         text = text.replace(profile_token, "***")
-    return text
+    return _URL_IN_TEXT_RE.sub(
+        lambda matched: _redacted_url(matched.group(0)),
+        text,
+    )
+
+
+def _redacted_url(url: str) -> str:
+    parsed = urlsplit(url)
+    host = parsed.hostname or "***"
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return f"{parsed.scheme or 'https'}://{host}/***"
 
 
 def _profile_token() -> str:
@@ -358,14 +380,14 @@ def _independent_response_message(
     after_ts: float | None,
 ) -> tuple[dict, float, str] | None:
     try:
-        cards = parse_pickup_page(html_text)
+        cards = parse_pickup_page(html_text, expected_email=target)
     except ICloudPickupPageError as exc:
         raise ICloudMailError(str(exc)) from exc
     candidates: list[tuple[dict, float, str]] = []
     for index, card in enumerate(cards):
         message = {
             "uid": f"html-{index}",
-            "to": target,
+            "to": card.get("to") or target,
             "date": card.get("date") or "",
             "from": card.get("from") or "",
             "subject": card.get("subject") or "",
@@ -378,6 +400,7 @@ def _independent_response_message(
                     {"email": target, "message": message},
                     target,
                     after_ts,
+                    assume_timezone=_HTML_PAGE_TIMEZONE,
                 )
             )
         except ICloudMailError:

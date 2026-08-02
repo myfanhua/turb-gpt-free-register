@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 import requests
@@ -417,6 +418,61 @@ class ICloudMailClientTests(unittest.TestCase):
 
         self.assertNotIn("top-secret", str(raised.exception))
         self.assertNotIn(pickup_url, str(raised.exception))
+
+    @patch("core.icloud_mail_client.requests.get")
+    def test_url_network_error_hides_reencoded_query_credentials(self, get):
+        pickup_url = (
+            "https://pickup.example/show/one@icloud.com"
+            "?token=query%20secret&mail=one%40icloud.com"
+        )
+        requested_url = (
+            "https://pickup.example/show/one@icloud.com"
+            "?token=query+secret&mail=one%40icloud.com&n=10"
+        )
+        client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
+            email="one@icloud.com",
+            token="",
+            pickup_url=pickup_url,
+            pickup_mode="independent_url",
+        )
+        get.side_effect = requests.ConnectionError(f"network down for {requested_url}")
+
+        with self.assertRaises(client.ICloudMailError) as raised:
+            client.fetch_latest_otp("one@icloud.com", AFTER_TS, 0, 1, 0)
+
+        message = str(raised.exception)
+        self.assertNotIn("query+secret", message)
+        self.assertNotIn("query%20secret", message)
+        self.assertNotIn("token=", message)
+
+    @patch("core.icloud_mail_client.requests.get")
+    def test_html_page_for_another_mailbox_is_rejected(self, get):
+        item = html_response()
+        item.text = item.text.replace(
+            "<html>",
+            "<html><head><title>two@icloud.com</title></head>",
+        )
+        get.return_value = item
+        client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
+            email="one@icloud.com",
+            token="",
+            pickup_url="https://pickup.example/show/credential/one@icloud.com",
+            pickup_mode="independent_url",
+        )
+
+        with self.assertRaisesRegex(client.ICloudMailError, "页面邮箱不匹配"):
+            client.fetch_latest_otp("one@icloud.com", AFTER_TS, 0, 1, 0)
+
+    def test_html_naive_timestamp_can_be_interpreted_as_china_time(self):
+        china = timezone(timedelta(hours=8))
+        expected = datetime(2026, 8, 2, 6, 0, 0, tzinfo=timezone.utc).timestamp()
+
+        stamp = client._message_timestamp(
+            "2026-08-02 14:00:00",
+            assume_timezone=china,
+        )
+
+        self.assertEqual(stamp, expected)
 
     @patch("core.icloud_mail_client.requests.get")
     def test_fetch_ignores_browser_render_pickup_url(self, get):

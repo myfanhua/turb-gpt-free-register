@@ -107,7 +107,7 @@ def _generic_api_email_line(row: dict) -> str:
 def _icloud_email_line(row: dict) -> str:
     email = row.get("email") or ""
     token = row.get("token") or ""
-    pickup_url = str(row.get("pickup_url") or "").strip()
+    pickup_url = str(row.get("pickup_url") or row.get("pickupUrl") or "").strip()
     if pickup_url and not token:
         return "----".join([email, pickup_url])
     values = [email, token]
@@ -569,7 +569,8 @@ def _save_icloud_emails(rows: list[dict]) -> None:
 def _decorate_icloud_email(row: dict, *, include_token: bool = False) -> dict:
     out = dict(row)
     token = str(out.pop("token", "") or "")
-    pickup_url = str(out.pop("pickup_url", "") or "").strip()
+    legacy_pickup_url = out.pop("pickupUrl", "")
+    pickup_url = str(out.pop("pickup_url", "") or legacy_pickup_url or "").strip()
     out["token_masked"] = _mask_icloud_token(token)
     out["pickup_mode"] = _icloud_pickup_mode(token, pickup_url)
     out["has_pickup_url"] = bool(pickup_url)

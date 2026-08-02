@@ -19,6 +19,17 @@ class ICloudPickupPageTests(unittest.TestCase):
         self.assertEqual(parse_qs(parsed.query), {"view": ["compact"], "n": ["10"]})
         self.assertEqual(parsed.fragment, "")
 
+    def test_with_message_limit_preserves_duplicate_query_parameters(self):
+        result = page.with_message_limit(
+            "https://pickup.example/show/one@icloud.com?scope=mail&scope=otp&n=3",
+            limit=10,
+        )
+
+        self.assertEqual(
+            parse_qs(urlsplit(result).query),
+            {"scope": ["mail", "otp"], "n": ["10"]},
+        )
+
     def test_empty_page_returns_no_messages(self):
         html = """
         <!doctype html><html><body>
@@ -66,6 +77,31 @@ class ICloudPickupPageTests(unittest.TestCase):
     def test_unrecognized_page_raises_clear_error(self):
         with self.assertRaisesRegex(page.ICloudPickupPageError, "结构无法识别"):
             page.parse_pickup_page("<html><body><h1>Service unavailable</h1></body></html>")
+
+    def test_expected_mailbox_rejects_page_for_another_mailbox(self):
+        html = """
+        <html><head><title>two@icloud.com</title></head><body>
+          <div class="cnt">1 封</div>
+          <div class="card"><div class="su">OpenAI code 654321</div>
+            <div class="dt">2026-08-02T06:00:00Z</div><div class="bd">Code 654321</div></div>
+        </body></html>
+        """
+
+        with self.assertRaisesRegex(page.ICloudPickupPageError, "页面邮箱不匹配"):
+            page.parse_pickup_page(html, expected_email="one@icloud.com")
+
+    def test_expected_mailbox_rejects_card_recipient_for_another_mailbox(self):
+        html = """
+        <html><head><title>one@icloud.com</title></head><body>
+          <div class="cnt">1 封</div>
+          <div class="card"><div class="to">two@icloud.com</div>
+            <div class="su">OpenAI code 654321</div>
+            <div class="dt">2026-08-02T06:00:00Z</div><div class="bd">Code 654321</div></div>
+        </body></html>
+        """
+
+        with self.assertRaisesRegex(page.ICloudPickupPageError, "邮件收件人不匹配"):
+            page.parse_pickup_page(html, expected_email="one@icloud.com")
 
 
 if __name__ == "__main__":

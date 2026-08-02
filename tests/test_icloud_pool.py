@@ -123,6 +123,26 @@ class ICloudPoolTests(unittest.TestCase):
         self.assertEqual(claimed["token"], "")
         self.assertEqual(claimed["pickup_mode"], "independent_url")
 
+    def test_legacy_camel_case_pickup_url_is_normalized_and_hidden(self):
+        pickup_url = "https://pickup.example/show/legacy-secret/one@icloud.com"
+        db._ICLOUD_EMAIL_JSON.write_text(
+            '[{"id":1,"email":"one@icloud.com","token":"","pickupUrl":"'
+            + pickup_url
+            + '","status":"available"}]',
+            encoding="utf-8",
+        )
+
+        public_row = db.get_icloud_email_by_email("one@icloud.com")
+        self.assertEqual(public_row["pickup_mode"], "independent_url")
+        self.assertTrue(public_row["has_pickup_url"])
+        self.assertNotIn("pickupUrl", public_row)
+        self.assertNotIn("pickup_url", public_row)
+        self.assertNotIn("legacy-secret", str(public_row))
+
+        claimed = db.claim_next_icloud_email()
+        self.assertEqual(claimed["pickup_url"], pickup_url)
+        self.assertNotIn("pickupUrl", claimed)
+
     def test_short_tokens_are_never_echoed_in_full(self):
         for token in ("a", "abcd", "tok_", "tok_a"):
             with self.subTest(token=token):

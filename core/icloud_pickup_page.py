@@ -11,8 +11,12 @@ class ICloudPickupPageError(ValueError):
 
 def with_message_limit(url: str, limit: int = 10) -> str:
     parsed = urlsplit(str(url or "").strip())
-    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    query["n"] = str(max(1, int(limit)))
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key != "n"
+    ]
+    query.append(("n", str(max(1, int(limit)))))
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), ""))
 
 
@@ -28,6 +32,9 @@ class _PickupPageParser(HTMLParser):
         "su": "subject",
         "dt": "date",
         "bd": "body",
+        "to": "to",
+        "rcpt": "to",
+        "recipient": "to",
     }
 
     def __init__(self):
@@ -38,6 +45,7 @@ class _PickupPageParser(HTMLParser):
         self.count_parts: list[str] = []
         self.message_count: int | None = None
         self.saw_empty_state = False
+        self.title_parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs):
         attributes = dict(attrs)
@@ -52,6 +60,7 @@ class _PickupPageParser(HTMLParser):
             "field": field,
             "is_count": "cnt" in classes,
             "is_empty": "no" in classes,
+            "is_title": tag.lower() == "title",
         }
         if frame["is_empty"]:
             self.saw_empty_state = True
@@ -90,6 +99,8 @@ class _PickupPageParser(HTMLParser):
             return
         if any(frame["is_count"] for frame in self.stack):
             self.count_parts.append(data)
+        if any(frame["is_title"] for frame in self.stack):
+            self.title_parts.append(data)
         if self.current is None:
             return
         field = next(
@@ -102,14 +113,32 @@ class _PickupPageParser(HTMLParser):
     def _finish_card(self):
         if self.current is None:
             return
-        self.cards.append({key: _clean_text(parts) for key, parts in self.current.items()})
+        card = {key: _clean_text(parts) for key, parts in self.current.items()}
+        if not card.get("to"):
+            card.pop("to", None)
+        self.cards.append(card)
         self.current = None
 
 
-def parse_pickup_page(html_text: str) -> list[dict]:
+def parse_pickup_page(html_text: str, expected_email: str = "") -> list[dict]:
     parser = _PickupPageParser()
     parser.feed(str(html_text or ""))
     parser.close()
+    expected = str(expected_email or "").strip().lower()
+    title = _clean_text(parser.title_parts).lower()
+    mailbox_match = re.search(r"[^\s<>]+@[^\s<>]+", title)
+    page_mailbox = mailbox_match.group(0).strip(".,;:()[]{}") if mailbox_match else ""
+    if expected and page_mailbox and page_mailbox != expected:
+        raise ICloudPickupPageError(
+            f"独立取件页面邮箱不匹配: expected={expected}, actual={page_mailbox}"
+        )
+    if expected:
+        for card in parser.cards:
+            recipient = str(card.get("to") or "").strip().lower()
+            if recipient and expected not in recipient:
+                raise ICloudPickupPageError(
+                    f"独立取件邮件收件人不匹配: expected={expected}"
+                )
     if parser.cards:
         return parser.cards
     if parser.saw_empty_state or parser.message_count == 0:
