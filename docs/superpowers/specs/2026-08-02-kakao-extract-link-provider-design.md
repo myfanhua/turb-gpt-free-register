@@ -168,7 +168,9 @@ GET /api/v1/extractions/{batchId}
 
 - `extract_link_provider`
 - `extract_link_batch_id`
-- `extract_link_batch_index`
+- `extract_link_batch_number`：当前批次在本次操作中的序号，从 1 开始。
+- `extract_link_batch_total`：本次操作拆出的批次数量。
+- `extract_link_result_index`：该账号对应 `accessTokens[]` / `results[]` 的零基下标；重复 Token 的多个本地账号共享同一下标。
 - `extract_link_status`
 - `extract_link_message`
 - `extract_link_url`
@@ -196,7 +198,7 @@ GET /api/v1/extractions/{batchId}
 ## 重启恢复
 
 - WebUI 启动时，旧 provider 继续使用现有中断恢复逻辑。
-- Kakao 账号记录存在 `batchId` 且状态为排队或运行时，按 `batchId` 分组并恢复轮询。
+- Kakao 账号记录存在 `batchId` 且状态为排队或运行时，按 `batchId` 分组并恢复轮询；恢复后依靠持久化的 `extract_link_result_index` 把返回结果重新映射到账号，不需要保存完整 Token。
 - 没有 `batchId` 的未完成 Kakao 任务标记为中断，可由用户重新启动。
 - 已完成状态不重复查询或覆盖。
 
