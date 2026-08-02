@@ -442,6 +442,34 @@ CPA_MANAGEMENT_URL = "你的CPA管理地址"
 CPA_MANAGEMENT_KEY = "你的CPA管理密钥"
 ```
 
+#### Plus 试用提链 Provider
+
+账号页支持保留旧提链接口，同时切换到 Kakao 异步批量 API：
+
+```dotenv
+# legacy=旧 /api/extract + SSE；kakao_batch=Kakao 异步批量接口
+EXTRACT_LINK_PROVIDER=legacy
+
+# 旧接口独立配置
+EXTRACT_LINK_API_BASE=
+EXTRACT_LINK_CDK=
+EXTRACT_LINK_TYPE=pix
+
+# Kakao API 独立配置
+KAKAO_EXTRACT_API_BASE=https://tiqu.dxmcs.xin
+KAKAO_EXTRACT_CDK=
+KAKAO_EXTRACT_BATCH_SIZE=5
+KAKAO_EXTRACT_TIMEOUT_SECONDS=930
+KAKAO_EXTRACT_POLL_INTERVAL=4
+```
+
+- 在“账号 → 套餐/提链”工具栏选择“旧接口”或“Kakao API”，然后点击原有“提链”按钮。
+- “设为默认”会保存当前 provider；选择 Kakao 时同时保存每批数量。
+- 只处理用户手动勾选的账号；后端会再次过滤缺少 Token 或不具备 Plus 试用资格的账号。
+- Kakao 每批可设置 `1～5` 个账号。选择更多账号时自动拆批，例如 12 个账号按 5 个拆成 `5 + 5 + 2`。
+- 两套 API 地址和 CDK 分开保存。Kakao 没有独立的 CDK 查询接口，页面显示最近一次任务返回的剩余次数。
+- Kakao 使用 `POST /api/v1/extractions/async` 提交并轮询 `GET /api/v1/extractions/{batchId}`；WebUI 重启后会继续查询已保存的批次，不会重新提交同一批任务。
+
 ---
 
 ## 使用方式
