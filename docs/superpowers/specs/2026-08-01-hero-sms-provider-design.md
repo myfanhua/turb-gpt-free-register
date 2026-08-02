@@ -66,8 +66,10 @@ the public functions used by the Codex OAuth drivers unchanged.
 
 Cancellation delay becomes provider-aware. Grizzly and HeroSMS/SMS-Activate
 wait for the two-minute platform window plus a five-second buffer. Compatible
-providers cancel synchronously so the next number is not acquired before the
-previous cancellation request completes.
+providers cancel in non-daemon background workers so the next number can be
+acquired immediately while scheduled cancellation remains alive. With the
+normal-mode setting `SMS_MAX_RETRIES=3`, one task attempts at most three
+numbers.
 
 ## Testing
 

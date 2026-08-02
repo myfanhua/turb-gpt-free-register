@@ -102,7 +102,7 @@ class SmsActivateProviderTests(unittest.TestCase):
         self.assertEqual(http.calls[0]["params"]["action"], "setStatus")
         self.assertEqual(http.calls[0]["params"]["status"], "6")
 
-    def test_sms_activate_cancel_waits_for_platform_window_and_finishes_synchronously(self):
+    def test_sms_activate_cancel_waits_for_platform_window(self):
         http = _Http(["ACCESS_CANCEL"])
         sms_provider._ACQUIRED_AT["act-1"] = time.time()
 
@@ -114,16 +114,23 @@ class SmsActivateProviderTests(unittest.TestCase):
             "https://hero-sms.com/stubs/handler_api.php",
         ), patch.object(codex_config, "SMS_API_KEY", "secret"), patch.object(
             sms_provider, "_http", return_value=http
-        ), patch("core.sms_provider.time.sleep") as sleep, patch(
-            "core.sms_provider.threading.Thread"
-        ) as thread:
-            sms_provider.cancel("act-1")
+        ), patch("core.sms_provider.time.sleep") as sleep:
+            sms_provider._do_cancel_sync("act-1", sms_provider._http)
 
-        thread.assert_not_called()
         sleep.assert_called_once()
         self.assertGreaterEqual(sleep.call_args.args[0], 120)
         self.assertEqual(http.calls[0]["params"]["action"], "setStatus")
         self.assertEqual(http.calls[0]["params"]["status"], "8")
+
+    def test_sms_activate_normal_mode_schedules_non_daemon_cancel(self):
+        with patch.object(codex_config, "SMS_PROVIDER", "sms_activate"), patch(
+            "core.sms_provider.threading.Thread"
+        ) as thread:
+            sms_provider.cancel("act-1")
+
+        thread.assert_called_once()
+        self.assertFalse(thread.call_args.kwargs["daemon"])
+        thread.return_value.start.assert_called_once()
 
 
 if __name__ == "__main__":

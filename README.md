@@ -430,7 +430,8 @@ SMS_CANCEL_DELAY=-1
   SMS-Activate 兼容目录中 OpenAI 常见服务代码为 `dr`。
 - `SMS_CANCEL_DELAY=-1` 表示自动选择平台规则：GrizzlySMS、HeroSMS、
   SMS-Activate 均等待 125 秒（120 秒限制 + 5 秒缓冲）后发送取消状态 `8`。
-- HeroSMS/SMS-Activate 取消会同步完成，旧号码取消请求结束后才会继续取新号。
+- HeroSMS/SMS-Activate 失败号码进入非守护后台取消线程，不阻塞下一次取号；
+  `SMS_MAX_RETRIES=3` 为普通模式，单任务最多尝试 3 个号码。
 - 如平台另有取消等待要求，可把 `SMS_CANCEL_DELAY` 改为指定秒数。
 
 CPA 授权地址来源：

@@ -601,7 +601,7 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "SMS_MAX_RETRIES", "file": "codex.py", "type": "int", "group": "接码平台",
-        "label": "换号重试次数", "help": "一个号收不到短信/被OpenAI拒时换下一个号，最多重试几次",
+        "label": "换号重试次数", "help": "模式对应：1=保守、2=平衡、3=普通、5=极速；失败号码在后台按取消等待时间释放",
     },
     {
         "key": "SMS_CODE_WAIT", "file": "codex.py", "type": "int", "group": "接码平台",

@@ -605,7 +605,6 @@ def cancel(activation_id: str, http: CurlSession | None = None, background: bool
     取消激活（status=8），释放号码避免白扣费。
 
     GrizzlySMS / SMS-Activate / HeroSMS 默认等待约 2 分钟后取消。
-    SMS-Activate / HeroSMS 使用同步取消，确认旧号码取消请求完成后才允许继续取号。
     本函数默认 background=True，把"等待+取消"放到后台守护线程里执行，
     主流程立刻返回继续走（如换下一个号）。
 
@@ -628,9 +627,6 @@ def cancel(activation_id: str, http: CurlSession | None = None, background: bool
             _ACQUIRED_AT.pop(activation_id, None)
         return
 
-    if _provider() == "sms_activate":
-        background = False
-
     if not background:
         _do_cancel_sync(activation_id, _http)
         return
@@ -639,7 +635,7 @@ def cancel(activation_id: str, http: CurlSession | None = None, background: bool
         target=_do_cancel_sync,
         args=(activation_id, _http),
         name=f"sms-cancel-{activation_id}",
-        daemon=True,
+        daemon=False,
     )
     t.start()
     logger.debug(f"[SMS] 取消任务已派后台：activation_id={activation_id}")
