@@ -36,6 +36,33 @@ class RoxyOtpTransitionTests(unittest.TestCase):
         profile_page.assert_called()
 
     @patch("core.roxy_registration.time.sleep")
+    @patch("core.roxy_registration.time.time", side_effect=[0.0, 0.1, 0.2])
+    @patch(
+        "core.roxy_registration._email_otp_page_state",
+        return_value={
+            "inputs": [],
+            "errors": ["错误代码: account_deactivated"],
+            "text": "账号已被删除或停用 account_deactivated",
+        },
+    )
+    @patch("core.roxy_registration._is_email_verification_page", return_value=True)
+    @patch("core.roxy_registration._is_profile_page", return_value=False)
+    def test_wait_after_otp_submit_reports_deactivated_account_as_terminal(
+        self,
+        profile_page,
+        verification_page,
+        page_state,
+        clock,
+        sleep,
+    ):
+        driver = Mock()
+
+        self.assertEqual(
+            registration._wait_after_email_otp_submit(driver, timeout=1),
+            "account_deactivated",
+        )
+
+    @patch("core.roxy_registration.time.sleep")
     @patch("core.roxy_registration.time.time", side_effect=[0.0, 0.1, 2.0])
     @patch("core.roxy_registration._is_profile_page", return_value=True)
     def test_resend_stops_when_page_has_already_advanced(self, profile_page, clock, sleep):

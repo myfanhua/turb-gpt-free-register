@@ -751,6 +751,12 @@ def _wait_after_email_otp_submit(driver, timeout: int = 30) -> str:
         if not _is_email_verification_page(driver):
             return 'accepted'
         last = _email_otp_page_state(driver)
+        terminal_text = " ".join([
+            str(last.get('text') or ''),
+            *[str(item or '') for item in (last.get('errors') or [])],
+        ]).lower()
+        if 'account_deactivated' in terminal_text:
+            return 'account_deactivated'
         invalid = any(str(i.get('ariaInvalid') or '').lower() == 'true' for i in (last.get('inputs') or []))
         if invalid or (last.get('errors') or []):
             return 'invalid'
@@ -1692,6 +1698,8 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
             outcome = _wait_after_email_otp_submit(driver, timeout=30)
             if outcome == 'accepted':
                 break
+            if outcome == 'account_deactivated':
+                raise RuntimeError("OpenAI 账号已删除或停用: account_deactivated")
             if otp_attempt >= max_otp_attempts:
                 raise RuntimeError("邮箱验证码连续错误/过期，已达到最大重试次数")
             logger.warning("[Roxy注册][OTP] 验证码错误/过期，准备重新发送并重新获取验证码（%s/%s）", otp_attempt + 1, max_otp_attempts)
