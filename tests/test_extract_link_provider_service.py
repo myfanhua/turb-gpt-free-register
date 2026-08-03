@@ -5,6 +5,8 @@ from core import extract_link_service
 from core.kakao_extract_link_provider import (
     KakaoAcceptedBatch,
     KakaoBatchResult,
+    KakaoExtractLinkError,
+    build_kakao_batches,
 )
 
 
@@ -180,6 +182,67 @@ class ExtractLinkProviderServiceTests(unittest.TestCase):
         self.assertEqual(client.submitted, [])
         self.assertEqual(client.polled, ["batch-existing"])
         self.assertEqual(slots.released, 1)
+
+    def test_kakao_batch_keeps_partial_success_when_server_cleans_batch(self):
+        class PartialThenGoneClient(FakeKakaoClient):
+            def poll(self, batch_id, *, on_update=None):
+                partial = KakaoBatchResult(
+                    batch_id=batch_id,
+                    status="running",
+                    done=False,
+                    results=[
+                        {"success": True, "paymentLink": "https://pay.example/recovered"},
+                    ],
+                    success_count=1,
+                    failure_count=0,
+                    charged_count=1,
+                    remaining_count=3,
+                )
+                if on_update is not None:
+                    on_update(partial)
+                raise KakaoExtractLinkError(
+                    "批次不存在或已被服务端清理",
+                    http_status=404,
+                )
+
+        plan = build_kakao_batches([
+            {"account_id": 100, "access_token": "TOKEN_A"},
+            {"account_id": 101, "access_token": "TOKEN_B"},
+        ], batch_size=5)[0]
+        state = {
+            100: {"id": 100, "extract_link_status": "queued"},
+            101: {"id": 101, "extract_link_status": "queued"},
+        }
+
+        def update(account_id, payload):
+            row = state[int(account_id)]
+            row["extract_link_status"] = payload.get("status") or (
+                "success" if payload.get("ok") else "failed"
+            )
+            result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+            if result.get("long_url"):
+                row["extract_link_long_url"] = result["long_url"]
+            row["last_payload"] = dict(payload)
+            return True
+
+        with patch.object(extract_link_service, "_QUEUE_SLOTS", FakeSlots()), \
+                patch.object(extract_link_service.db, "mark_account_extract_running", return_value=True), \
+                patch.object(extract_link_service.db, "update_account_extract", side_effect=update), \
+                patch.object(extract_link_service.db, "get_account", side_effect=lambda account_id: dict(state[int(account_id)])):
+            result = extract_link_service._run_kakao_batch(
+                plan=plan,
+                client=PartialThenGoneClient(),
+                trigger="manual_bulk",
+                existing_batch_id="batch-cleaned",
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(state[100]["extract_link_status"], "success")
+        self.assertEqual(
+            state[100]["extract_link_long_url"],
+            "https://pay.example/recovered",
+        )
+        self.assertEqual(state[101]["extract_link_status"], "failed")
 
 
 if __name__ == "__main__":

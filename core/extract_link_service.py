@@ -453,6 +453,31 @@ def _run_kakao_batch(
         for ids in plan.account_ids_by_result_index.values()
         for account_id in ids
     ]
+
+    def persist_partial_successes(snapshot) -> None:
+        """轮询中一旦出现 paymentLink 就立即落库。
+
+        上游偶尔会在批次结束附近快速清理 batchId；若只等最终
+        done 响应，已经生成的链接也会跟着 404 一起丢失。
+        """
+        partial = map_kakao_results(plan, getattr(snapshot, "results", []))
+        for result_index, ids in plan.account_ids_by_result_index.items():
+            for account_id in ids:
+                one = dict(partial.get(account_id) or {})
+                if one.get("status") != "success" or not one.get("ok"):
+                    continue
+                one.update({
+                    "provider": "kakao_batch",
+                    "batch_id": batch_id,
+                    "batch_number": plan.batch_number,
+                    "batch_total": plan.batch_total,
+                    "result_index": result_index,
+                    "charged_count": getattr(snapshot, "charged_count", 0),
+                    "cdk_remaining": getattr(snapshot, "remaining_count", None),
+                    "message": "Kakao 提链成功（轮询中已保存）",
+                })
+                db.update_account_extract(account_id, one)
+
     try:
         if not batch_id:
             accepted = client.submit(plan.tokens)
@@ -472,7 +497,7 @@ def _run_kakao_batch(
                     "message": f"Kakao 第 {plan.batch_number}/{plan.batch_total} 批处理中",
                 })
 
-        completed = client.poll(batch_id)
+        completed = client.poll(batch_id, on_update=persist_partial_successes)
         mapped = map_kakao_results(plan, completed.results)
         for result_index, ids in plan.account_ids_by_result_index.items():
             for account_id in ids:
@@ -508,6 +533,15 @@ def _run_kakao_batch(
         reason = f"{type(exc).__name__}: {str(exc)}"[:500]
         for result_index, ids in plan.account_ids_by_result_index.items():
             for account_id in ids:
+                current = db.get_account(account_id) or {}
+                if (
+                    str(current.get("extract_link_status") or "").lower() == "success"
+                    and bool(
+                        current.get("extract_link_long_url")
+                        or current.get("extract_link_copy_paste")
+                    )
+                ):
+                    continue
                 db.update_account_extract(account_id, {
                     "ok": False,
                     "status": "failed",
