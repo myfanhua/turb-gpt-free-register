@@ -162,6 +162,55 @@ def request_stop(email: str) -> dict:
     return {"ok": True, "message": "已发送停止信号", "state": "stopped", "running": True, "injected": injected}
 
 
+def _is_actual_plus(plan_result: dict) -> bool:
+    plan = str(
+        plan_result.get("current_plan_type")
+        or plan_result.get("plan_type")
+        or ""
+    ).strip().lower()
+    return "plus" in plan and "free" not in plan
+
+
+def _check_plus_gate(email: str) -> dict:
+    from core import plan_check_service
+
+    account = db.get_account_by_email(email)
+    if not account:
+        return {"ok": False, "status": "failed", "message": "Plus 前置检验失败：账号不存在"}
+
+    access_token = str(account.get("access_token") or "").strip()
+    if not access_token:
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": "Plus 前置检验失败：账号缺少 access_token",
+        }
+
+    plan_result = plan_check_service.check_account_plan_now(
+        account_id=int(account.get("id") or 0),
+        email=email,
+        access_token=access_token,
+        trigger="codex_retry_gate",
+    )
+    if not plan_result.get("ok"):
+        reason = str(plan_result.get("error") or "套餐查询失败")
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": f"Plus 前置检验失败：{reason}",
+        }
+    if not _is_actual_plus(plan_result):
+        return {
+            "ok": False,
+            "status": "skipped",
+            "message": "当前未开通 Plus，未执行邮箱 OTP 和接码",
+        }
+    return {
+        "ok": True,
+        "plan_type": plan_result.get("current_plan_type") or plan_result.get("plan_type"),
+    }
+
+
 def run_worker(
     email: str,
     *,
@@ -179,8 +228,6 @@ def run_worker(
             _RUNNING_THREADS[key] = threading.get_ident()
             _RESERVED_AT[key] = time.time()
         check_stop_requested(email)
-
-        from core.codex_oauth import run_codex_oauth
 
         path = Path(target_log_path) if target_log_path else log_path(email)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -211,11 +258,26 @@ def run_worker(
         except Exception as exc:
             logger.warning("[Codex 补跑] 配置热加载失败，将继续使用当前内存配置：%s: %s", type(exc).__name__, exc)
 
+        logger.info("[Codex 补跑] Plus 前置检验：开始实时查询当前套餐")
+        gate = _check_plus_gate(email)
+        if not gate.get("ok"):
+            result = {
+                "status": gate.get("status") or "failed",
+                "ok": False,
+                "message": gate.get("message") or "Plus 前置检验失败",
+            }
+            db.update_account_codex_status(email, result["status"], result["message"])
+            logger.warning("[Codex 补跑] %s", result["message"])
+            return result
+        logger.info("[Codex 补跑] Plus 前置检验通过：plan=%s", gate.get("plan_type") or "plus")
+
         if batch_label:
             logger.info("[Codex 补跑] 批量任务：%s", batch_label)
         logger.info("[Codex 补跑] 开始：%s", email)
         logger.info("[Codex 补跑] 阶段说明：获取授权地址 → 登录邮箱 → 邮箱 OTP → 手机验证 → 捕获 callback → 提交/保存凭证")
         check_stop_requested(email)
+        from core.codex_oauth import run_codex_oauth
+
         result = run_codex_oauth(email, force=True)
         check_stop_requested(email)
         logger.info(
