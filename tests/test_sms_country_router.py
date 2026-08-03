@@ -115,6 +115,17 @@ def test_missing_live_offers_can_use_saved_order_fallback():
     assert selector.needs_offer_refresh is False
 
 
+def test_missing_live_offers_preserve_current_country_second_attempt():
+    selector = PreferredCountrySelector(["A", "B"], fallback_country="A")
+
+    assert selector.choose([offer("A", "0.20"), offer("B", "0.10")]) == "B"
+    assert selector.record_number_failure("B") == 1
+
+    assert selector.choose(None, allow_order_fallback=True) == "B"
+    assert selector.current_country == "B"
+    assert selector.last_reason == "same_country_second_attempt"
+
+
 def test_missing_live_offers_without_fallback_reports_no_quotes():
     selector = PreferredCountrySelector(["33", "187"], fallback_country="6")
 

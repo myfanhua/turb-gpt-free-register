@@ -108,6 +108,17 @@ class PreferredCountrySelector:
                         if code not in self._no_numbers
                     ]
                 )
+                if (
+                    self.current_country in self.preferred_countries
+                    and 0
+                    < self.failure_count(self.current_country)
+                    < self._failure_switch
+                    and self.current_country not in self._no_numbers
+                    and self.current_country not in self._failure_blocked
+                ):
+                    return self._select(
+                        self.current_country, "same_country_second_attempt"
+                    )
                 for code in self.preferred_countries:
                     if code not in self._no_numbers and code not in self._failure_blocked:
                         return self._select(code, "saved_order_fallback")
