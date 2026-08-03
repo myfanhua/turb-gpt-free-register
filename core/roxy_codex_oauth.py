@@ -12,6 +12,7 @@ from config import roxybrowser as _roxy_cfg
 from core.email_provider import wait_for_otp
 from core.humanize import delay as human_delay
 from core import sms_provider
+from core.sms_country_router import PreferredCountrySelector
 from core.openai_auth import AccountUnusableError, detect_account_unusable_response_body
 from core.roxybrowser_client import RoxyBrowserClient
 from core.roxy_registration import (
@@ -1176,9 +1177,68 @@ def _prepare_phone_submission(driver, phone_e164: str) -> tuple[dict, dict]:
     return phone_fill, phone_verify
 
 
+def _build_sms_country_selector() -> PreferredCountrySelector | None:
+    """Build per-registration country routing from the hot-loaded SMS config."""
+    if sms_provider._provider() not in {"grizzly", "sms_activate"}:
+        return None
+    cfg = sms_provider._cfg
+    return PreferredCountrySelector(
+        getattr(cfg, "SMS_PREFERRED_COUNTRIES", []),
+        fallback_country=getattr(cfg, "SMS_COUNTRY", ""),
+        failure_switch=getattr(cfg, "SMS_COUNTRY_FAILURE_SWITCH", 2),
+        max_price=getattr(cfg, "SMS_MAX_PRICE", ""),
+    )
+
+
+def _choose_sms_country(selector, http, force: bool = False) -> str | None:
+    if selector is None:
+        return None
+    try:
+        offers = sms_provider.get_country_offers(
+            selector.preferred_countries,
+            service=sms_provider._cfg.SMS_SERVICE,
+            http=http,
+            force=force,
+        )
+    except sms_provider.SmsNoBalanceError:
+        raise
+    except sms_provider.SmsProviderError as exc:
+        logger.warning(
+            "[Codex][Browser] SMS 国家报价不可用，按保存顺序选择：%s: %s",
+            type(exc).__name__,
+            str(exc)[:180],
+        )
+        country = None
+        try:
+            country = selector.choose(None, allow_order_fallback=True)
+            return country
+        finally:
+            logger.info(
+                "[Codex][Browser] SMS 国家选择 country=%s reason=%s offers=%s",
+                country or "-",
+                selector.last_reason,
+                "fallback",
+            )
+
+    summary = ",".join(
+        f"{item.country_code}={item.price}/{item.available_count}" for item in offers
+    ) or "-"
+    country = None
+    try:
+        country = selector.choose(offers)
+        return country
+    finally:
+        logger.info(
+            "[Codex][Browser] SMS 国家选择 country=%s reason=%s offers=%s",
+            country or "-",
+            selector.last_reason,
+            summary,
+        )
+
+
 def _do_phone_verification_if_present(driver) -> None:
     """如果页面要求手机号验证，则用当前 sms_provider 自动完成。"""
-    provider = str(getattr(sms_provider._cfg, "SMS_PROVIDER", "") or "").strip().lower() if hasattr(sms_provider, "_cfg") else ""
+    provider = sms_provider._provider()
     http = sms_provider._http()
     max_retries = int(getattr(sms_provider._cfg, "SMS_MAX_RETRIES", 10) or 10) if hasattr(sms_provider, "_cfg") else 10
     try:
@@ -1196,14 +1256,22 @@ def _do_phone_verification_if_present(driver) -> None:
             logger.info("[Codex][Browser] 未检测到手机号验证页，跳过手机步骤")
             return
 
+        selector = _build_sms_country_selector()
         last_err = None
-        for attempt in range(1, max_retries + 1):
+        actual_attempt = 0
+        while actual_attempt < max_retries:
+            country = _choose_sms_country(
+                selector,
+                http,
+                force=bool(selector and selector.needs_offer_refresh),
+            )
             activation_id = None
             try:
-                activation_id, phone = sms_provider.acquire_number(http)
-                logger.info("[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s", attempt, max_retries, provider, phone)
+                activation_id, phone = sms_provider.acquire_number(http, country=country)
+                actual_attempt += 1
+                logger.info("[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s", actual_attempt, max_retries, provider, phone)
                 logger.info("[Codex][Browser] 准备手机号输入页，重新设置新手机号")
-                _ensure_add_phone_input(driver, reason=f"attempt-{attempt}")
+                _ensure_add_phone_input(driver, reason=f"attempt-{actual_attempt}")
                 _prepare_phone_submission(driver, f"+{phone}")
                 submit_info = _click_add_phone_continue_button(driver, timeout=10)
                 logger.info("[Codex][Browser] 已点击手机号 Continue/続行 按钮：%s，等待进入短信验证码页", submit_info)
@@ -1230,9 +1298,42 @@ def _do_phone_verification_if_present(driver) -> None:
                 logger.info("[Codex][Browser] 手机 OTP 提交后状态：%s", otp_outcome)
                 sms_provider.complete(activation_id, http)
                 return
+            except sms_provider.SmsNoBalanceError:
+                if activation_id:
+                    try:
+                        sms_provider.cancel(activation_id, http)
+                    except Exception:
+                        pass
+                raise
             except Exception as exc:
+                if isinstance(exc, sms_provider.SmsNoNumbersError) and not activation_id:
+                    if selector is not None and country is not None:
+                        selector.record_no_numbers(country)
+                        logger.warning(
+                            "[Codex][Browser] 国家 %s 暂无号码，立即切换国家（实际号码尝试仍为 %s/%s）",
+                            country,
+                            actual_attempt,
+                            max_retries,
+                        )
+                        continue
+                    raise
                 last_err = exc
-                logger.warning("[Codex][Browser] 手机验证尝试失败，换号：%s", str(exc)[:240])
+                if not activation_id:
+                    raise
+                if selector is not None and country is not None:
+                    failure_count = selector.record_number_failure(country)
+                    logger.warning(
+                        "[Codex][Browser] 国家 %s 实际号码失败次数=%s，routing=%s",
+                        country,
+                        failure_count,
+                        selector.last_reason,
+                    )
+                logger.warning(
+                    "[Codex][Browser] 手机验证尝试 %s/%s 失败，换号：%s",
+                    actual_attempt,
+                    max_retries,
+                    str(exc)[:240],
+                )
                 if activation_id:
                     try:
                         sms_provider.cancel(activation_id, http)
@@ -1256,10 +1357,10 @@ def _do_phone_verification_if_present(driver) -> None:
                     else:
                         logger.info("[Codex][Browser] 手机输入页已消失，继续后续流程")
                         return
-                if attempt < max_retries:
+                if actual_attempt < max_retries:
                     _refresh_add_phone_for_retry(driver, reason=str(exc)[:120])
-                _sleep_before_phone_retry(attempt, max_retries)
-        raise RuntimeError(f"Roxy 手机验证重试 {max_retries} 次仍失败，最后错误：{last_err}")
+                _sleep_before_phone_retry(actual_attempt, max_retries)
+        raise RuntimeError(f"Roxy 手机验证实际号码重试 {actual_attempt}/{max_retries} 次仍失败，最后错误：{last_err}")
     finally:
         try:
             http.close()
