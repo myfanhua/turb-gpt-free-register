@@ -20,6 +20,8 @@ import json
 import logging
 import threading
 import time
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin
 
 from curl_cffi.requests import Session as CurlSession
@@ -39,6 +41,14 @@ _MIN_CANCEL_DELAY = 125
 # 用模块级 dict 而不是改 acquire_number 返回值，保持向后兼容。
 _ACQUIRED_AT: dict[str, float] = {}
 
+_PRICE_CACHE_SECONDS = 30.0
+_COUNTRY_CACHE_SECONDS = 3600.0
+_CATALOG_CACHE: tuple[float, list[dict]] | None = None
+_OFFER_CACHE: dict[
+    tuple[str, str, tuple[str, ...]], tuple[float, list["SmsCountryOffer"]]
+] = {}
+_CACHE_LOCK = threading.Lock()
+
 
 class SmsProviderError(RuntimeError):
     """接码平台通用错误。"""
@@ -54,6 +64,13 @@ class SmsNoBalanceError(SmsProviderError):
 
 class SmsCodeTimeout(SmsProviderError):
     """单个号等短信超时（OpenAI 没发或没到达）。"""
+
+
+@dataclass(frozen=True)
+class SmsCountryOffer:
+    country_code: str
+    price: Decimal
+    available_count: int
 
 
 def _http() -> CurlSession:
@@ -116,6 +133,124 @@ def _request_handler(http: CurlSession, params: dict) -> str:
 
 # 兼容可能引用旧私有名称的项目内工具。
 _request_grizzly = _request_handler
+
+
+def _require_sms_activate_compatible() -> None:
+    if _provider() not in {"grizzly", "sms_activate"}:
+        raise SmsProviderError("当前接码通道不支持国家价格查询")
+
+
+def _handler_json(http: CurlSession, params: dict) -> dict:
+    text = _request_handler(http, params)
+    try:
+        data = json.loads(text)
+    except Exception as exc:
+        raise SmsProviderError(f"接码平台返回无效 JSON：{text[:200]}") from exc
+    if not isinstance(data, dict):
+        raise SmsProviderError("接码平台 JSON 响应不是对象")
+    return data
+
+
+def list_country_catalog(http=None, *, force=False) -> list[dict]:
+    """返回 SMS-Activate 兼容平台的可见国家目录。"""
+    _require_sms_activate_compatible()
+    global _CATALOG_CACHE
+
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        cached = _CATALOG_CACHE
+        if cached and not force and now - cached[0] < _COUNTRY_CACHE_SECONDS:
+            return [dict(item) for item in cached[1]]
+
+    own_http = http is None
+    http = http or _http()
+    try:
+        data = _handler_json(http, {"action": "getCountries"})
+        rows = []
+        for code, raw in data.items():
+            item = raw if isinstance(raw, dict) else {}
+            if item.get("visible") in (False, 0, "0"):
+                continue
+            name = (
+                item.get("eng")
+                or item.get("name")
+                or item.get("country")
+                or item.get("rus")
+                or code
+            )
+            rows.append({"code": str(code), "name": str(name)})
+        rows.sort(key=lambda item: (item["name"].casefold(), item["code"]))
+        with _CACHE_LOCK:
+            _CATALOG_CACHE = (now, [dict(item) for item in rows])
+        return rows
+    except Exception:
+        with _CACHE_LOCK:
+            cached = _CATALOG_CACHE
+        if cached:
+            logger.warning("[SMS] 国家目录刷新失败，使用最近缓存")
+            return [dict(item) for item in cached[1]]
+        raise
+    finally:
+        if own_http:
+            http.close()
+
+
+def get_country_offers(
+    countries,
+    service=None,
+    http=None,
+    *,
+    force=False,
+) -> list[SmsCountryOffer]:
+    """返回指定国家、服务的 SMS-Activate 兼容报价。"""
+    _require_sms_activate_compatible()
+    wanted = list(
+        dict.fromkeys(str(country).strip() for country in countries if str(country).strip())
+    )
+    selected_service = str(service or _cfg.SMS_SERVICE).strip()
+    key = (str(_cfg.SMS_API_BASE), selected_service, tuple(wanted))
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        cached = _OFFER_CACHE.get(key)
+        if cached and not force and now - cached[0] < _PRICE_CACHE_SECONDS:
+            return list(cached[1])
+
+    own_http = http is None
+    http = http or _http()
+    try:
+        data = _handler_json(
+            http,
+            {"action": "getPrices", "service": selected_service},
+        )
+        offers = []
+        for code in wanted:
+            services = data.get(code) if isinstance(data.get(code), dict) else {}
+            raw = (
+                services.get(selected_service)
+                if isinstance(services.get(selected_service), dict)
+                else {}
+            )
+            try:
+                price = Decimal(str(raw.get("cost")))
+                count = int(raw.get("count"))
+                if not price.is_finite() or price < 0 or count < 0:
+                    continue
+            except (InvalidOperation, OverflowError, TypeError, ValueError):
+                continue
+            offers.append(SmsCountryOffer(code, price, count))
+        with _CACHE_LOCK:
+            _OFFER_CACHE[key] = (now, list(offers))
+        return offers
+    except Exception:
+        with _CACHE_LOCK:
+            cached = _OFFER_CACHE.get(key)
+        if cached:
+            logger.warning("[SMS] 国家报价刷新失败，使用最近缓存")
+            return list(cached[1])
+        raise
+    finally:
+        if own_http:
+            http.close()
 
 
 def _l_url(path: str) -> str:
