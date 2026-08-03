@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 from flask import Flask, Response, jsonify, render_template, request
 
-from core import codex_retry_service, db, plan_check_service, extract_link_service, codex_agent_service
+from core import codex_retry_service, db, plan_check_service, extract_link_service, codex_agent_service, sms_provider
 from webui.auth import init_auth, register_auth_routes
 from core import registration_service as svc
 from webui import config_editor
@@ -238,6 +238,29 @@ def _job_status_counts(rows: list[dict]) -> dict:
         counts[status] = counts.get(status, 0) + 1
     counts["active"] = sum(int(counts.get(s, 0) or 0) for s in ("pending", "running", "stopping"))
     return counts
+
+
+def _public_sms_catalog_error(exc: Exception) -> str:
+    """Format an SMS catalog failure without exposing configured endpoints or credentials."""
+    message = str(exc)
+    try:
+        from config import codex as _sms_cfg
+
+        for private_value in (
+            getattr(_sms_cfg, "SMS_API_BASE", ""),
+            getattr(_sms_cfg, "SMS_API_KEY", ""),
+        ):
+            private_value = str(private_value or "").strip()
+            if private_value:
+                message = message.replace(private_value, "[redacted]")
+    except Exception:
+        pass
+    message = re.sub(
+        r"(?i)\b(api[_-]?key|token|authorization)\b(\s*[=:]\s*)([^&\s,;]+)",
+        r"\1\2[redacted]",
+        message,
+    )
+    return f"{type(exc).__name__}: {message}"
 
 def create_app(auth_code: str | None = None) -> Flask:
     app = Flask(__name__, template_folder="templates")
@@ -2428,6 +2451,25 @@ def create_app(auth_code: str | None = None) -> Flask:
     @app.get("/api/config")
     def api_config_get():
         return jsonify(config_editor.get_config())
+
+    @app.get("/api/sms/countries")
+    def api_sms_countries():
+        try:
+            countries = []
+            for row in sms_provider.list_country_catalog(force=False):
+                if not isinstance(row, dict):
+                    continue
+                raw_code = row.get("code")
+                code = str("" if raw_code is None else raw_code).strip()
+                if not code:
+                    continue
+                name = str(row.get("name") or code).strip()
+                countries.append({"code": code, "name": name})
+            return jsonify({"ok": True, "countries": countries})
+        except Exception as exc:
+            error = _public_sms_catalog_error(exc)
+            logger.warning("获取接码国家目录失败: %s", error)
+            return jsonify({"ok": False, "error": error}), 502
 
     @app.post("/api/cloudmail/gen-token")
     def api_cloudmail_gen_token():

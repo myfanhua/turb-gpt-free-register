@@ -370,6 +370,62 @@
     .config-panel label.fld .hint .mono {
       white-space: normal; overflow-wrap: anywhere; word-break: break-all;
     }
+    .config-panel .sms-country-field {
+      grid-column: 1 / -1; min-width: 0; max-width: 100%;
+      padding: 10px 12px; border: 1px solid #dce7f4; border-radius: 8px; background: #fff;
+      font-size: 13px; font-weight: 700;
+    }
+    .sms-country-field > .hint {
+      display: block; margin-top: 3px; color: var(--muted); font-size: 12px;
+      font-weight: 400; line-height: 1.45; overflow-wrap: anywhere;
+    }
+    .sms-country-picker { display: grid; gap: 8px; margin-top: 9px; }
+    .sms-country-chips { display: flex; gap: 6px; flex-wrap: wrap; min-height: 28px; align-items: center; }
+    .sms-country-chip {
+      min-height: 26px; display: inline-flex; align-items: center; gap: 6px;
+      border: 1px solid #bdd0ff; border-radius: 999px; padding: 2px 8px 2px 10px;
+      background: #eef4ff; color: #1d4ed8; font: inherit; font-size: 12px; font-weight: 800;
+      cursor: pointer;
+    }
+    .sms-country-chip:hover { background: #e0ebff; }
+    .sms-country-chip .mono { font-size: 11px; }
+    .sms-country-chip-remove { color: #64748b; font-size: 15px; line-height: 1; }
+    .sms-country-empty { color: var(--muted); font-size: 12px; font-weight: 400; }
+    .sms-country-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .sms-country-toolbar input { flex: 1 1 260px; min-width: 0; margin-top: 0; }
+    .sms-country-status { color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.45; }
+    .sms-country-status.error { color: var(--red); }
+    .sms-country-refresh {
+      min-height: 26px; border: 1px solid var(--line); border-radius: 999px;
+      padding: 0 9px; background: #fff; color: #475467; font: inherit; font-size: 12px;
+      font-weight: 800; cursor: pointer;
+    }
+    .sms-country-refresh:hover:not(:disabled) { background: var(--soft); }
+    .sms-country-options {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+      gap: 6px; max-height: 230px; overflow: auto; padding: 7px;
+      border: 1px solid var(--line); border-radius: 7px; background: var(--soft);
+    }
+    .sms-country-option {
+      min-width: 0; display: flex; align-items: center; gap: 8px;
+      padding: 7px 8px; border: 1px solid transparent; border-radius: 6px;
+      background: #fff; color: var(--text); font-size: 12px; font-weight: 700; cursor: pointer;
+    }
+    .sms-country-option:hover { border-color: #bdd0ff; }
+    .sms-country-option input[type="checkbox"] {
+      flex: 0 0 auto; width: 16px; min-height: 16px; margin: 0; padding: 0;
+    }
+    .sms-country-option-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sms-country-option-code { margin-left: auto; color: var(--muted); font-size: 11px; }
+    .sms-country-chip:focus-visible,
+    .sms-country-refresh:focus-visible,
+    .sms-country-option:focus-within {
+      outline: 3px solid rgba(37,99,235,.22); outline-offset: 2px;
+    }
+    @media (max-width: 760px) {
+      .sms-country-options { grid-template-columns: 1fr; max-height: 260px; }
+      .sms-country-toolbar input { flex-basis: 100%; }
+    }
     .config-count { opacity: .72; font-weight: 700; margin-left: 4px; }
     .roxy-workspace-box {
       grid-column: 1 / -1; border: 1px solid #c3d4fb; background: #eef4ff;
@@ -2931,6 +2987,11 @@ let CONFIG_SMS_ACTIVE_SECTION = '通用接码';
 let CONFIG_CODEX_ACTIVE_SECTION = '基础配置';
 let CONFIG_EXTRACT_ACTIVE_SECTION = '通用配置';
 const CONFIG_PENDING_UPDATES = {};
+let SMS_COUNTRY_CATALOG = [];
+let SMS_COUNTRY_CATALOG_ERROR = '';
+let SMS_COUNTRY_CATALOG_LOADING = false;
+let SMS_COUNTRY_CATALOG_ATTEMPTED = false;
+let SMS_COUNTRY_CATALOG_LOADED = false;
 
 function configGroups() {
   const groups = {};
@@ -2938,7 +2999,42 @@ function configGroups() {
   return groups;
 }
 
+function normalizeSmsCountryCodes(values) {
+  const seen = new Set();
+  const normalized = [];
+  for (const raw of (Array.isArray(values) ? values : [])) {
+    const code = String(raw == null ? '' : raw).trim();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    normalized.push(code);
+  }
+  return normalized;
+}
+
+function renderSmsPreferredCountriesField(f) {
+  const current = Object.prototype.hasOwnProperty.call(CONFIG_PENDING_UPDATES, f.key)
+    ? CONFIG_PENDING_UPDATES[f.key]
+    : f.value;
+  const selected = normalizeSmsCountryCodes(current);
+  return `
+    <div class="fld sms-country-field" id="smsCountryPicker">
+      <div>${esc(f.label)}</div>
+      <span class="hint">${esc(f.help)} · <span class="mono">${esc(f.key)}</span></span>
+      <textarea data-key="SMS_PREFERRED_COUNTRIES" id="smsPreferredCountriesValue" hidden>${attrEsc(selected.join('\n'))}</textarea>
+      <div class="sms-country-picker">
+        <div class="sms-country-chips" id="smsCountryChips" aria-live="polite"></div>
+        <div class="sms-country-toolbar">
+          <input id="smsCountrySearch" type="search" placeholder="搜索国家名称或代码" autocomplete="off" aria-label="搜索接码国家">
+          <div class="sms-country-status" id="smsCountryStatus" aria-live="polite"></div>
+        </div>
+        <div class="sms-country-options" id="smsCountryOptions" aria-label="可选接码国家"></div>
+      </div>
+    </div>
+  `;
+}
+
 function renderConfigField(f) {
+  if (f.key === 'SMS_PREFERRED_COUNTRIES') return renderSmsPreferredCountriesField(f);
   const fv = Object.prototype.hasOwnProperty.call(CONFIG_PENDING_UPDATES, f.key) ? CONFIG_PENDING_UPDATES[f.key] : f.value;
   let html = `<label class="fld">${esc(f.label)}<span class="hint">${esc(f.help)} · <span class="mono">${esc(f.key)}</span></span>`;
   if (f.type === 'bool') {
@@ -2979,7 +3075,7 @@ function emailConfigSectionForKey(key) {
 
 
 function smsConfigSectionForKey(key) {
-  if (['SMS_PROVIDER','SMS_COUNTRY','SMS_SERVICE','SMS_MAX_RETRIES','SMS_CODE_WAIT'].includes(key)) {
+  if (['SMS_PROVIDER','SMS_COUNTRY','SMS_PREFERRED_COUNTRIES','SMS_COUNTRY_FAILURE_SWITCH','SMS_SERVICE','SMS_MAX_RETRIES','SMS_CODE_WAIT'].includes(key)) {
     return ['通用接码', '接码通道选择、国家/服务代码、等待和重试参数；H 通道可复用 SMS_SERVICE/SMS_COUNTRY 作为 projectId/country'];
   }
   if (key === 'SMS_API_KEY') return ['GrizzlySMS', 'GrizzlySMS 平台 API Key 配置'];
@@ -3222,6 +3318,127 @@ function bindRoxyWorkspaceTools() {
   saveBtn.addEventListener('click', saveRoxyWorkspaceSelection);
 }
 
+function selectedSmsCountryCodes() {
+  const field = $('#smsPreferredCountriesValue');
+  if (!field) return [];
+  return normalizeSmsCountryCodes(field.value.split('\n'));
+}
+
+function renderSmsCountryPickerContents() {
+  const picker = $('#smsCountryPicker');
+  const chips = $('#smsCountryChips');
+  const options = $('#smsCountryOptions');
+  const status = $('#smsCountryStatus');
+  const search = $('#smsCountrySearch');
+  if (!picker || !chips || !options || !status || !search) return;
+
+  const selected = selectedSmsCountryCodes();
+  const selectedSet = new Set(selected);
+  const catalogByCode = new Map(SMS_COUNTRY_CATALOG.map(country => [country.code, country]));
+  chips.innerHTML = selected.length ? selected.map(code => {
+    const country = catalogByCode.get(code);
+    const label = country ? country.name : '未在国家目录中';
+    return `<button type="button" class="sms-country-chip" data-sms-country-remove="${attrEsc(code)}" aria-label="移除 ${attrEsc(label)} ${attrEsc(code)}">
+      <span>${esc(label)}</span><span class="mono">${esc(code)}</span><span class="sms-country-chip-remove" aria-hidden="true">×</span>
+    </button>`;
+  }).join('') : '<span class="sms-country-empty">未选择优先国家；将按平台默认国家尝试。</span>';
+
+  if (SMS_COUNTRY_CATALOG_LOADING) {
+    status.className = 'sms-country-status';
+    status.textContent = '正在加载国家目录…';
+  } else if (SMS_COUNTRY_CATALOG_ERROR) {
+    status.className = 'sms-country-status error';
+    status.innerHTML = `国家目录加载失败：${esc(SMS_COUNTRY_CATALOG_ERROR)} <button type="button" class="sms-country-refresh" data-sms-country-refresh>重试</button>`;
+  } else if (SMS_COUNTRY_CATALOG_LOADED) {
+    status.className = 'sms-country-status';
+    status.innerHTML = `已加载 ${SMS_COUNTRY_CATALOG.length} 个国家 <button type="button" class="sms-country-refresh" data-sms-country-refresh>刷新</button>`;
+  } else {
+    status.className = 'sms-country-status';
+    status.textContent = '国家目录尚未加载';
+  }
+
+  const query = search.value.trim().toLocaleLowerCase();
+  const visible = SMS_COUNTRY_CATALOG.filter(country => (
+    !query || country.name.toLocaleLowerCase().includes(query) || country.code.toLocaleLowerCase().includes(query)
+  ));
+  if (!visible.length) {
+    const message = SMS_COUNTRY_CATALOG_LOADING
+      ? '正在加载可选国家…'
+      : SMS_COUNTRY_CATALOG_ERROR
+        ? '目录暂不可用，已保存代码仍可在上方移除。'
+        : query ? '没有匹配的国家。' : '当前目录为空。';
+    options.innerHTML = `<div class="sms-country-empty">${esc(message)}</div>`;
+    return;
+  }
+  options.innerHTML = visible.map(country => `
+    <label class="sms-country-option">
+      <input type="checkbox" data-sms-country-code="${attrEsc(country.code)}"${selectedSet.has(country.code) ? ' checked' : ''}>
+      <span class="sms-country-option-name" title="${attrEsc(country.name)}">${esc(country.name)}</span>
+      <span class="sms-country-option-code mono">${esc(country.code)}</span>
+    </label>
+  `).join('');
+}
+
+function updateSmsPreferredCountriesSelection(values) {
+  const field = $('#smsPreferredCountriesValue');
+  if (!field) return;
+  const next = normalizeSmsCountryCodes(values);
+  field.value = next.join('\n');
+  CONFIG_PENDING_UPDATES.SMS_PREFERRED_COUNTRIES = next;
+  renderSmsCountryPickerContents();
+}
+
+async function loadSmsCountryCatalog({refresh = false} = {}) {
+  if (SMS_COUNTRY_CATALOG_LOADING || (SMS_COUNTRY_CATALOG_LOADED && !refresh)) return;
+  SMS_COUNTRY_CATALOG_ATTEMPTED = true;
+  SMS_COUNTRY_CATALOG_LOADING = true;
+  SMS_COUNTRY_CATALOG_ERROR = '';
+  renderSmsCountryPickerContents();
+  try {
+    const response = await api('/api/sms/countries');
+    SMS_COUNTRY_CATALOG = (Array.isArray(response.countries) ? response.countries : [])
+      .map(country => ({
+        code: String((country || {}).code == null ? '' : country.code).trim(),
+        name: String((country || {}).name == null ? '' : country.name).trim(),
+      }))
+      .filter(country => country.code);
+    SMS_COUNTRY_CATALOG_LOADED = true;
+  } catch (error) {
+    SMS_COUNTRY_CATALOG_LOADED = false;
+    SMS_COUNTRY_CATALOG_ERROR = error.message || String(error);
+  } finally {
+    SMS_COUNTRY_CATALOG_LOADING = false;
+    renderSmsCountryPickerContents();
+  }
+}
+
+function bindSmsCountryPicker() {
+  const picker = $('#smsCountryPicker');
+  const search = $('#smsCountrySearch');
+  if (!picker || !search) return;
+  search.addEventListener('input', renderSmsCountryPickerContents);
+  picker.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('[data-sms-country-code]');
+    if (!checkbox) return;
+    const code = checkbox.dataset.smsCountryCode;
+    const selected = selectedSmsCountryCodes();
+    updateSmsPreferredCountriesSelection(
+      checkbox.checked ? selected.concat(code) : selected.filter(value => value !== code)
+    );
+  });
+  picker.addEventListener('click', (event) => {
+    const remove = event.target.closest('[data-sms-country-remove]');
+    if (remove) {
+      const code = remove.dataset.smsCountryRemove;
+      updateSmsPreferredCountriesSelection(selectedSmsCountryCodes().filter(value => value !== code));
+      return;
+    }
+    if (event.target.closest('[data-sms-country-refresh]')) loadSmsCountryCatalog({refresh: true});
+  });
+  renderSmsCountryPickerContents();
+  if (!SMS_COUNTRY_CATALOG_ATTEMPTED && !SMS_COUNTRY_CATALOG_LOADED) loadSmsCountryCatalog();
+}
+
 function renderConfigPanel() {
   const groups = configGroups();
   const fields = groups[CONFIG_ACTIVE_GROUP] || [];
@@ -3237,6 +3454,7 @@ function renderConfigPanel() {
     </div>
   `;
   bindRoxyWorkspaceTools();
+  bindSmsCountryPicker();
 }
 
 async function loadConfig() {
