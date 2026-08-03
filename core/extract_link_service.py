@@ -61,6 +61,13 @@ def _float_setting(name: str, default: float, lower: float, upper: float) -> flo
     return max(lower, min(upper, value))
 
 
+def _bool_setting(name: str, default: bool) -> bool:
+    raw = _runtime_setting(name, default)
+    if isinstance(raw, bool):
+        return raw
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 SUPPORTED_LINK_TYPES = {"pix", "upi", "kakao_pay", "ideal"}
 SUPPORTED_PROVIDERS = {"legacy", "kakao_batch"}
 
@@ -120,14 +127,32 @@ def _kakao_cdk(value: str | None = None) -> str:
     return cdk
 
 
+def _kakao_batch_proxy() -> str:
+    if not _bool_setting("KAKAO_EXTRACT_USE_PROXY_POOL", True):
+        return ""
+    try:
+        from config.proxy import pick_proxy
+        return str(pick_proxy() or "").strip()
+    except Exception as exc:
+        logger.warning(
+            "[提链] Kakao 代理池抽取失败，本批改为直连: %s",
+            type(exc).__name__,
+        )
+        return ""
+
+
 def _make_kakao_client(*, cdk: str | None = None) -> KakaoExtractLinkClient:
-    return KakaoExtractLinkClient(
+    proxy = _kakao_batch_proxy()
+    client = KakaoExtractLinkClient(
         api_base=str(_runtime_setting("KAKAO_EXTRACT_API_BASE", "https://tiqu.dxmcs.xin") or "").strip(),
         cdk=_kakao_cdk(cdk),
         timeout_seconds=_int_setting("KAKAO_EXTRACT_TIMEOUT_SECONDS", 930, 30, 1200),
         poll_interval=_float_setting("KAKAO_EXTRACT_POLL_INTERVAL", 4.0, 0.5, 30.0),
         request_timeout=_int_setting("EXTRACT_LINK_REQUEST_TIMEOUT", 30, 5, 300),
+        proxy=proxy,
     )
+    logger.info("[提链] Kakao 批次网络: %s", "proxy" if proxy else "direct")
+    return client
 
 
 _WORKERS = _int_setting("EXTRACT_LINK_WORKERS", 3, 1, 16)

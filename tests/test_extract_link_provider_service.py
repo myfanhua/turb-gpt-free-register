@@ -64,6 +64,12 @@ class FakeKakaoClient:
 
 
 class ExtractLinkProviderServiceTests(unittest.TestCase):
+    @staticmethod
+    def _runtime_settings_with_proxy_switch(enabled):
+        return lambda name, default=None: (
+            enabled if name == "KAKAO_EXTRACT_USE_PROXY_POOL" else default
+        )
+
     def test_provider_and_batch_size_validation(self):
         self.assertEqual(extract_link_service.provider_name("kakao"), "kakao_batch")
         self.assertEqual(extract_link_service.provider_name("legacy"), "legacy")
@@ -73,6 +79,72 @@ class ExtractLinkProviderServiceTests(unittest.TestCase):
             extract_link_service.provider_name("unknown")
         with self.assertRaisesRegex(ValueError, "1-5"):
             extract_link_service.kakao_batch_size(6)
+
+    def test_make_kakao_client_uses_proxy_pool_by_default(self):
+        proxy = "http://user:pass@kr.proxy:9000"
+        with patch.object(
+            extract_link_service,
+            "_runtime_setting",
+            side_effect=self._runtime_settings_with_proxy_switch(True),
+        ), patch(
+            "config.proxy.pick_proxy",
+            return_value=proxy,
+        ) as pick, patch.object(
+            extract_link_service,
+            "KakaoExtractLinkClient",
+        ) as client_type:
+            extract_link_service._make_kakao_client(cdk="CDK")
+
+        pick.assert_called_once_with()
+        self.assertEqual(client_type.call_args.kwargs["proxy"], proxy)
+
+    def test_make_kakao_client_skips_proxy_pool_when_switch_is_off(self):
+        with patch.object(
+            extract_link_service,
+            "_runtime_setting",
+            side_effect=self._runtime_settings_with_proxy_switch(False),
+        ), patch("config.proxy.pick_proxy") as pick, patch.object(
+            extract_link_service,
+            "KakaoExtractLinkClient",
+        ) as client_type:
+            extract_link_service._make_kakao_client(cdk="CDK")
+
+        pick.assert_not_called()
+        self.assertEqual(client_type.call_args.kwargs["proxy"], "")
+
+    def test_make_kakao_client_uses_direct_route_when_pool_is_empty(self):
+        with patch.object(
+            extract_link_service,
+            "_runtime_setting",
+            side_effect=self._runtime_settings_with_proxy_switch(True),
+        ), patch(
+            "config.proxy.pick_proxy",
+            return_value="",
+        ) as pick, patch.object(
+            extract_link_service,
+            "KakaoExtractLinkClient",
+        ) as client_type:
+            extract_link_service._make_kakao_client(cdk="CDK")
+
+        pick.assert_called_once_with()
+        self.assertEqual(client_type.call_args.kwargs["proxy"], "")
+
+    def test_make_kakao_client_falls_back_to_direct_when_pick_fails(self):
+        with patch.object(
+            extract_link_service,
+            "_runtime_setting",
+            side_effect=self._runtime_settings_with_proxy_switch(True),
+        ), patch(
+            "config.proxy.pick_proxy",
+            side_effect=RuntimeError("pool unavailable"),
+        ) as pick, patch.object(
+            extract_link_service,
+            "KakaoExtractLinkClient",
+        ) as client_type:
+            extract_link_service._make_kakao_client(cdk="CDK")
+
+        pick.assert_called_once_with()
+        self.assertEqual(client_type.call_args.kwargs["proxy"], "")
 
     @patch.object(extract_link_service, "enqueue_account_extract")
     def test_legacy_bulk_keeps_per_account_queue_path(self, enqueue):
