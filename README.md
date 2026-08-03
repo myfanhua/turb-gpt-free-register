@@ -399,7 +399,10 @@ SMS_PROVIDER = "l"        # 可选 grizzly / sms_activate / hero_sms / l / h
 SMS_API_KEY = "你的接码平台 key"  # GrizzlySMS / SMS-Activate / HeroSMS 使用
 SMS_SERVICE = "openai"
 SMS_COUNTRY = "国家代码"
-SMS_MAX_RETRIES = 10
+SMS_PREFERRED_COUNTRIES = []
+SMS_COUNTRY_FAILURE_SWITCH = 2
+SMS_MAX_PRICE = ""
+SMS_MAX_RETRIES = 5
 SMS_CODE_WAIT = 120
 SMS_POLL_INTERVAL = 5
 
@@ -431,8 +434,16 @@ SMS_CANCEL_DELAY=-1
 - `SMS_CANCEL_DELAY=-1` 表示自动选择平台规则：GrizzlySMS、HeroSMS、
   SMS-Activate 均等待 125 秒（120 秒限制 + 5 秒缓冲）后发送取消状态 `8`。
 - HeroSMS/SMS-Activate 失败号码进入非守护后台取消线程，不阻塞下一次取号；
-  `SMS_MAX_RETRIES=3` 为普通模式，单任务最多尝试 3 个号码。
+  `SMS_MAX_RETRIES=5` 表示单任务最多尝试 5 个实际号码。
 - 如平台另有取消等待要求，可把 `SMS_CANCEL_DELAY` 改为指定秒数。
+
+#### HeroSMS 优选国家最低价取号
+
+在 WebUI 进入「配置 → 接码平台 → 通用接码」，只勾选愿意使用的「优选国家」。每次取号会从这些国家的实时报价中，选择库存大于 0 且不超过 `SMS_MAX_PRICE` 的最低价；价格上限留空表示不限价。
+
+- 同一国家连续出现 `SMS_COUNTRY_FAILURE_SWITCH` 次实际号码失败后，切换下一个合格国家；默认为 2。
+- `SMS_MAX_RETRIES` 默认为 5，只计数已成功取到的实际号码。`NO_NUMBERS` 会立即切换国家，不消耗该计数；`NO_BALANCE` 会立即停止。
+- 优选国家留空时回退到旧版 `SMS_COUNTRY`；`l` / `h` 通道仍保持固定国家行为，不参与优选路由。
 
 CPA 授权地址来源：
 
