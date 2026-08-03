@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 from urllib.parse import quote
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 try:
     from curl_cffi import requests as curl_requests
@@ -189,6 +189,7 @@ class KakaoExtractLinkClient:
         timeout_seconds: int = 930,
         poll_interval: float = 4.0,
         request_timeout: float = 30.0,
+        proxy: str = "",
         transport: Transport | None = None,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
@@ -199,6 +200,7 @@ class KakaoExtractLinkClient:
         self.timeout_seconds = max(30, min(1200, int(timeout_seconds or 930)))
         self.poll_interval = max(0.0, float(poll_interval or 0.0))
         self.request_timeout = max(1.0, float(request_timeout or 30.0))
+        self.proxy = str(proxy or "").strip()
         self.transport = transport or self._default_transport
         self.sleep = sleep
         self.monotonic = monotonic
@@ -283,8 +285,8 @@ class KakaoExtractLinkClient:
             raise self._http_error(int(status), data)
         return data
 
-    @staticmethod
     def _default_transport(
+        self,
         method: str,
         url: str,
         payload: dict | None,
@@ -300,6 +302,7 @@ class KakaoExtractLinkClient:
                 json=payload,
                 headers=headers,
                 timeout=timeout,
+                proxy=self.proxy or None,
             )
             try:
                 data = response.json()
@@ -309,7 +312,12 @@ class KakaoExtractLinkClient:
 
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = Request(url, data=body, headers=headers, method=method)
-        with urlopen(request, timeout=timeout) as response:
+        if self.proxy:
+            handler = ProxyHandler({"http": self.proxy, "https": self.proxy})
+            response_context = build_opener(handler).open(request, timeout=timeout)
+        else:
+            response_context = urlopen(request, timeout=timeout)
+        with response_context as response:
             raw = response.read().decode("utf-8", "replace")
             data = json.loads(raw or "{}")
             return int(response.status), data if isinstance(data, dict) else {"detail": str(data)}

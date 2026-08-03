@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from core.kakao_extract_link_provider import (
     build_kakao_batches,
@@ -151,6 +152,89 @@ class KakaoExtractLinkClientTests(unittest.TestCase):
         self.assertNotIn("TOKEN_SECRET", message)
         self.assertNotIn("KAKAO-CDK", message)
         self.assertNotIn("user:pass", message)
+
+    def test_curl_transport_reuses_client_proxy_for_submit_and_poll(self):
+        calls = []
+
+        class FakeResponse:
+            status_code = 200
+            text = ""
+
+            def __init__(self, payload):
+                self.payload = payload
+
+            def json(self):
+                return self.payload
+
+        class FakeCurl:
+            @staticmethod
+            def request(method, url, **kwargs):
+                calls.append((method, url, kwargs.get("proxy")))
+                payload = (
+                    {"batchId": "batch-1", "status": "queued"}
+                    if method == "POST"
+                    else {
+                        "batchId": "batch-1",
+                        "status": "completed",
+                        "done": True,
+                        "results": [],
+                    }
+                )
+                return FakeResponse(payload)
+
+        with patch("core.kakao_extract_link_provider.curl_requests", FakeCurl):
+            client = self.make_client(
+                None,
+                proxy="http://user:pass@kr.proxy:9000",
+            )
+            client.submit(["TOKEN_A"])
+            client.get_batch("batch-1")
+
+        self.assertEqual(
+            [item[2] for item in calls],
+            [
+                "http://user:pass@kr.proxy:9000",
+                "http://user:pass@kr.proxy:9000",
+            ],
+        )
+
+    def test_urllib_transport_installs_proxy_for_http_and_https(self):
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"batchId":"batch-1","status":"queued"}'
+
+        class FakeOpener:
+            def open(self, request, timeout):
+                return FakeResponse()
+
+        client = self.make_client(
+            None,
+            proxy="http://user:pass@kr.proxy:9000",
+        )
+        with patch("core.kakao_extract_link_provider.curl_requests", None), \
+                patch("core.kakao_extract_link_provider.ProxyHandler") as handler_type, \
+                patch("core.kakao_extract_link_provider.build_opener", return_value=FakeOpener()):
+            status, payload = client._default_transport(
+                "POST",
+                "https://tiqu.dxmcs.xin/api/v1/extractions/async",
+                {"ok": True},
+                30,
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["batchId"], "batch-1")
+        handler_type.assert_called_once_with({
+            "http": "http://user:pass@kr.proxy:9000",
+            "https": "http://user:pass@kr.proxy:9000",
+        })
 
 
 class KakaoBatchPlanningTests(unittest.TestCase):
