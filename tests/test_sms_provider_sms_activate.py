@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-import unittest
+import threading
 import time
+import unittest
 from unittest.mock import patch
 
 from config import codex as codex_config
@@ -31,10 +32,39 @@ class _Http:
         self.closed = True
 
 
+class _FalseyHttp(_Http):
+    def __bool__(self):
+        return False
+
+
+class _ConcurrentHttp:
+    def __init__(self, first_response, duplicate_response):
+        self.first_response = first_response
+        self.duplicate_response = duplicate_response
+        self.calls = []
+        self.first_started = threading.Event()
+        self.duplicate_started = threading.Event()
+        self.release_first = threading.Event()
+
+    def get(self, url, params=None):
+        self.calls.append({"url": url, "params": dict(params or {})})
+        if len(self.calls) == 1:
+            self.first_started.set()
+            self.release_first.wait(timeout=2)
+            return _Resp(self.first_response)
+        self.duplicate_started.set()
+        return _Resp(self.duplicate_response)
+
+    def close(self):
+        raise AssertionError("injected client must stay open")
+
+
 class SmsActivateProviderTests(unittest.TestCase):
     def setUp(self):
-        sms_provider._CATALOG_CACHE = None
+        sms_provider._CATALOG_CACHE.clear()
         sms_provider._OFFER_CACHE.clear()
+        sms_provider._CATALOG_INFLIGHT.clear()
+        sms_provider._OFFER_INFLIGHT.clear()
 
     def test_sms_activate_config_is_exposed_in_webui(self):
         fields = {field["key"]: field for field in config_editor.EDITABLE_FIELDS}
@@ -251,6 +281,69 @@ class SmsActivateProviderTests(unittest.TestCase):
         self.assertEqual(refreshed, [{"code": "187", "name": "United States"}])
         self.assertEqual(len(http.calls), 2)
 
+    def test_country_catalog_cache_is_scoped_by_provider_and_base(self):
+        http = _Http(
+            [
+                '{"1":{"eng":"Base A","visible":1}}',
+                '{"2":{"eng":"Base B","visible":1}}',
+                '{"3":{"eng":"Grizzly","visible":1}}',
+            ]
+        )
+
+        with patch.object(codex_config, "SMS_API_KEY", "secret"):
+            with patch.object(codex_config, "SMS_PROVIDER", "sms_activate"), patch.object(
+                codex_config, "SMS_API_BASE", "https://a.example/handler_api.php"
+            ):
+                base_a = sms_provider.list_country_catalog(http=http)
+            with patch.object(codex_config, "SMS_PROVIDER", "sms_activate"), patch.object(
+                codex_config, "SMS_API_BASE", "https://b.example/handler_api.php"
+            ):
+                base_b = sms_provider.list_country_catalog(http=http)
+            with patch.object(codex_config, "SMS_PROVIDER", "grizzly"), patch.object(
+                codex_config, "SMS_API_BASE", "https://b.example/handler_api.php"
+            ):
+                grizzly = sms_provider.list_country_catalog(http=http)
+
+        self.assertEqual(base_a, [{"code": "1", "name": "Base A"}])
+        self.assertEqual(base_b, [{"code": "2", "name": "Base B"}])
+        self.assertEqual(grizzly, [{"code": "3", "name": "Grizzly"}])
+        self.assertEqual(len(http.calls), 3)
+
+    def test_country_catalog_rejects_error_envelopes_and_malformed_records(self):
+        responses = (
+            '{"status":"error","message":"temporarily unavailable"}',
+            '{"33":"Colombia"}',
+        )
+
+        for response in responses:
+            with self.subTest(response=response):
+                http = _Http([response])
+                sms_provider._CATALOG_CACHE.clear()
+                with patch.object(
+                    codex_config, "SMS_PROVIDER", "sms_activate"
+                ), patch.object(
+                    codex_config,
+                    "SMS_API_BASE",
+                    "https://hero-sms.com/stubs/handler_api.php",
+                ), patch.object(codex_config, "SMS_API_KEY", "secret"):
+                    with self.assertRaises(sms_provider.SmsProviderError):
+                        sms_provider.list_country_catalog(http=http, force=True)
+
+    def test_country_catalog_honors_falsey_injected_http_client(self):
+        http = _FalseyHttp(['{"33":{"eng":"Colombia","visible":1}}'])
+
+        with patch.object(codex_config, "SMS_PROVIDER", "sms_activate"), patch.object(
+            codex_config,
+            "SMS_API_BASE",
+            "https://hero-sms.com/stubs/handler_api.php",
+        ), patch.object(codex_config, "SMS_API_KEY", "secret"), patch.object(
+            sms_provider, "_http", side_effect=AssertionError("unexpected owned client")
+        ):
+            rows = sms_provider.list_country_catalog(http=http, force=True)
+
+        self.assertEqual(rows, [{"code": "33", "name": "Colombia"}])
+        self.assertFalse(http.closed)
+
     def test_country_offers_fresh_cache_and_force_refresh(self):
         http = _Http(
             [
@@ -273,6 +366,119 @@ class SmsActivateProviderTests(unittest.TestCase):
         self.assertEqual(str(refreshed[0].price), "0.12")
         self.assertEqual(refreshed[0].available_count, 5)
         self.assertEqual(len(http.calls), 2)
+
+    def test_country_offers_reject_error_envelopes_and_malformed_records(self):
+        responses = (
+            '{"status":"error","message":"temporarily unavailable"}',
+            '{"33":"invalid-country-record"}',
+            '{"33":{"dr":"invalid-service-record"}}',
+        )
+
+        for response in responses:
+            with self.subTest(response=response):
+                http = _Http([response])
+                sms_provider._OFFER_CACHE.clear()
+                with patch.object(
+                    codex_config, "SMS_PROVIDER", "sms_activate"
+                ), patch.object(
+                    codex_config,
+                    "SMS_API_BASE",
+                    "https://hero-sms.com/stubs/handler_api.php",
+                ), patch.object(codex_config, "SMS_API_KEY", "secret"):
+                    with self.assertRaises(sms_provider.SmsProviderError):
+                        sms_provider.get_country_offers(
+                            ["33"], service="dr", http=http, force=True
+                        )
+
+    def test_country_offers_ignore_fractional_count(self):
+        http = _Http(['{"33":{"dr":{"cost":0.11,"count":3.5}}}'])
+
+        with patch.object(codex_config, "SMS_PROVIDER", "sms_activate"), patch.object(
+            codex_config,
+            "SMS_API_BASE",
+            "https://hero-sms.com/stubs/handler_api.php",
+        ), patch.object(codex_config, "SMS_API_KEY", "secret"):
+            offers = sms_provider.get_country_offers(
+                ["33"], service="dr", http=http, force=True
+            )
+
+        self.assertEqual(offers, [])
+
+    def test_country_offer_cache_timestamp_is_recorded_after_refresh(self):
+        http = _Http(
+            [
+                '{"33":{"dr":{"cost":0.11,"count":7}}}',
+                '{"33":{"dr":{"cost":0.99,"count":1}}}',
+            ]
+        )
+
+        with patch.object(codex_config, "SMS_PROVIDER", "sms_activate"), patch.object(
+            codex_config,
+            "SMS_API_BASE",
+            "https://hero-sms.com/stubs/handler_api.php",
+        ), patch.object(codex_config, "SMS_API_KEY", "secret"), patch(
+            "core.sms_provider.time.monotonic",
+            side_effect=[0.0, 100.0, 100.1, 100.2],
+        ):
+            first = sms_provider.get_country_offers(["33"], service="dr", http=http)
+            cached = sms_provider.get_country_offers(["33"], service="dr", http=http)
+
+        self.assertEqual(first, cached)
+        self.assertEqual(str(cached[0].price), "0.11")
+        self.assertEqual(len(http.calls), 1)
+
+    def test_concurrent_country_offer_misses_share_one_refresh(self):
+        http = _ConcurrentHttp(
+            '{"33":{"dr":{"cost":0.11,"count":7}}}',
+            '{"33":{"dr":{"cost":0.99,"count":1}}}',
+        )
+        barrier = threading.Barrier(3)
+        results = []
+        errors = []
+
+        def worker():
+            try:
+                barrier.wait(timeout=2)
+                results.append(
+                    sms_provider.get_country_offers(["33"], service="dr", http=http)
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        with patch.object(codex_config, "SMS_PROVIDER", "sms_activate"), patch.object(
+            codex_config,
+            "SMS_API_BASE",
+            "https://hero-sms.com/stubs/handler_api.php",
+        ), patch.object(codex_config, "SMS_API_KEY", "secret"):
+            threads = [threading.Thread(target=worker) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            barrier.wait(timeout=2)
+            self.assertTrue(http.first_started.wait(timeout=2))
+            http.duplicate_started.wait(timeout=0.2)
+            http.release_first.set()
+            for thread in threads:
+                thread.join(timeout=2)
+
+        self.assertEqual(errors, [])
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(len(http.calls), 1)
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(str(results[0][0].price), "0.11")
+
+    def test_country_offer_http_factory_failure_releases_single_flight(self):
+        with patch.object(codex_config, "SMS_PROVIDER", "sms_activate"), patch.object(
+            codex_config,
+            "SMS_API_BASE",
+            "https://hero-sms.com/stubs/handler_api.php",
+        ), patch.object(codex_config, "SMS_API_KEY", "secret"), patch.object(
+            sms_provider, "_http", side_effect=RuntimeError("factory failed")
+        ):
+            with self.assertRaises(RuntimeError):
+                sms_provider.get_country_offers(["33"], service="dr")
+
+        self.assertEqual(sms_provider._OFFER_INFLIGHT, {})
 
     def test_country_offers_return_stale_cache_when_refresh_fails(self):
         http = _Http(
@@ -298,6 +504,29 @@ class SmsActivateProviderTests(unittest.TestCase):
         self.assertIsNot(first, stale)
         self.assertEqual(len(http.calls), 2)
         self.assertTrue(any("缓存" in message for message in logs.output))
+
+    def test_country_offers_return_matching_stale_cache_for_error_envelope(self):
+        http = _Http(
+            [
+                '{"33":{"dr":{"cost":0.11,"count":7}}}',
+                '{"status":"error","message":"temporarily unavailable"}',
+            ]
+        )
+
+        with patch.object(codex_config, "SMS_PROVIDER", "sms_activate"), patch.object(
+            codex_config,
+            "SMS_API_BASE",
+            "https://hero-sms.com/stubs/handler_api.php",
+        ), patch.object(codex_config, "SMS_API_KEY", "secret"), self.assertLogs(
+            sms_provider.logger, level="WARNING"
+        ):
+            first = sms_provider.get_country_offers(["33"], service="dr", http=http)
+            stale = sms_provider.get_country_offers(
+                ["33"], service="dr", http=http, force=True
+            )
+
+        self.assertEqual(first, stale)
+        self.assertEqual(len(http.calls), 2)
 
 
 if __name__ == "__main__":

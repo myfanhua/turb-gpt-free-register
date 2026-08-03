@@ -20,7 +20,7 @@ import json
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urljoin
 
@@ -43,11 +43,6 @@ _ACQUIRED_AT: dict[str, float] = {}
 
 _PRICE_CACHE_SECONDS = 30.0
 _COUNTRY_CACHE_SECONDS = 3600.0
-_CATALOG_CACHE: tuple[float, list[dict]] | None = None
-_OFFER_CACHE: dict[
-    tuple[str, str, tuple[str, ...]], tuple[float, list["SmsCountryOffer"]]
-] = {}
-_CACHE_LOCK = threading.Lock()
 
 
 class SmsProviderError(RuntimeError):
@@ -71,6 +66,21 @@ class SmsCountryOffer:
     country_code: str
     price: Decimal
     available_count: int
+
+
+@dataclass
+class _RefreshFlight:
+    event: threading.Event = field(default_factory=threading.Event)
+    error: Exception | None = None
+
+
+_CatalogKey = tuple[str, str]
+_OfferKey = tuple[str, str, str, tuple[str, ...]]
+_CATALOG_CACHE: dict[_CatalogKey, tuple[float, list[dict]]] = {}
+_OFFER_CACHE: dict[_OfferKey, tuple[float, list[SmsCountryOffer]]] = {}
+_CATALOG_INFLIGHT: dict[_CatalogKey, _RefreshFlight] = {}
+_OFFER_INFLIGHT: dict[_OfferKey, _RefreshFlight] = {}
+_CACHE_LOCK = threading.Lock()
 
 
 def _http() -> CurlSession:
@@ -151,24 +161,61 @@ def _handler_json(http: CurlSession, params: dict) -> dict:
     return data
 
 
+def _reject_error_envelope(data: dict) -> None:
+    status = str(data.get("status") or "").strip().casefold()
+    if (
+        status in {"error", "fail", "failed"}
+        or data.get("success") is False
+        or data.get("error")
+    ):
+        raise SmsProviderError("接码平台返回错误响应")
+
+
+def _finish_refresh(inflight: dict, key, flight: _RefreshFlight) -> None:
+    with _CACHE_LOCK:
+        if inflight.get(key) is flight:
+            inflight.pop(key, None)
+            flight.event.set()
+
+
 def list_country_catalog(http=None, *, force=False) -> list[dict]:
     """返回 SMS-Activate 兼容平台的可见国家目录。"""
     _require_sms_activate_compatible()
-    global _CATALOG_CACHE
-
+    key = (_provider(), str(_cfg.SMS_API_BASE))
     now = time.monotonic()
     with _CACHE_LOCK:
-        cached = _CATALOG_CACHE
+        cached = _CATALOG_CACHE.get(key)
         if cached and not force and now - cached[0] < _COUNTRY_CACHE_SECONDS:
             return [dict(item) for item in cached[1]]
+        flight = _CATALOG_INFLIGHT.get(key)
+        if flight is None:
+            flight = _RefreshFlight()
+            _CATALOG_INFLIGHT[key] = flight
+            refresh_owner = True
+        else:
+            refresh_owner = False
+
+    if not refresh_owner:
+        flight.event.wait()
+        with _CACHE_LOCK:
+            cached = _CATALOG_CACHE.get(key)
+        if cached:
+            return [dict(item) for item in cached[1]]
+        if flight.error is not None:
+            raise flight.error
+        raise SmsProviderError("国家目录刷新未生成缓存")
 
     own_http = http is None
-    http = http or _http()
     try:
+        if http is None:
+            http = _http()
         data = _handler_json(http, {"action": "getCountries"})
+        _reject_error_envelope(data)
         rows = []
         for code, raw in data.items():
-            item = raw if isinstance(raw, dict) else {}
+            if not isinstance(raw, dict):
+                raise SmsProviderError("接码平台国家目录记录格式错误")
+            item = raw
             if item.get("visible") in (False, 0, "0"):
                 continue
             name = (
@@ -180,19 +227,24 @@ def list_country_catalog(http=None, *, force=False) -> list[dict]:
             )
             rows.append({"code": str(code), "name": str(name)})
         rows.sort(key=lambda item: (item["name"].casefold(), item["code"]))
+        completed_at = time.monotonic()
         with _CACHE_LOCK:
-            _CATALOG_CACHE = (now, [dict(item) for item in rows])
+            _CATALOG_CACHE[key] = (completed_at, [dict(item) for item in rows])
         return rows
-    except Exception:
+    except Exception as exc:
+        flight.error = exc
         with _CACHE_LOCK:
-            cached = _CATALOG_CACHE
+            cached = _CATALOG_CACHE.get(key)
         if cached:
             logger.warning("[SMS] 国家目录刷新失败，使用最近缓存")
             return [dict(item) for item in cached[1]]
         raise
     finally:
-        if own_http:
-            http.close()
+        try:
+            if own_http and http is not None:
+                http.close()
+        finally:
+            _finish_refresh(_CATALOG_INFLIGHT, key, flight)
 
 
 def get_country_offers(
@@ -204,24 +256,52 @@ def get_country_offers(
 ) -> list[SmsCountryOffer]:
     """返回指定国家、服务的 SMS-Activate 兼容报价。"""
     _require_sms_activate_compatible()
+    provider = _provider()
     wanted = list(
         dict.fromkeys(str(country).strip() for country in countries if str(country).strip())
     )
     selected_service = str(service or _cfg.SMS_SERVICE).strip()
-    key = (str(_cfg.SMS_API_BASE), selected_service, tuple(wanted))
+    key = (provider, str(_cfg.SMS_API_BASE), selected_service, tuple(wanted))
     now = time.monotonic()
     with _CACHE_LOCK:
         cached = _OFFER_CACHE.get(key)
         if cached and not force and now - cached[0] < _PRICE_CACHE_SECONDS:
             return list(cached[1])
+        flight = _OFFER_INFLIGHT.get(key)
+        if flight is None:
+            flight = _RefreshFlight()
+            _OFFER_INFLIGHT[key] = flight
+            refresh_owner = True
+        else:
+            refresh_owner = False
+
+    if not refresh_owner:
+        flight.event.wait()
+        with _CACHE_LOCK:
+            cached = _OFFER_CACHE.get(key)
+        if cached:
+            return list(cached[1])
+        if flight.error is not None:
+            raise flight.error
+        raise SmsProviderError("国家报价刷新未生成缓存")
 
     own_http = http is None
-    http = http or _http()
     try:
+        if http is None:
+            http = _http()
         data = _handler_json(
             http,
             {"action": "getPrices", "service": selected_service},
         )
+        _reject_error_envelope(data)
+        for country_record in data.values():
+            if not isinstance(country_record, dict):
+                raise SmsProviderError("接码平台国家报价记录格式错误")
+            if any(
+                not isinstance(service_record, dict)
+                for service_record in country_record.values()
+            ):
+                raise SmsProviderError("接码平台服务报价记录格式错误")
         offers = []
         for code in wanted:
             services = data.get(code) if isinstance(data.get(code), dict) else {}
@@ -232,16 +312,25 @@ def get_country_offers(
             )
             try:
                 price = Decimal(str(raw.get("cost")))
-                count = int(raw.get("count"))
-                if not price.is_finite() or price < 0 or count < 0:
+                count_value = Decimal(str(raw.get("count")))
+                if (
+                    not price.is_finite()
+                    or not count_value.is_finite()
+                    or count_value != count_value.to_integral_value()
+                ):
+                    continue
+                count = int(count_value)
+                if price < 0 or count < 0:
                     continue
             except (InvalidOperation, OverflowError, TypeError, ValueError):
                 continue
             offers.append(SmsCountryOffer(code, price, count))
+        completed_at = time.monotonic()
         with _CACHE_LOCK:
-            _OFFER_CACHE[key] = (now, list(offers))
+            _OFFER_CACHE[key] = (completed_at, list(offers))
         return offers
-    except Exception:
+    except Exception as exc:
+        flight.error = exc
         with _CACHE_LOCK:
             cached = _OFFER_CACHE.get(key)
         if cached:
@@ -249,8 +338,11 @@ def get_country_offers(
             return list(cached[1])
         raise
     finally:
-        if own_http:
-            http.close()
+        try:
+            if own_http and http is not None:
+                http.close()
+        finally:
+            _finish_refresh(_OFFER_INFLIGHT, key, flight)
 
 
 def _l_url(path: str) -> str:
