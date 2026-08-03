@@ -65,6 +65,33 @@ class PlanCheckSyncTests(unittest.TestCase):
         self.assertIs(actual, result)
         self.assertIn("写入同步查询结果失败", "\n".join(logs.output))
 
+    def test_check_account_plan_now_returns_failure_when_result_is_not_persisted(self):
+        result = {
+            "ok": True,
+            "current_plan_type": "plus",
+            "checked_at": "2026-08-03T12:00:00",
+        }
+        with patch.object(plan_check_service, "_wait_for_rate_slot"), \
+             patch.object(plan_check_service, "check_account_plan", return_value=result), \
+             patch.object(
+                 plan_check_service.db,
+                 "update_account_plan_check",
+                 return_value=False,
+             ) as update, \
+             patch.object(plan_check_service.logger, "error") as log_error:
+            actual = plan_check_service.check_account_plan_now(
+                account_id=42,
+                email="plus@example.com",
+                access_token="token-value",
+            )
+
+        self.assertFalse(actual["ok"])
+        self.assertEqual(actual["checked_at"], result["checked_at"])
+        self.assertIn("套餐结果写回失败", actual["error"])
+        self.assertIn("账号不存在", actual["error"])
+        update.assert_called_once_with(acc_id=42, result=result)
+        log_error.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

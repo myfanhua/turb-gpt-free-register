@@ -84,9 +84,23 @@ def check_account_plan_now(
         logger.exception("[Plan] 同步查询异常: %s trigger=%s", email, trigger)
 
     try:
-        db.update_account_plan_check(acc_id=account_id, result=result)
+        persisted = db.update_account_plan_check(acc_id=account_id, result=result)
     except Exception:
         logger.exception("[Plan] 写入同步查询结果失败: account_id=%s", account_id)
+    else:
+        if persisted is False:
+            logger.error(
+                "[Plan] 套餐结果写回失败，账号不存在: account_id=%s email=%s trigger=%s",
+                account_id,
+                email,
+                trigger,
+            )
+            return {
+                "ok": False,
+                "checked_at": result.get("checked_at")
+                or datetime.now().isoformat(timespec="seconds"),
+                "error": "套餐结果写回失败：账号不存在",
+            }
     return result
 
 
