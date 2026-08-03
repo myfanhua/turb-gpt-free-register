@@ -439,11 +439,11 @@ SMS_CANCEL_DELAY=-1
 
 #### HeroSMS 优选国家最低价取号
 
-在 WebUI 进入「配置 → 接码平台 → 通用接码」，只勾选愿意使用的「优选国家」。每次取号会从这些国家的实时报价中，选择库存大于 0 且不超过 `SMS_MAX_PRICE` 的最低价；价格上限留空表示不限价。
+该路由目前仅在 `CODEX_OAUTH_DRIVER=roxy` 或 `cloak` 时生效。在 WebUI 进入「配置 → 接码平台 → 通用接码」，只勾选愿意使用的「优选国家」。每次取号会从这些国家的实时报价中，选择库存大于 0 且不超过 `SMS_MAX_PRICE` 的最低价；价格上限留空表示不限价。
 
 - 同一国家连续出现 `SMS_COUNTRY_FAILURE_SWITCH` 次实际号码失败后，切换下一个合格国家；默认为 2。
 - `SMS_MAX_RETRIES` 默认为 5，只计数已成功取到的实际号码。`NO_NUMBERS` 会立即切换国家，不消耗该计数；`NO_BALANCE` 会立即停止。
-- 优选国家留空时回退到旧版 `SMS_COUNTRY`；`l` / `h` 通道仍保持固定国家行为，不参与优选路由。
+- 优选国家留空时回退到旧版 `SMS_COUNTRY`；`browser_use` / `skyvern` / `protocol` 驱动以及 `l` / `h` 通道仍按 `SMS_COUNTRY` 固定取号，不参与优选路由。
 
 CPA 授权地址来源：
 
