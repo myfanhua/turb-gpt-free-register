@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在所有 Codex 补跑路径真正执行邮箱 OTP 和接码前，实时确认账号已开通 Plus。
+**Goal:** 在所有 Codex 补跑路径真正执行邮箱 OTP 和接码前检查 Plus；手动单个/批量补跑允许用户确认仅覆盖实时查询失败，明确查到非 Plus 时仍停止。
 
-**Architecture:** 在套餐查询服务增加共享限速的同步查询入口，由 `codex_retry_service.run_worker()` 统一调用。门禁成功才进入现有 `run_codex_oauth()`；非 Plus 返回 `skipped`，查询失败返回 `failed`，从而覆盖单个补跑、批量补跑和注册任务智能重试。
+**Architecture:** 套餐查询仍由 `codex_retry_service.run_worker()` 统一调用。新增的 `plus_confirmed` 关键字参数默认是 `False`，因此现有调用保持严格模式；单个和批量手动补跑从确认框传入 `plus_confirmed=true`，仅当查询请求失败时放行，查询成功返回 free/Pro/Team/Go 等结果时忽略人工确认并停止。注册任务智能重试不传此参数，继续保持严格模式。
 
 **Tech Stack:** Python 3.13、Flask、`unittest`/`pytest`、现有 JSON 账号数据库与 `core.chatgpt_plan`。
 
@@ -335,7 +335,182 @@ git add -- webui/templates/index.html tests/test_webui_codex_retry_plus_gate_tem
 git commit -m "docs: explain codex retry plus gate"
 ```
 
-### Task 4: 运行验收
+### Task 4: 人工确认仅覆盖套餐查询失败
+
+**Files:**
+- Modify: `core/codex_retry_service.py`
+- Modify: `webui/app.py`
+- Modify: `webui/templates/index.html`
+- Modify: `tests/test_codex_retry_plus_gate.py`
+- Create: `tests/test_webui_codex_retry_plus_confirmation.py`
+- Modify: `tests/test_webui_codex_retry_plus_gate_template.py`
+
+- [ ] **Step 1: 写服务层失败测试**
+
+扩展测试 helper，使其接收 `plus_confirmed` 并原样传入 `run_worker()`，然后加入三条行为测试：
+
+```python
+def test_confirmed_plus_continues_when_plan_query_fails(self):
+    result, _, oauth, update = self._run_worker(
+        "confirmed@example.com",
+        {"id": 10, "email": "confirmed@example.com", "access_token": "token"},
+        {"ok": False, "error": "HTTP 401"},
+        plus_confirmed=True,
+    )
+    self.assertTrue(result["ok"])
+    oauth.assert_called_once_with("confirmed@example.com", force=True)
+    update.assert_called_once_with("confirmed@example.com", "success", None)
+
+def test_unconfirmed_plan_query_failure_still_stops(self):
+    result, _, oauth, update = self._run_worker(
+        "strict@example.com",
+        {"id": 12, "email": "strict@example.com", "access_token": "token"},
+        {"ok": False, "error": "HTTP 401"},
+        plus_confirmed=False,
+    )
+    self.assertEqual(result["status"], "failed")
+    oauth.assert_not_called()
+    update.assert_called_once_with(
+        "strict@example.com",
+        "failed",
+        "Plus 前置检验失败：HTTP 401",
+    )
+
+def test_confirmed_plus_does_not_override_successful_free_result(self):
+    result, _, oauth, update = self._run_worker(
+        "free-confirmed@example.com",
+        {"id": 11, "email": "free-confirmed@example.com", "access_token": "token"},
+        {"ok": True, "current_plan_type": "free"},
+        plus_confirmed=True,
+    )
+    self.assertEqual(result["status"], "skipped")
+    oauth.assert_not_called()
+```
+
+- [ ] **Step 2: 运行服务层测试并确认失败**
+
+Run: `python -m pytest tests/test_codex_retry_plus_gate.py -q`
+
+Expected: FAIL，提示 helper/`run_worker()` 尚不接收 `plus_confirmed`，或查询失败仍被拦截。
+
+- [ ] **Step 3: 实现服务层最小改动**
+
+```python
+def _check_plus_gate(email: str, *, plus_confirmed: bool = False) -> dict:
+    from core import plan_check_service
+
+    account = db.get_account_by_email(email)
+    if not account:
+        return {"ok": False, "status": "failed", "message": "Plus 前置检验失败：账号不存在"}
+    access_token = str(account.get("access_token") or "").strip()
+    if not access_token:
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": "Plus 前置检验失败：账号缺少 access_token",
+        }
+    plan_result = plan_check_service.check_account_plan_now(
+        account_id=int(account.get("id") or 0),
+        email=email,
+        access_token=access_token,
+        trigger="codex_retry_gate",
+    )
+    if not plan_result.get("ok"):
+        reason = str(plan_result.get("error") or "套餐查询失败")
+        if plus_confirmed is True:
+            return {
+                "ok": True,
+                "plan_type": "user_confirmed_plus",
+                "warning": f"套餐查询失败，按用户确认继续：{reason}",
+            }
+        return {"ok": False, "status": "failed", "message": f"Plus 前置检验失败：{reason}"}
+    if not _is_actual_plus(plan_result):
+        return {
+            "ok": False,
+            "status": "skipped",
+            "message": "当前未开通 Plus，未执行邮箱 OTP 和接码",
+        }
+    return {
+        "ok": True,
+        "plan_type": plan_result.get("current_plan_type") or plan_result.get("plan_type"),
+    }
+
+def run_worker(
+    email: str,
+    *,
+    batch_label: str | None = None,
+    clear_log: bool = True,
+    target_log_path: str | Path | None = None,
+    plus_confirmed: bool = False,
+) -> dict:
+    gate = _check_plus_gate(email, plus_confirmed=plus_confirmed is True)
+    if gate.get("warning"):
+        logger.warning("[Codex 补跑] %s", gate["warning"])
+```
+
+只有 `plan_result.ok == False` 的分支读取 `plus_confirmed`；成功返回的非 Plus 分支保持原样。
+
+- [ ] **Step 4: 运行服务层测试并确认通过**
+
+Run: `python -m pytest tests/test_codex_retry_plus_gate.py -q`
+
+Expected: 全部 PASS。
+
+- [ ] **Step 5: 写 Web API 与模板失败测试**
+
+新增 Flask API 测试，替换 `threading.Thread` 为同步捕获对象，验证：
+
+```python
+client.post("/api/codex/retry", json={"email": "plus@example.com", "plus_confirmed": True})
+# thread kwargs 包含 plus_confirmed=True
+
+client.post("/api/codex/retry-bulk", json={
+    "account_ids": [1],
+    "workers": 1,
+    "plus_confirmed": True,
+})
+# bulk runner 最终调用 worker 时包含 plus_confirmed=True
+```
+
+模板测试分别限定在单个/批量函数代码段内，断言确认文案包含“我确认账号当前已实际开通 Plus”，且请求体包含 `plus_confirmed: true`。
+
+- [ ] **Step 6: 运行 Web 测试并确认失败**
+
+Run: `python -m pytest tests/test_webui_codex_retry_plus_confirmation.py tests/test_webui_codex_retry_plus_gate_template.py -q`
+
+Expected: FAIL，提示请求参数或模板字段尚不存在。
+
+- [ ] **Step 7: 实现 Web 参数传递与简洁确认文案**
+
+`webui/app.py`：
+
+```python
+plus_confirmed = data.get("plus_confirmed") is True
+```
+
+单个线程、批量 dispatcher、executor 和 `_run_codex_retry_worker()` 全链路显式传递该布尔值。非布尔真值（例如 `1`、`"true"`）按 `False` 处理。
+
+`webui/templates/index.html`：复用现有单个与批量确认框，不增加额外按钮；确认框明确说明用户点击确定即表示“我确认账号当前已实际开通 Plus”，请求 JSON 增加 `plus_confirmed: true`。
+
+- [ ] **Step 8: 运行聚焦验证并提交**
+
+Run:
+
+```powershell
+python -m pytest tests/test_codex_retry_plus_gate.py tests/test_webui_codex_retry_plus_confirmation.py tests/test_webui_codex_retry_plus_gate_template.py -q
+git diff --check
+```
+
+Expected: 全部 PASS；`git diff --check` 无错误。
+
+Commit:
+
+```powershell
+git add -- core/codex_retry_service.py webui/app.py webui/templates/index.html tests/test_codex_retry_plus_gate.py tests/test_webui_codex_retry_plus_confirmation.py tests/test_webui_codex_retry_plus_gate_template.py docs/superpowers/plans/2026-08-03-codex-retry-plus-gate.md
+git commit -m "fix: allow confirmed plus retry on plan query failure"
+```
+
+### Task 5: 运行验收
 
 **Files:**
 - No tracked file changes expected.
