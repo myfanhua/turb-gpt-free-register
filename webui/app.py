@@ -2463,7 +2463,8 @@ def create_app(auth_code: str | None = None) -> Flask:
                 code = str("" if raw_code is None else raw_code).strip()
                 if not code:
                     continue
-                name = str(row.get("name") or code).strip()
+                raw_name = row.get("name")
+                name = str("" if raw_name is None else raw_name).strip() or code
                 countries.append({"code": code, "name": name})
             return jsonify({"ok": True, "countries": countries})
         except Exception as exc:

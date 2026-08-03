@@ -60,6 +60,20 @@ class WebUiSmsCountryOptionsTests(unittest.TestCase):
         self.assertNotIn("https://sms.example/private-handler", combined)
 
     @patch("core.sms_provider.list_country_catalog")
+    def test_whitespace_only_country_name_falls_back_to_normalized_code(self, catalog):
+        catalog.return_value = [{"code": "33", "name": "   "}]
+
+        response = self.client.get(
+            "/api/sms/countries",
+            headers={"X-Auth-Code": "test-auth"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["countries"], [
+            {"code": "33", "name": "33"},
+        ])
+
+    @patch("core.sms_provider.list_country_catalog")
     def test_unauthenticated_route_matches_other_api_auth_behavior(self, catalog):
         response = self.client.get("/api/sms/countries")
 
