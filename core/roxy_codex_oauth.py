@@ -1259,6 +1259,7 @@ def _do_phone_verification_if_present(driver) -> None:
         selector = _build_sms_country_selector()
         last_err = None
         actual_attempt = 0
+        fixed_no_numbers_attempt = 0
         while actual_attempt < max_retries:
             country = _choose_sms_country(
                 selector,
@@ -1316,7 +1317,18 @@ def _do_phone_verification_if_present(driver) -> None:
                             max_retries,
                         )
                         continue
-                    raise
+                    fixed_no_numbers_attempt += 1
+                    last_err = exc
+                    logger.warning(
+                        "[Codex][Browser] 固定 SMS 通道暂无号码，取号重试 %s/%s（实际号码尝试仍为 %s/%s）",
+                        fixed_no_numbers_attempt,
+                        max_retries,
+                        actual_attempt,
+                        max_retries,
+                    )
+                    if fixed_no_numbers_attempt >= max_retries:
+                        raise
+                    continue
                 last_err = exc
                 if not activation_id:
                     raise

@@ -246,3 +246,42 @@ def test_fixed_provider_skips_price_api_and_passes_none_country(provider):
 
     get_offers.assert_not_called()
     acquire.assert_called_once_with(http, country=None)
+
+
+@pytest.mark.parametrize("provider", ["l", "h"])
+def test_fixed_provider_no_numbers_retries_without_consuming_actual_attempt(provider):
+    acquire = Mock(
+        side_effect=[SmsNoNumbersError("NO_NUMBERS"), ("id", "123")]
+    )
+
+    with patch.object(roxy_codex_oauth.logger, "info") as info:
+        acquire, _http, _cancel = run_phone_flow(
+            cfg(provider, retries=5), acquire=acquire
+        )
+
+    assert [item.kwargs["country"] for item in acquire.call_args_list] == [None, None]
+    attempt_logs = [
+        args
+        for args, _kwargs in info.call_args_list
+        if "手机验证尝试" in str(args[0])
+    ]
+    assert attempt_logs == [
+        (
+            "[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s",
+            1,
+            5,
+            provider,
+            "123",
+        )
+    ]
+
+
+@pytest.mark.parametrize("provider", ["l", "h"])
+def test_fixed_provider_repeated_no_numbers_stops_at_legacy_bound(provider):
+    acquire = Mock(side_effect=SmsNoNumbersError("NO_NUMBERS"))
+
+    with pytest.raises(SmsNoNumbersError):
+        run_phone_flow(cfg(provider, retries=3), acquire=acquire)
+
+    assert acquire.call_count == 3
+    assert all(item.kwargs["country"] is None for item in acquire.call_args_list)
