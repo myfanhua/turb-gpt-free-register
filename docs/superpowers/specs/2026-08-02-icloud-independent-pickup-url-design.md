@@ -1,7 +1,7 @@
 # iCloud 独立取件 URL 接入设计
 
-**日期：** 2026-08-02  
-**分支：** `codex/hero-sms-provider`  
+**日期：** 2026-08-02
+**分支：** `codex/hero-sms-provider`
 **目标：** 在保留现有 iCloud Pickup/Profile 能力的同时，支持按邮箱绑定的独立 HTML 取件 URL，并确保不同取件来源、不同邮箱和不同注册任务之间不会串号。
 
 ## 1. 背景与范围
