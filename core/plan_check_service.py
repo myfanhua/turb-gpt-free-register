@@ -58,6 +58,38 @@ def _registration_recheck_delay() -> float:
     return _float_setting("PLAN_CHECK_REGISTRATION_RECHECK_DELAY", 2.0, 0.0, 30.0)
 
 
+def check_account_plan_now(
+    *,
+    account_id: int,
+    email: str,
+    access_token: str,
+    trigger: str = "codex_retry_gate",
+    proxy: str | None = None,
+    timezone_offset_min: str = "-",
+) -> dict:
+    """同步查询当前套餐，并与后台查询共享请求限速节奏。"""
+    try:
+        _wait_for_rate_slot()
+        result = check_account_plan(
+            access_token,
+            proxy=proxy,
+            timezone_offset_min=timezone_offset_min,
+        )
+    except Exception as exc:
+        result = {
+            "ok": False,
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
+            "error": f"{type(exc).__name__}: {str(exc)[:180]}",
+        }
+        logger.exception("[Plan] 同步查询异常: %s trigger=%s", email, trigger)
+
+    try:
+        db.update_account_plan_check(acc_id=account_id, result=result)
+    except Exception:
+        logger.exception("[Plan] 写入同步查询结果失败: account_id=%s", account_id)
+    return result
+
+
 def _run_plan_check(
     *,
     account_id: int,
