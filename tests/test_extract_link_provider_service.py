@@ -89,7 +89,10 @@ class ExtractLinkProviderServiceTests(unittest.TestCase):
         ), patch(
             "config.proxy.pick_proxy",
             return_value=proxy,
-        ) as pick, patch.object(
+        ) as pick, patch(
+            "config.proxy.PROXY_CHAIN_ENABLED",
+            False,
+        ), patch.object(
             extract_link_service,
             "KakaoExtractLinkClient",
         ) as client_type:
@@ -145,6 +148,28 @@ class ExtractLinkProviderServiceTests(unittest.TestCase):
 
         pick.assert_called_once_with()
         self.assertEqual(client_type.call_args.kwargs["proxy"], "")
+
+    def test_kakao_batch_proxy_uses_local_bridge_when_chain_is_enabled(self):
+        upstream = "http://user:pass@kr.proxy:9000"
+        local = "http://session:bridge@127.0.0.1:25001"
+        with patch.object(
+            extract_link_service,
+            "_bool_setting",
+            return_value=True,
+        ), patch(
+            "config.proxy.pick_proxy",
+            return_value=upstream,
+        ), patch(
+            "config.proxy.PROXY_CHAIN_ENABLED",
+            True,
+        ), patch(
+            "core.roxybrowser_client.prepare_proxy_for_roxy",
+            return_value=local,
+        ) as prepare:
+            selected = extract_link_service._kakao_batch_proxy()
+
+        self.assertEqual(selected, local)
+        prepare.assert_called_once_with(upstream)
 
     @patch.object(extract_link_service, "enqueue_account_extract")
     def test_legacy_bulk_keeps_per_account_queue_path(self, enqueue):

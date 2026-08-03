@@ -131,11 +131,17 @@ def _kakao_batch_proxy() -> str:
     if not _bool_setting("KAKAO_EXTRACT_USE_PROXY_POOL", True):
         return ""
     try:
-        from config.proxy import pick_proxy
-        return str(pick_proxy() or "").strip()
+        from config import proxy as proxy_cfg
+
+        selected = str(proxy_cfg.pick_proxy() or "").strip()
+        if selected and bool(getattr(proxy_cfg, "PROXY_CHAIN_ENABLED", False)):
+            from core.roxybrowser_client import prepare_proxy_for_roxy
+
+            selected = str(prepare_proxy_for_roxy(selected) or "").strip()
+        return selected
     except Exception as exc:
         logger.warning(
-            "[提链] Kakao 代理池抽取失败，本批改为直连: %s",
+            "[提链] Kakao 代理选路失败，本批改为直连: %s",
             type(exc).__name__,
         )
         return ""
