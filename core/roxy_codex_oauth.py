@@ -1202,7 +1202,7 @@ def _choose_sms_country(selector, http, force: bool = False) -> str | None:
         )
     except sms_provider.SmsNoBalanceError:
         raise
-    except sms_provider.SmsProviderError as exc:
+    except Exception as exc:
         logger.warning(
             "[Codex][Browser] SMS 国家报价不可用，按保存顺序选择：%s: %s",
             type(exc).__name__,

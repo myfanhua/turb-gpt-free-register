@@ -147,6 +147,49 @@ def test_choose_country_uses_saved_order_only_when_price_api_errors():
     assert selector.last_reason == "saved_order_fallback"
 
 
+def test_price_transport_error_uses_saved_order_for_number_acquisition():
+    provider_cfg = cfg()
+    http = Mock()
+    patches = phone_flow_patches()
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch.object(roxy_codex_oauth.sms_provider, "_cfg", provider_cfg)
+        )
+        stack.enter_context(
+            patch.object(roxy_codex_oauth.sms_provider, "_http", return_value=http)
+        )
+        stack.enter_context(
+            patch.object(
+                roxy_codex_oauth.sms_provider,
+                "get_country_offers",
+                side_effect=RuntimeError("price transport failed"),
+            )
+        )
+        acquire = stack.enter_context(
+            patch.object(
+                roxy_codex_oauth.sms_provider,
+                "acquire_number",
+                return_value=("id-a", "111"),
+            )
+        )
+        stack.enter_context(patch.object(roxy_codex_oauth.sms_provider, "set_status"))
+        stack.enter_context(
+            patch.object(
+                roxy_codex_oauth.sms_provider,
+                "wait_for_sms_code",
+                return_value="123456",
+            )
+        )
+        stack.enter_context(patch.object(roxy_codex_oauth.sms_provider, "complete"))
+        stack.enter_context(patch.object(roxy_codex_oauth.sms_provider, "cancel"))
+        for item in patches:
+            stack.enter_context(item)
+
+        roxy_codex_oauth._do_phone_verification_if_present(object())
+
+    acquire.assert_called_once_with(http, country="A")
+
+
 def test_choose_country_propagates_no_balance_from_price_api():
     selector = PreferredCountrySelector(["A", "B"], fallback_country="Z")
     with patch.object(
