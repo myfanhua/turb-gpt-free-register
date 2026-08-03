@@ -34,7 +34,14 @@ def cfg(provider="sms_activate", *, switch=2, retries=5):
     )
 
 
-def phone_flow_patches(*, send_side_effect=None):
+def phone_flow_patches(*, send_side_effect=None, retry_sleep=None):
+    sleep_patch = (
+        patch.object(roxy_codex_oauth, "_sleep_before_phone_retry")
+        if retry_sleep is None
+        else patch.object(
+            roxy_codex_oauth, "_sleep_before_phone_retry", new=retry_sleep
+        )
+    )
     return (
         patch.object(roxy_codex_oauth, "_has_strict_add_phone_form", return_value=True),
         patch.object(roxy_codex_oauth, "_is_phone_code_page", return_value=False),
@@ -48,14 +55,24 @@ def phone_flow_patches(*, send_side_effect=None):
         patch.object(roxy_codex_oauth, "_wait_after_phone_otp_submit", return_value="accepted"),
         patch.object(roxy_codex_oauth, "_find_any", return_value=object()),
         patch.object(roxy_codex_oauth, "_refresh_add_phone_for_retry"),
-        patch.object(roxy_codex_oauth, "_sleep_before_phone_retry"),
+        sleep_patch,
         patch.object(roxy_codex_oauth, "human_delay"),
     )
 
 
-def run_phone_flow(provider_cfg, *, acquire, offers=None, send_side_effect=None, selector=None):
+def run_phone_flow(
+    provider_cfg,
+    *,
+    acquire,
+    offers=None,
+    send_side_effect=None,
+    selector=None,
+    retry_sleep=None,
+):
     http = Mock()
-    patches = phone_flow_patches(send_side_effect=send_side_effect)
+    patches = phone_flow_patches(
+        send_side_effect=send_side_effect, retry_sleep=retry_sleep
+    )
     with ExitStack() as stack:
         stack.enter_context(patch.object(roxy_codex_oauth.sms_provider, "_cfg", provider_cfg))
         stack.enter_context(patch.object(roxy_codex_oauth.sms_provider, "_http", return_value=http))
@@ -169,10 +186,12 @@ def test_no_balance_stops_after_one_acquire_call():
 
 def test_no_numbers_switches_country_without_consuming_actual_attempt():
     provider_cfg = cfg(retries=5)
+    retry_sleep = Mock()
     with patch.object(roxy_codex_oauth.logger, "info") as info:
         acquire, _, _ = run_phone_flow(
             provider_cfg,
             acquire=[SmsNoNumbersError("NO_NUMBERS"), ("id-b", "222")],
+            retry_sleep=retry_sleep,
         )
 
     assert acquire.call_args_list == [
@@ -183,6 +202,7 @@ def test_no_numbers_switches_country_without_consuming_actual_attempt():
     assert attempt_logs == [
         ("[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s", 1, 5, "sms_activate", "222")
     ]
+    retry_sleep.assert_not_called()
 
 
 def test_no_numbers_after_activation_is_recorded_as_actual_number_failure():
@@ -279,9 +299,15 @@ def test_fixed_provider_no_numbers_retries_without_consuming_actual_attempt(prov
 @pytest.mark.parametrize("provider", ["l", "h"])
 def test_fixed_provider_repeated_no_numbers_stops_at_legacy_bound(provider):
     acquire = Mock(side_effect=SmsNoNumbersError("NO_NUMBERS"))
+    retry_sleep = Mock()
 
     with pytest.raises(SmsNoNumbersError):
-        run_phone_flow(cfg(provider, retries=3), acquire=acquire)
+        run_phone_flow(
+            cfg(provider, retries=3),
+            acquire=acquire,
+            retry_sleep=retry_sleep,
+        )
 
     assert acquire.call_count == 3
     assert all(item.kwargs["country"] is None for item in acquire.call_args_list)
+    assert retry_sleep.call_args_list == [call(1, 3), call(2, 3)]

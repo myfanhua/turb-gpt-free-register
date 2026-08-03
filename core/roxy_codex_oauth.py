@@ -1328,6 +1328,7 @@ def _do_phone_verification_if_present(driver) -> None:
                     )
                     if fixed_no_numbers_attempt >= max_retries:
                         raise
+                    _sleep_before_phone_retry(fixed_no_numbers_attempt, max_retries)
                     continue
                 last_err = exc
                 if not activation_id:
