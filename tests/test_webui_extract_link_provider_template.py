@@ -29,6 +29,19 @@ class WebUiExtractLinkProviderTemplateTests(unittest.TestCase):
         self.assertIn("extractConfigSectionForKey", self.html)
         self.assertIn("['通用配置', '旧接口', 'Kakao API']", self.html)
 
+    def test_kakao_proxy_pool_switch_defaults_on(self):
+        from config import extract_link
+        from webui.config_editor import EDITABLE_FIELDS
+
+        field = next(
+            item
+            for item in EDITABLE_FIELDS
+            if item.get("key") == "KAKAO_EXTRACT_USE_PROXY_POOL"
+        )
+        self.assertTrue(extract_link.KAKAO_EXTRACT_USE_PROXY_POOL)
+        self.assertEqual(field["type"], "bool")
+        self.assertEqual(field["group"], "提链")
+
     def test_status_rendering_mentions_selected_provider(self):
         self.assertIn("extract_link_provider", self.html)
         self.assertIn("Kakao", self.html)

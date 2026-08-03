@@ -23,6 +23,7 @@ EXTRACT_LINK_EVENT_TIMEOUT: int = 180
 # Kakao Pay 异步批量提链接口
 KAKAO_EXTRACT_API_BASE: str = "https://tiqu.dxmcs.xin"
 KAKAO_EXTRACT_CDK: str = ""
+KAKAO_EXTRACT_USE_PROXY_POOL: bool = True
 KAKAO_EXTRACT_BATCH_SIZE: int = 5
 KAKAO_EXTRACT_TIMEOUT_SECONDS: int = 930
 KAKAO_EXTRACT_POLL_INTERVAL: float = 4.0
@@ -38,6 +39,7 @@ apply_env_overrides(globals(), {
     'EXTRACT_LINK_EVENT_TIMEOUT': 'int',
     'KAKAO_EXTRACT_API_BASE': 'str',
     'KAKAO_EXTRACT_CDK': 'str',
+    'KAKAO_EXTRACT_USE_PROXY_POOL': 'bool',
     'KAKAO_EXTRACT_BATCH_SIZE': 'int',
     'KAKAO_EXTRACT_TIMEOUT_SECONDS': 'int',
     'KAKAO_EXTRACT_POLL_INTERVAL': 'float',

@@ -538,6 +538,10 @@ EDITABLE_FIELDS = [
         "storage": "env", "secret": True,
     },
     {
+        "key": "KAKAO_EXTRACT_USE_PROXY_POOL", "file": "extract_link.py", "type": "bool", "group": "提链",
+        "label": "Kakao API·使用代理池", "help": "默认开启；每个 Kakao 批次从现有代理池抽取一次，提交和轮询固定使用同一代理",
+    },
+    {
         "key": "KAKAO_EXTRACT_BATCH_SIZE", "file": "extract_link.py", "type": "int", "group": "提链",
         "label": "Kakao API·默认每批数量", "help": "账号页默认每批提交数量，范围 1-5",
     },
