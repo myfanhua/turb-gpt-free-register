@@ -18,7 +18,7 @@ _LOADED = False
 
 # 这些多行列表字段允许用空值显式覆盖为 []。
 # 例如 WebUI 清空代理池后会写入 PROXY_POOL="" / PROXY_POOL="[]"，不能再回退到源码默认本地代理。
-EXPLICIT_EMPTY_LIST_ENV_KEYS = {"PROXY_POOL"}
+EXPLICIT_EMPTY_LIST_ENV_KEYS = {"PROXY_POOL", "SMS_PREFERRED_COUNTRIES"}
 
 # 统一管理：env key -> 说明（.env.example 用）
 SECRET_ENV_KEYS: dict[str, str] = {

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from config import env_loader
@@ -39,6 +40,26 @@ class ConfigDefaultFallbackTests(unittest.TestCase):
 
         self.assertEqual(namespace["PROXY_POOL"], [])
 
+    def test_sms_preferred_countries_explicit_empty_env_values_mean_empty_list(self):
+        old_loaded = env_loader._LOADED
+        env_loader._LOADED = True
+        try:
+            for raw_value in ("[]", ""):
+                with self.subTest(raw_value=raw_value):
+                    namespace = {"SMS_PREFERRED_COUNTRIES": ["10"]}
+                    with patch.dict(
+                        os.environ,
+                        {"SMS_PREFERRED_COUNTRIES": raw_value},
+                        clear=True,
+                    ):
+                        env_loader.apply_env_overrides(
+                            namespace,
+                            {"SMS_PREFERRED_COUNTRIES": "list_str_multiline"},
+                        )
+                    self.assertEqual(namespace["SMS_PREFERRED_COUNTRIES"], [])
+        finally:
+            env_loader._LOADED = old_loaded
+
     def test_config_editor_formats_empty_list_as_literal_empty_list(self):
         self.assertEqual(config_editor._format_env_value([], "list_str_multiline"), "[]")
 
@@ -68,6 +89,23 @@ class ConfigDefaultFallbackTests(unittest.TestCase):
             "wss://connect.browser-use.com",
         )
         self.assertTrue(config_editor._coerce_raw_value("", True, "bool"))
+
+    def test_codex_sms_source_defaults(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "config" / "codex.py"
+        ).read_text(encoding="utf-8")
+
+        expected_defaults = {
+            "SMS_MAX_RETRIES": ("int", 5),
+            "SMS_COUNTRY_FAILURE_SWITCH": ("int", 2),
+            "SMS_PREFERRED_COUNTRIES": ("list_str_multiline", []),
+        }
+        for key, (value_type, expected) in expected_defaults.items():
+            with self.subTest(key=key):
+                self.assertEqual(
+                    config_editor._parse_value_from_source(source, key, value_type),
+                    expected,
+                )
 
 
 if __name__ == "__main__":

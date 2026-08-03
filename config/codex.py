@@ -115,11 +115,17 @@ SMS_SERVICE: str = "openai"
 # 国家代码：葡萄牙 = "117" / 美国 = "187"
 SMS_COUNTRY: str = "10"
 
+# 优先按价格和库存选择的国家代码；留空时回退到 SMS_COUNTRY
+SMS_PREFERRED_COUNTRIES: list[str] = []
+
+# 同一国家连续失败多少次后切换下一个优选国家
+SMS_COUNTRY_FAILURE_SWITCH: int = 2
+
 # 单个号愿意支付的最高价格（留空=不限）。透传给 getNumber 的 maxPrice。
 SMS_MAX_PRICE: str = ""
 
 # 一个号收不到短信/被拒时，换号重试的最大次数
-SMS_MAX_RETRIES: int = 10
+SMS_MAX_RETRIES: int = 5
 
 # 单个号等待短信的最长秒数（超时则取消该号换下一个）
 SMS_CODE_WAIT: int = 120
@@ -169,4 +175,4 @@ L_ADMIN_AUTH_CODE: str = env_str("L_ADMIN_AUTH_CODE", "")
 L_PHONE_PREFIX: str = ""
 
 # ---- .env overrides for WebUI editable fields ----
-apply_env_overrides(globals(), {'ENABLE_CODEX_AUTO': 'bool', 'CODEX_OAUTH_DRIVER': 'str', 'CODEX_AUTH_URL_SOURCE': 'str', 'CPA_MANAGEMENT_URL': 'str', 'CPA_MANAGEMENT_KEY': 'str', 'CPA_REQUEST_TIMEOUT': 'int', 'CPA_CALLBACK_SUBMIT_RETRIES': 'int', 'CPA_CALLBACK_SUBMIT_RETRY_DELAY': 'int', 'CPA_SAVE_CALLBACK_RECEIPT': 'bool', 'SMS_PROVIDER': 'str', 'SMS_API_BASE': 'str', 'SMS_COUNTRY': 'str', 'SMS_SERVICE': 'str', 'SMS_MAX_PRICE': 'str', 'SMS_MAX_RETRIES': 'int', 'SMS_CODE_WAIT': 'int', 'SMS_API_KEY': 'str', 'SMS_CANCEL_DELAY': 'int', 'H_API_BASE': 'str', 'H_ADMIN_AUTH_CODE': 'str', 'H_PHONE_PREFIX': 'str', 'H_PHONE_ACQUIRE_MODE': 'str', 'L_API_BASE': 'str', 'L_ADMIN_AUTH_CODE': 'str', 'L_PHONE_PREFIX': 'str'})
+apply_env_overrides(globals(), {'ENABLE_CODEX_AUTO': 'bool', 'CODEX_OAUTH_DRIVER': 'str', 'CODEX_AUTH_URL_SOURCE': 'str', 'CPA_MANAGEMENT_URL': 'str', 'CPA_MANAGEMENT_KEY': 'str', 'CPA_REQUEST_TIMEOUT': 'int', 'CPA_CALLBACK_SUBMIT_RETRIES': 'int', 'CPA_CALLBACK_SUBMIT_RETRY_DELAY': 'int', 'CPA_SAVE_CALLBACK_RECEIPT': 'bool', 'SMS_PROVIDER': 'str', 'SMS_API_BASE': 'str', 'SMS_COUNTRY': 'str', 'SMS_PREFERRED_COUNTRIES': 'list_str_multiline', 'SMS_COUNTRY_FAILURE_SWITCH': 'int', 'SMS_SERVICE': 'str', 'SMS_MAX_PRICE': 'str', 'SMS_MAX_RETRIES': 'int', 'SMS_CODE_WAIT': 'int', 'SMS_API_KEY': 'str', 'SMS_CANCEL_DELAY': 'int', 'H_API_BASE': 'str', 'H_ADMIN_AUTH_CODE': 'str', 'H_PHONE_PREFIX': 'str', 'H_PHONE_ACQUIRE_MODE': 'str', 'L_API_BASE': 'str', 'L_ADMIN_AUTH_CODE': 'str', 'L_PHONE_PREFIX': 'str'})

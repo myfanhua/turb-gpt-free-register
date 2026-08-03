@@ -616,6 +616,14 @@ EDITABLE_FIELDS = [
         "label": "国家代码", "help": "传给接码平台的 country；GrizzlySMS 常用：美国=187；H 通道作为 H_API.md 的 country",
     },
     {
+        "key": "SMS_PREFERRED_COUNTRIES", "file": "codex.py", "type": "list_str_multiline", "group": "接码平台",
+        "label": "优选国家", "help": "每行一个 country；按最低价且有库存选择，留空时回退使用旧版 SMS_COUNTRY",
+    },
+    {
+        "key": "SMS_COUNTRY_FAILURE_SWITCH", "file": "codex.py", "type": "int", "group": "接码平台",
+        "label": "连续失败换国家", "help": "同一国家连续失败达到该次数后切换下一个，推荐 2",
+    },
+    {
         "key": "SMS_SERVICE", "file": "codex.py", "type": "str", "group": "接码平台",
         "label": "服务/项目代码", "help": "GrizzlySMS/L 作为 service；H 通道作为 H_API.md 的 projectId",
     },
