@@ -25,9 +25,25 @@ logger = logging.getLogger(__name__)
 # 登录页与邮箱入口就绪后立即释放，邮箱提交、验证码和资料填写仍由注册线程并发执行。
 _ROXY_STARTUP_LOCK = threading.Lock()
 
+_TRANSIENT_ROXY_STARTUP_MARKERS = (
+    "timed out receiving message from renderer",
+    "net::err_connection_closed",
+    "net::err_connection_reset",
+    "net::err_connection_timed_out",
+    "net::err_proxy_connection_failed",
+    "net::err_tunnel_connection_failed",
+)
+
 
 def _should_retry_otp_fetch(exc: Exception) -> bool:
     return not isinstance(exc, ICloudProviderUnavailableError)
+
+
+def _should_retry_roxy_startup(exc: BaseException) -> bool:
+    if not isinstance(exc, Exception) or type(exc).__name__ == "StopRequested":
+        return False
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in _TRANSIENT_ROXY_STARTUP_MARKERS)
 
 
 def _log_prefix(driver=None) -> str:
@@ -1561,32 +1577,53 @@ def _open_roxy_registration_browser(client: RoxyBrowserClient) -> tuple[RoxyOpen
     _check_manual_stop()
     logger.info("[Roxy] 等待启动门控：创建环境、打开窗口并加载登录页")
     with _ROXY_STARTUP_LOCK:
-        opened = None
-        driver = None
-        try:
-            _check_manual_stop()
-            logger.info("[Roxy] 已进入启动门控")
-            opened = client.open_profile()
-            driver = _build_driver(opened)
-            _center_browser_window(driver)
-            driver.set_page_load_timeout(int(_cfg.ROXY_SELENIUM_TIMEOUT))
-            logger.info("[Roxy注册] 开始启动浏览器，profile=%s", opened.profile_id)
-            logger.info("[Roxy注册] 打开登录页：https://chatgpt.com/auth/login")
-            driver.get("https://chatgpt.com/auth/login")
-            human_delay("navigate")
-            _maybe_accept(driver)
-            _wait_for_email_input_ready(driver, timeout=25)
-            logger.info("[Roxy注册] 登录页与邮箱输入框已就绪，释放启动门控")
-            return opened, driver
-        except BaseException:
-            if driver and not bool(_cfg.ROXY_KEEP_BROWSER_OPEN):
-                try:
-                    driver.quit()
-                except Exception:
-                    pass
-            if opened is not None and not bool(_cfg.ROXY_KEEP_BROWSER_OPEN):
-                client.cleanup_profile(opened)
-            raise
+        max_attempts = max(1, int(getattr(_cfg, "ROXY_STARTUP_MAX_ATTEMPTS", 2) or 2))
+        retry_delay = max(0.0, float(getattr(_cfg, "ROXY_STARTUP_RETRY_DELAY", 2) or 0))
+        for attempt in range(1, max_attempts + 1):
+            opened = None
+            driver = None
+            try:
+                _check_manual_stop()
+                logger.info("[Roxy] 已进入启动门控（%s/%s）", attempt, max_attempts)
+                opened = client.open_profile()
+                driver = _build_driver(opened)
+                _center_browser_window(driver)
+                driver.set_page_load_timeout(int(_cfg.ROXY_SELENIUM_TIMEOUT))
+                logger.info("[Roxy注册] 开始启动浏览器，profile=%s", opened.profile_id)
+                logger.info("[Roxy注册] 打开登录页：https://chatgpt.com/auth/login")
+                driver.get("https://chatgpt.com/auth/login")
+                human_delay("navigate")
+                _maybe_accept(driver)
+                _wait_for_email_input_ready(driver, timeout=25)
+                logger.info("[Roxy注册] 登录页与邮箱输入框已就绪，释放启动门控")
+                return opened, driver
+            except BaseException as exc:
+                if driver and not bool(_cfg.ROXY_KEEP_BROWSER_OPEN):
+                    try:
+                        driver.quit()
+                    except Exception:
+                        pass
+                if opened is not None and not bool(_cfg.ROXY_KEEP_BROWSER_OPEN):
+                    client.cleanup_profile(opened)
+                should_retry = (
+                    attempt < max_attempts
+                    and not bool(_cfg.ROXY_KEEP_BROWSER_OPEN)
+                    and _should_retry_roxy_startup(exc)
+                )
+                if not should_retry:
+                    raise
+                logger.warning(
+                    "[Roxy注册] 首页网络加载失败，已回收当前环境，将换新代理重试（%s/%s）：%s: %s",
+                    attempt + 1,
+                    max_attempts,
+                    type(exc).__name__,
+                    str(exc).splitlines()[0][:180],
+                )
+                if retry_delay:
+                    time.sleep(retry_delay)
+                _check_manual_stop()
+
+        raise RuntimeError("Roxy 启动重试已耗尽")
 
 
 def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = None, otp_code: str = None, batch_dir: Path | None = None) -> dict:

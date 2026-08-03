@@ -129,6 +129,62 @@ class RoxyStartupGateTests(unittest.TestCase):
         self.assertEqual(events.count("quit-aborted"), 1)
         self.assertEqual(events.count("cleanup-aborted"), 1)
 
+    def test_transient_login_navigation_failure_retries_with_fresh_profile(self):
+        class WebDriverException(Exception):
+            pass
+
+        events = []
+        opened_profiles = iter(("first", "second"))
+
+        class SequenceClient:
+            def open_profile(self):
+                profile_id = next(opened_profiles)
+                events.append(f"open-{profile_id}")
+                return RoxyOpenResult(profile_id=profile_id, raw={})
+
+            def cleanup_profile(self, opened):
+                events.append(f"cleanup-{opened.profile_id}")
+
+        class Driver:
+            def __init__(self, profile_id):
+                self.profile_id = profile_id
+
+            def set_page_load_timeout(self, seconds):
+                events.append(f"timeout-{self.profile_id}-{seconds}")
+
+            def get(self, _url):
+                events.append(f"get-{self.profile_id}")
+                if self.profile_id == "first":
+                    raise WebDriverException("unknown error: net::ERR_CONNECTION_CLOSED")
+
+            def quit(self):
+                events.append(f"quit-{self.profile_id}")
+
+        with patch.object(
+            roxy_registration,
+            "_build_driver",
+            side_effect=lambda opened: Driver(opened.profile_id),
+        ), patch.object(roxy_registration, "_center_browser_window"), patch.object(
+            roxy_registration, "human_delay"
+        ), patch.object(roxy_registration, "_maybe_accept"), patch.object(
+            roxy_registration, "_wait_for_email_input_ready", return_value=object()
+        ), patch.object(
+            roxy_registration._cfg, "ROXY_STARTUP_MAX_ATTEMPTS", 2, create=True
+        ), patch.object(
+            roxy_registration._cfg, "ROXY_STARTUP_RETRY_DELAY", 0, create=True
+        ), patch.object(
+            roxy_registration._cfg, "ROXY_KEEP_BROWSER_OPEN", False
+        ):
+            opened, driver = roxy_registration._open_roxy_registration_browser(SequenceClient())
+
+        self.assertEqual(opened.profile_id, "second")
+        self.assertEqual(driver.profile_id, "second")
+        self.assertEqual(events.count("open-first"), 1)
+        self.assertEqual(events.count("open-second"), 1)
+        self.assertEqual(events.count("quit-first"), 1)
+        self.assertEqual(events.count("cleanup-first"), 1)
+        self.assertNotIn("cleanup-second", events)
+
 
 if __name__ == "__main__":
     unittest.main()
