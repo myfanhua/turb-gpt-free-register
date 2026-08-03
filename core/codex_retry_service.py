@@ -171,7 +171,7 @@ def _is_actual_plus(plan_result: dict) -> bool:
     return "plus" in plan and "free" not in plan
 
 
-def _check_plus_gate(email: str) -> dict:
+def _check_plus_gate(email: str, *, plus_confirmed: bool = False) -> dict:
     from core import plan_check_service
 
     account = db.get_account_by_email(email)
@@ -194,6 +194,11 @@ def _check_plus_gate(email: str) -> dict:
     )
     if not plan_result.get("ok"):
         reason = str(plan_result.get("error") or "套餐查询失败")
+        if plus_confirmed is True:
+            return {
+                "ok": True,
+                "warning": f"套餐查询失败，按用户确认继续：{reason}",
+            }
         return {
             "ok": False,
             "status": "failed",
@@ -214,6 +219,7 @@ def _check_plus_gate(email: str) -> dict:
 def run_worker(
     email: str,
     *,
+    plus_confirmed: bool = False,
     batch_label: str | None = None,
     clear_log: bool = True,
     target_log_path: str | Path | None = None,
@@ -259,7 +265,7 @@ def run_worker(
             logger.warning("[Codex 补跑] 配置热加载失败，将继续使用当前内存配置：%s: %s", type(exc).__name__, exc)
 
         logger.info("[Codex 补跑] Plus 前置检验：开始实时查询当前套餐")
-        gate = _check_plus_gate(email)
+        gate = _check_plus_gate(email, plus_confirmed=plus_confirmed is True)
         if not gate.get("ok"):
             result = {
                 "status": gate.get("status") or "failed",
@@ -269,7 +275,10 @@ def run_worker(
             db.update_account_codex_status(email, result["status"], result["message"])
             logger.warning("[Codex 补跑] %s", result["message"])
             return result
-        logger.info("[Codex 补跑] Plus 前置检验通过：plan=%s", gate.get("plan_type") or "plus")
+        if gate.get("warning"):
+            logger.warning("[Codex 补跑] %s", gate["warning"])
+        else:
+            logger.info("[Codex 补跑] Plus 前置检验通过：plan=%s", gate.get("plan_type") or "plus")
 
         if batch_label:
             logger.info("[Codex 补跑] 批量任务：%s", batch_label)

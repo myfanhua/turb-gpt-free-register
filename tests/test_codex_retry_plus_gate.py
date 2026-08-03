@@ -24,7 +24,7 @@ class CodexRetryPlusGateTests(unittest.TestCase):
             codex_retry_service._RUNNING_THREADS.clear()
             codex_retry_service._RESERVED_AT.clear()
 
-    def _run_worker(self, email, account, plan_result):
+    def _run_worker(self, email, account, plan_result, *, plus_confirmed=False):
         self.assertTrue(codex_retry_service.reserve(email))
         with patch.object(
             codex_retry_service.db,
@@ -44,6 +44,7 @@ class CodexRetryPlusGateTests(unittest.TestCase):
         ):
             result = codex_retry_service.run_worker(
                 email,
+                plus_confirmed=plus_confirmed,
                 target_log_path=self.temp_dir / f"{email}.log",
             )
         return result, plan_check, oauth, update
@@ -122,6 +123,59 @@ class CodexRetryPlusGateTests(unittest.TestCase):
         oauth.assert_not_called()
         update.assert_called_once_with(email, "failed", result["message"])
         self.assertFalse(codex_retry_service.is_retrying(email))
+
+    def test_confirmed_plus_runs_oauth_when_live_plan_query_fails(self):
+        email = "confirmed-query-failed@example.com"
+        account = {"id": 10, "email": email, "access_token": "token"}
+        result, plan_check, oauth, update = self._run_worker(
+            email,
+            account,
+            {"ok": False, "error": "network down"},
+            plus_confirmed=True,
+        )
+
+        self.assertTrue(result["ok"])
+        plan_check.assert_called_once()
+        oauth.assert_called_once_with(email, force=True)
+        update.assert_called_once_with(email, "success", None)
+        log_text = (self.temp_dir / f"{email}.log").read_text(encoding="utf-8")
+        self.assertIn("套餐查询失败，按用户确认继续：network down", log_text)
+
+    def test_confirmed_plus_does_not_override_live_free_plan(self):
+        email = "confirmed-free@example.com"
+        account = {"id": 11, "email": email, "access_token": "token"}
+        result, plan_check, oauth, update = self._run_worker(
+            email,
+            account,
+            {"ok": True, "current_plan_type": "free"},
+            plus_confirmed=True,
+        )
+
+        self.assertEqual(result["status"], "skipped")
+        plan_check.assert_called_once()
+        oauth.assert_not_called()
+        update.assert_called_once_with(email, "skipped", result["message"])
+
+    def test_worker_strictly_booleanizes_plus_confirmation_for_gate(self):
+        email = "truthy-confirmation@example.com"
+        self.assertTrue(codex_retry_service.reserve(email))
+        with patch.object(
+            codex_retry_service,
+            "_check_plus_gate",
+            return_value={"ok": False, "status": "failed", "message": "blocked"},
+        ) as gate, patch.object(
+            codex_retry_service.db,
+            "update_account_codex_status",
+        ), patch(
+            "config.reload_all",
+        ):
+            codex_retry_service.run_worker(
+                email,
+                plus_confirmed=1,
+                target_log_path=self.temp_dir / f"{email}.log",
+            )
+
+        gate.assert_called_once_with(email, plus_confirmed=False)
 
     def test_missing_token_stops_before_plan_query_and_oauth_and_releases_reserve(self):
         email = "missing-token@example.com"

@@ -1856,9 +1856,20 @@ def create_app(auth_code: str | None = None) -> Flask:
     def _release_codex_retry(email: str) -> None:
         codex_retry_service.release(email)
 
-    def _run_codex_retry_worker(email: str, *, batch_label: str | None = None, clear_log: bool = True) -> None:
+    def _run_codex_retry_worker(
+        email: str,
+        *,
+        plus_confirmed: bool = False,
+        batch_label: str | None = None,
+        clear_log: bool = True,
+    ) -> None:
         """执行一个账号的 Codex 补跑。调用前必须已经 reserve。"""
-        codex_retry_service.run_worker(email, batch_label=batch_label, clear_log=clear_log)
+        codex_retry_service.run_worker(
+            email,
+            plus_confirmed=plus_confirmed,
+            batch_label=batch_label,
+            clear_log=clear_log,
+        )
 
 
     @app.post("/api/codex/stop")
@@ -1962,6 +1973,7 @@ def create_app(auth_code: str | None = None) -> Flask:
         """手动补跑某账号的 Codex 授权。Body {email}。"""
         data = request.get_json(silent=True) or {}
         email = (data.get("email") or "").strip()
+        plus_confirmed = data.get("plus_confirmed") is True
         if not email:
             return jsonify({"ok": False, "error": "email 为空"}), 400
         acc = db.get_account_by_email(email)
@@ -1975,7 +1987,7 @@ def create_app(auth_code: str | None = None) -> Flask:
         db.update_account_codex_status(email, "retrying", None)
         threading.Thread(
             target=_run_codex_retry_worker,
-            kwargs={"email": email, "clear_log": True},
+            kwargs={"email": email, "plus_confirmed": plus_confirmed, "clear_log": True},
             name=f"codex-retry-{email}",
             daemon=True,
         ).start()
@@ -1990,6 +2002,7 @@ def create_app(auth_code: str | None = None) -> Flask:
         data = request.get_json(silent=True) or {}
         ids = data.get("account_ids") or data.get("ids") or []
         workers = data.get("workers", 1)
+        plus_confirmed = data.get("plus_confirmed") is True
         if not isinstance(ids, list) or not ids:
             return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
         try:
@@ -2041,10 +2054,19 @@ def create_app(auth_code: str | None = None) -> Flask:
                 encoding="utf-8",
             )
 
-        def _bulk_runner(items: list[dict], max_workers: int, batch: str):
+        def _bulk_runner(items: list[dict], max_workers: int, batch: str, confirmed: bool):
             logger.info(f"[Codex 批量补跑] 启动 batch={batch} count={len(items)} workers={max_workers}")
             with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=f"codex-bulk-{batch}") as ex:
-                futures = [ex.submit(_run_codex_retry_worker, it["email"], batch_label=f"{batch} #{idx}/{len(items)}", clear_log=False) for idx, it in enumerate(items, 1)]
+                futures = [
+                    ex.submit(
+                        _run_codex_retry_worker,
+                        it["email"],
+                        plus_confirmed=confirmed,
+                        batch_label=f"{batch} #{idx}/{len(items)}",
+                        clear_log=False,
+                    )
+                    for idx, it in enumerate(items, 1)
+                ]
                 for fut in as_completed(futures):
                     try:
                         fut.result()
@@ -2054,7 +2076,7 @@ def create_app(auth_code: str | None = None) -> Flask:
 
         threading.Thread(
             target=_bulk_runner,
-            args=(selected, workers, batch_id),
+            args=(selected, workers, batch_id, plus_confirmed),
             name=f"codex-bulk-dispatch-{batch_id}",
             daemon=True,
         ).start()

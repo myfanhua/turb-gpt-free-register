@@ -1831,10 +1831,10 @@ $('#accountsBody').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-codex-retry]');
   if (!btn) return;
   const email = btn.dataset.codexRetry;
-  if (!confirm(`重新跑 Codex 授权？\n\n${email}\n\n补跑流程：\n  • 先实时确认当前已开通 Plus\n  • 确认 Plus 后才会消耗邮箱 OTP 和接码短信\n  • 非 Plus 或查询失败会直接停止\n\n补跑会在后台进行（~1-2 分钟），完成后状态自动更新。`)) return;
+  if (!confirm(`重新跑 Codex 授权？\n\n${email}\n\n点击确定表示：我确认账号当前已实际开通 Plus。\n  • 实时查到非 Plus 仍停止\n  • 查询失败按本次确认继续\n  • 继续后会消耗邮箱 OTP 和接码短信\n\n补跑会在后台进行（~1-2 分钟），完成后状态自动更新。`)) return;
   btn.disabled = true;
   try {
-    const r = await api('/api/codex/retry', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email}) });
+    const r = await api('/api/codex/retry', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, plus_confirmed:true}) });
     showToast(r.message || '已开始补跑');
     loadAccounts();
     openRetryLog(email);
@@ -2458,7 +2458,7 @@ async function retrySelectedCodex() {
 
 并发线程数：${workers}
 
-每个账号分别实时查询当前实际 Plus 状态，只有实际 Plus 才继续；确认 Plus 后才会消耗邮箱 OTP 和接码短信，非 Plus 或查询失败直接停止。`;
+点击确定表示：我确认这些账号当前均已实际开通 Plus；实时查到非 Plus 仍停止，查询失败按本次确认继续；继续后会消耗邮箱 OTP 和接码短信。`;
   if (retryingCount || deactivatedCount) msg += `
 
 其中：补跑中 ${retryingCount} 个、已废号 ${deactivatedCount} 个会自动跳过。`;
@@ -2469,7 +2469,7 @@ async function retrySelectedCodex() {
     const r = await api('/api/codex/retry-bulk', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({account_ids: ids, workers}),
+      body: JSON.stringify({account_ids: ids, workers, plus_confirmed:true}),
     });
     const skippedCount = (r.skipped || []).length;
     showToast(skippedCount ? `已开始 ${r.started_count || 0} 个，跳过 ${skippedCount} 个` : (r.message || '已开始批量补跑'));
