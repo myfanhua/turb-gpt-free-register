@@ -48,7 +48,7 @@ OUTLOOK_API_BASE = "https://mail.chatai.codes"
 
 ICLOUD_PICKUP_API_BASE = env_str(
     "ICLOUD_PICKUP_API_BASE",
-    "https://icloud.flysms.top/icloud/api/pickup",
+    "https://flysms.top/icloud/api/pickup",
 )
 ICLOUD_PICKUP_TIMEOUT = env_int("ICLOUD_PICKUP_TIMEOUT", 15)
 
@@ -56,7 +56,7 @@ ICLOUD_PICKUP_TIMEOUT = env_int("ICLOUD_PICKUP_TIMEOUT", 15)
 # Pickup Token 后，可使用浏览器「恢复 token」继续同步已导入邮箱。
 ICLOUD_PROFILE_API_BASE = env_str(
     "ICLOUD_PROFILE_API_BASE",
-    "https://icloud.flysms.top/icloud/api",
+    "https://flysms.top/icloud/api",
 )
 ICLOUD_PROFILE_TOKEN = env_str("ICLOUD_PROFILE_TOKEN", "")
 

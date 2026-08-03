@@ -93,7 +93,7 @@ class ICloudMailClientTests(unittest.TestCase):
         self.profile_token = getattr(client._email_cfg, "ICLOUD_PROFILE_TOKEN", "")
         self.profile_api_base = getattr(client._email_cfg, "ICLOUD_PROFILE_API_BASE", "")
         client._email_cfg.ICLOUD_PROFILE_TOKEN = ""
-        client._email_cfg.ICLOUD_PROFILE_API_BASE = "https://icloud.flysms.top/icloud/api"
+        client._email_cfg.ICLOUD_PROFILE_API_BASE = "https://flysms.top/icloud/api"
         client._reset_profile_sync_cache()
         client._CONTEXT_CACHE.clear()
         client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
@@ -226,7 +226,7 @@ class ICloudMailClientTests(unittest.TestCase):
         self.assertEqual(code, "654321")
         release.assert_not_called()
         post.assert_called_once_with(
-            "https://icloud.flysms.top/icloud/api/mail/sync",
+            "https://flysms.top/icloud/api/mail/sync",
             headers={
                 "Accept": "application/json",
                 "X-Profile-Token": "profile_secret_1234",
@@ -342,7 +342,7 @@ class ICloudMailClientTests(unittest.TestCase):
 
         self.assertEqual(code, "654321")
         get.assert_called_once_with(
-            "https://icloud.flysms.top/icloud/api/pickup/messages/latest",
+            "https://flysms.top/icloud/api/pickup/messages/latest",
             headers={
                 "Accept": "application/json",
                 "Authorization": "Bearer tok_one_1234",
@@ -567,7 +567,7 @@ class ICloudMailClientTests(unittest.TestCase):
         self.assertEqual(client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0), "654321")
         self.assertEqual(
             get.call_args.args[0],
-            "https://icloud.flysms.top/icloud/api/pickup/messages/latest",
+            "https://flysms.top/icloud/api/pickup/messages/latest",
         )
 
     @patch("core.icloud_mail_client.requests.get")

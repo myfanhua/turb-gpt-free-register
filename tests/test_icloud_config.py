@@ -12,12 +12,12 @@ class ICloudConfigTests(unittest.TestCase):
     def test_email_config_declares_pickup_defaults(self):
         self.assertEqual(
             email.ICLOUD_PICKUP_API_BASE,
-            "https://icloud.flysms.top/icloud/api/pickup",
+            "https://flysms.top/icloud/api/pickup",
         )
         self.assertEqual(email.ICLOUD_PICKUP_TIMEOUT, 15)
         self.assertEqual(
             email.ICLOUD_PROFILE_API_BASE,
-            "https://icloud.flysms.top/icloud/api",
+            "https://flysms.top/icloud/api",
         )
 
     def test_email_config_env_override_registry_contains_pickup_fields(self):
