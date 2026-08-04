@@ -1633,7 +1633,7 @@ function _registrationLocationCell(r) {
   const ip = String(r.registration_ip || '').trim();
   if (!country && !region && !ip) return '<span class="muted">-</span>';
   const primary = country || region;
-  const title = [country, region, ip].filter(Boolean).join(' / ');
+  const title = [country, region, ip].filter(Boolean).join(' · ');
   return `<div title="${esc(title)}">
     ${primary ? `<div class="main-cell">${esc(primary)}</div>` : '<div class="main-cell muted">-</div>'}
     ${ip ? `<div class="sub-cell mono">${esc(ip)}</div>` : ''}
