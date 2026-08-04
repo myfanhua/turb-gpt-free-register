@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import base64
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
@@ -85,6 +86,41 @@ def html_response(
       </div>
     </body></html>
     """
+    return item
+
+
+def html_index_response(*, mailbox="one@icloud.com", message_id="233315"):
+    item = Mock(status_code=200, headers={})
+    item.url = f"https://pickup.example/show/credential/{mailbox}?n=10"
+    item.text = f"""
+    <html><head><title>{mailbox} 全部邮件</title></head><body>
+      <div id="message-list">
+        <a class="item active" href="#mail-{message_id}" data-id="{message_id}">
+          <div class="subject">Your temporary ChatGPT verification code</div>
+          <div class="time">2026-07-31 11:10:00</div>
+        </a>
+      </div>
+      <script>
+        var detailBase='/message/';
+        var detailSuffix='/credential/{mailbox}';
+      </script>
+    </body></html>
+    """
+    return item
+
+
+def html_detail_response(*, code="654321"):
+    html = f"<html><body>Your verification code is <strong>{code}</strong></body></html>"
+    encoded = base64.b64encode(html.encode("utf-8")).decode("ascii")
+    item = Mock(status_code=200, headers={})
+    item.json.return_value = {
+        "fromAddress": "otp_at_tm1_openai_com@icloud.com",
+        "receivedAt": "2026-07-31 11:10:00",
+        "subject": "Your temporary ChatGPT verification code",
+        "body": f"data:text/html;charset=utf-8;base64,{encoded}",
+        "html": True,
+        "mailbox": "JUNK",
+    }
     return item
 
 
@@ -385,6 +421,26 @@ class ICloudMailClientTests(unittest.TestCase):
         self.assertEqual(get.call_args.kwargs["headers"]["Accept"], "text/html")
         self.assertNotIn("Authorization", get.call_args.kwargs["headers"])
         post.assert_not_called()
+
+    @patch("core.icloud_mail_client.requests.get")
+    def test_url_only_new_index_page_loads_message_detail_json(self, get):
+        get.side_effect = [html_index_response(), html_detail_response(code="778899")]
+        client._CONTEXT_CACHE["one@icloud.com"] = client.ICloudMailAccount(
+            email="one@icloud.com",
+            token="",
+            pickup_url="https://pickup.example/show/credential/one@icloud.com",
+            pickup_mode="independent_url",
+        )
+
+        code = client.fetch_latest_otp("one@icloud.com", AFTER_TS, 1, 1, 0)
+
+        self.assertEqual(code, "778899")
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(
+            get.call_args_list[1].args[0],
+            "https://pickup.example/message/233315/credential/one@icloud.com",
+        )
+        self.assertEqual(get.call_args_list[1].kwargs["headers"]["Accept"], "application/json")
 
     @patch("core.icloud_mail_client.time.sleep")
     @patch("core.icloud_mail_client.requests.get")

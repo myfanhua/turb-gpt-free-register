@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """iCloud Pickup API client with per-mailbox credential isolation."""
+import base64
 import logging
 import re
 import threading
@@ -7,7 +8,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import unquote_to_bytes, urljoin, urlparse, urlsplit
 
 import requests
 
@@ -49,6 +50,18 @@ _PROVIDER_UNAVAILABLE_ROUNDS = 2
 _HTML_PAGE_TIMEZONE = timezone(timedelta(hours=8))
 _URL_IN_TEXT_RE = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
 _QUERY_IN_TEXT_RE = re.compile(r"\?[^\s\"'<>]+")
+_INDEPENDENT_DETAIL_BASE_RE = re.compile(
+    r"\bdetailBase\s*=\s*(['\"])(?P<value>.*?)\1",
+    re.IGNORECASE | re.DOTALL,
+)
+_INDEPENDENT_DETAIL_SUFFIX_RE = re.compile(
+    r"\bdetailSuffix\s*=\s*(['\"])(?P<value>.*?)\1",
+    re.IGNORECASE | re.DOTALL,
+)
+_INDEPENDENT_MESSAGE_ID_RE = re.compile(
+    r"\bdata-id\s*=\s*['\"](?P<value>\d+)['\"]",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -398,25 +411,109 @@ def _profile_response_message(
     return fallback
 
 
+def _decode_independent_detail_body(value: object) -> str:
+    text = str(value or "")
+    if not text.lower().startswith("data:") or "," not in text:
+        return text
+    metadata, payload = text.split(",", 1)
+    try:
+        raw = (
+            base64.b64decode(payload)
+            if ";base64" in metadata.lower()
+            else unquote_to_bytes(payload)
+        )
+        return raw.decode("utf-8", errors="replace")
+    except Exception as exc:
+        raise ICloudMailError(
+            f"iCloud 独立取件详情正文解码失败: {type(exc).__name__}"
+        ) from exc
+
+
+def _independent_detail_cards(response, account: ICloudMailAccount) -> list[dict] | None:
+    html_text = str(getattr(response, "text", "") or "")
+    base_match = _INDEPENDENT_DETAIL_BASE_RE.search(html_text)
+    suffix_match = _INDEPENDENT_DETAIL_SUFFIX_RE.search(html_text)
+    if not base_match and not suffix_match:
+        return None
+    if not base_match or not suffix_match:
+        raise ICloudMailError("iCloud 独立取件页详情接口信息不完整")
+
+    target = str(account.email or "").strip().lower()
+    if target and target not in html_text.lower():
+        raise ICloudMailError(f"iCloud 独立取件页面邮箱不匹配: expected={target}")
+
+    message_ids = list(dict.fromkeys(
+        matched.group("value")
+        for matched in _INDEPENDENT_MESSAGE_ID_RE.finditer(html_text)
+    ))[:10]
+    if not message_ids:
+        return []
+
+    detail_base = base_match.group("value").replace(r"\/", "/")
+    detail_suffix = suffix_match.group("value").replace(r"\/", "/")
+    page_url = str(getattr(response, "url", "") or account.pickup_url)
+    page_origin = urlsplit(page_url)
+    timeout = max(1, int(getattr(_email_cfg, "ICLOUD_PICKUP_TIMEOUT", 15) or 15))
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (compatible; turb-gpt-register/1.0)",
+    }
+    cards: list[dict] = []
+    for message_id in message_ids:
+        detail_url = urljoin(page_url, f"{detail_base}{message_id}{detail_suffix}")
+        detail_origin = urlsplit(detail_url)
+        if (
+            detail_origin.scheme not in {"http", "https"}
+            or detail_origin.scheme.lower() != page_origin.scheme.lower()
+            or detail_origin.netloc.lower() != page_origin.netloc.lower()
+        ):
+            raise ICloudMailError("iCloud 独立取件详情接口跨域，已停止读取")
+        detail_response = requests.get(detail_url, headers=headers, timeout=timeout)
+        status = int(detail_response.status_code)
+        if status != 200:
+            raise ICloudMailError(f"iCloud 独立取件详情 HTTP {status}")
+        try:
+            payload = detail_response.json()
+        except Exception as exc:
+            raise ICloudMailError("iCloud 独立取件详情不是有效 JSON") from exc
+        if not isinstance(payload, dict):
+            raise ICloudMailError("iCloud 独立取件详情格式无效")
+        body = _decode_independent_detail_body(payload.get("body"))
+        is_html = bool(payload.get("html")) or body.lstrip().lower().startswith(("<!doctype html", "<html"))
+        cards.append({
+            "uid": f"html-{message_id}",
+            "to": account.email,
+            "date": payload.get("receivedAt") or payload.get("date") or "",
+            "from": payload.get("fromAddress") or payload.get("from") or "",
+            "subject": payload.get("subject") or "",
+            "body": "" if is_html else body,
+            "html": body if is_html else "",
+        })
+    return cards
+
+
 def _independent_response_message(
-    html_text: str,
-    target: str,
+    response,
+    account: ICloudMailAccount,
     after_ts: float | None,
 ) -> tuple[dict, float, str] | None:
-    try:
-        cards = parse_pickup_page(html_text, expected_email=target)
-    except ICloudPickupPageError as exc:
-        raise ICloudMailError(str(exc)) from exc
+    target = account.email
+    cards = _independent_detail_cards(response, account)
+    if cards is None:
+        try:
+            cards = parse_pickup_page(response.text, expected_email=target)
+        except ICloudPickupPageError as exc:
+            raise ICloudMailError(str(exc)) from exc
     candidates: list[tuple[dict, float, str]] = []
     for index, card in enumerate(cards):
         message = {
-            "uid": f"html-{index}",
+            "uid": card.get("uid") or f"html-{index}",
             "to": card.get("to") or target,
             "date": card.get("date") or "",
             "from": card.get("from") or "",
             "subject": card.get("subject") or "",
             "text": card.get("body") or "",
-            "html": "",
+            "html": card.get("html") or "",
         }
         try:
             candidates.append(
@@ -530,7 +627,7 @@ def fetch_latest_otp(
                     raise ICloudMailError(f"{source_name} HTTP {status}: email={account.email}")
                 else:
                     if source_kind == "html":
-                        result = _independent_response_message(response.text, account.email, after_ts)
+                        result = _independent_response_message(response, account, after_ts)
                     elif using_profile:
                         result = _profile_response_message(response.json(), account.email, after_ts)
                     else:
