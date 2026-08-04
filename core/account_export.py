@@ -20,6 +20,7 @@ import pyotp
 
 from core.session import BrowserSession
 from core.humanize import delay as human_delay
+from core.registration_location import lookup_registration_location
 
 logger = logging.getLogger(__name__)
 
@@ -404,6 +405,7 @@ def save_account_data(
     if codex_status == "failed":
         codex_error = codex.get("message")
 
+    registration_location = lookup_registration_location(proxy_used)
     row_id = insert_account(
         email=email,
         access_token=access_token,
@@ -418,6 +420,10 @@ def save_account_data(
         extra=extra,
         codex_status=codex_status,
         codex_error=codex_error,
+        registration_country_code=registration_location.get("country_code") or None,
+        registration_country=registration_location.get("country") or None,
+        registration_region=registration_location.get("region") or None,
+        registration_ip=registration_location.get("ip") or None,
     )
     batch_folder = _append_batch_archive(
         row_id=row_id,

@@ -730,6 +730,10 @@ def insert_account(
     extra: dict | None = None,
     codex_status: str | None = None,   # success / failed / skipped / missing
     codex_error: str | None = None,    # 失败原因（仅 codex_status=failed 时有意义）
+    registration_country_code: str | None = None,
+    registration_country: str | None = None,
+    registration_region: str | None = None,
+    registration_ip: str | None = None,
 ) -> int:
     """插入或更新注册成功账号，返回本地文件中的 id。"""
     with _LOCK:
@@ -768,6 +772,14 @@ def insert_account(
             "codex_error": codex_error if codex_error is not None else row.get("codex_error"),
             "updated_at": _now(),
         })
+        for field, value in (
+            ("registration_country_code", registration_country_code),
+            ("registration_country", registration_country),
+            ("registration_region", registration_region),
+            ("registration_ip", registration_ip),
+        ):
+            if value is not None:
+                row[field] = value
 
         if outlook_row:
             row["password"] = outlook_row.get("password")
