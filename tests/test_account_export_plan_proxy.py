@@ -105,6 +105,31 @@ class AccountExportPlanProxyTests(unittest.TestCase):
             proxy=None,
         )
 
+    def test_registration_location_falls_back_to_configured_proxy_country(self):
+        registration_proxy = "http://sid-account168:bridge@127.0.0.1:25001"
+        with patch("core.db.insert_account", return_value=168) as insert, \
+             patch("core.account_export._append_batch_archive", return_value="batch"), \
+             patch("core.account_export.lookup_registration_location", return_value={}), \
+             patch(
+                 "core.account_export.infer_registration_country_code",
+                 return_value="US",
+             ) as infer, \
+             patch(
+                 "core.plan_check_service.enqueue_account_plan_check",
+                 return_value={"accepted": True},
+             ):
+            save_account_data(
+                email="account168@example.com",
+                access_token="token-value",
+                proxy_used=registration_proxy,
+                extra={},
+            )
+
+        infer.assert_called_once_with(registration_proxy)
+        self.assertEqual(insert.call_args.kwargs["registration_country_code"], "US")
+        self.assertIsNone(insert.call_args.kwargs["registration_country"])
+        self.assertIsNone(insert.call_args.kwargs["registration_ip"])
+
 
 if __name__ == "__main__":
     unittest.main()

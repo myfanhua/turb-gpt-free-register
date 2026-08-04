@@ -54,3 +54,16 @@
 - [ ] Detect saved local bridge URLs from the configured bridge host, port, SID username, and `bridge` password.
 - [ ] Start or reuse the configured proxy-chain bridge and pass the prepared URL to both the initial query and registration recheck.
 - [ ] Run the focused tests and full suite before restarting the WebUI service.
+
+### Task 5: Preserve configured country when live location lookup fails
+
+**Files:**
+- Modify: `core/registration_location.py`
+- Modify: `core/account_export.py`
+- Modify: `tests/test_registration_location.py`
+- Modify: `tests/test_account_export_plan_proxy.py`
+
+- [ ] Add failing tests for `region-XX` extraction from direct proxies and saved local bridge proxies.
+- [ ] Infer the country code from the configured upstream template only when live lookup returned no country code.
+- [ ] Persist only the inferred country code; keep region and IP empty.
+- [ ] Backfill account 168 with country code `US` while preserving its missing historical IP.

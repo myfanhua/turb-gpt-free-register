@@ -1,10 +1,29 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from core.registration_location import lookup_registration_location
+from core.registration_location import infer_registration_country_code, lookup_registration_location
 
 
 class RegistrationLocationTests(unittest.TestCase):
+    def test_infers_country_code_from_direct_upstream_proxy(self):
+        self.assertEqual(
+            infer_registration_country_code(
+                "http://user-region-NL-sid-abc-t-10:pass@proxy.example:3000"
+            ),
+            "NL",
+        )
+
+    def test_infers_country_code_for_local_bridge_from_upstream_template(self):
+        local = "http://sid-abc123:bridge@127.0.0.1:25001"
+        with patch("config.proxy.PROXY_CHAIN_ENABLED", True), \
+             patch("config.proxy.PROXY_CHAIN_LISTEN_HOST", "127.0.0.1"), \
+             patch("config.proxy.PROXY_CHAIN_LISTEN_PORT", 25001), \
+             patch(
+                 "config.proxy.PROXY_CHAIN_UPSTREAM",
+                 "http://user-region-US-sid-{sid}-t-10:pass@proxy.example:3000",
+             ):
+            self.assertEqual(infer_registration_country_code(local), "US")
+
     def test_lookup_uses_exact_proxy_and_normalizes_fields(self):
         transport = Mock(return_value={
             "ip": "203.0.113.10",

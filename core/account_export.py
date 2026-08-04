@@ -20,7 +20,7 @@ import pyotp
 
 from core.session import BrowserSession
 from core.humanize import delay as human_delay
-from core.registration_location import lookup_registration_location
+from core.registration_location import infer_registration_country_code, lookup_registration_location
 
 logger = logging.getLogger(__name__)
 
@@ -406,6 +406,14 @@ def save_account_data(
         codex_error = codex.get("message")
 
     registration_location = lookup_registration_location(proxy_used)
+    if not registration_location.get("country_code"):
+        inferred_country_code = infer_registration_country_code(proxy_used)
+        if inferred_country_code:
+            registration_location["country_code"] = inferred_country_code
+            logger.info(
+                "[Save] 注册出口实时定位未返回国家，按代理配置记录国家代码：%s",
+                inferred_country_code,
+            )
     row_id = insert_account(
         email=email,
         access_token=access_token,
