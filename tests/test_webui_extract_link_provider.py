@@ -187,6 +187,31 @@ class WebUiExtractLinkProviderTests(unittest.TestCase):
         self.assertNotIn("extract_link_cdk", compact)
         self.assertNotIn("proxy_used", compact)
 
+    @patch("webui.app.db.list_accounts_page")
+    def test_paged_accounts_exposes_registration_location_without_proxy_credentials(self, list_accounts_page):
+        list_accounts_page.return_value = {
+            "items": [{
+                **eligible_account(1),
+                "registration_country_code": "US",
+                "registration_country": "United States",
+                "registration_region": "",
+                "registration_ip": "203.0.113.10",
+                "proxy_used": "http://user:password@proxy.example:8080",
+            }],
+            "total": 1,
+        }
+
+        response = self.client.get("/api/accounts?paged=1&page=1&page_size=20")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        account = payload["items"][0]
+        self.assertEqual(account["registration_country_code"], "US")
+        self.assertEqual(account["registration_country"], "United States")
+        self.assertEqual(account["registration_ip"], "203.0.113.10")
+        self.assertNotIn("registration_region", account)
+        self.assertNotIn("proxy_used", account)
+
 
 if __name__ == "__main__":
     unittest.main()
