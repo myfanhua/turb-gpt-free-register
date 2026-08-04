@@ -183,6 +183,8 @@ def _compact_account_for_list(row: dict) -> dict:
         "extract_link_image_url_svg", "extract_link_expires_at", "extract_link_provider",
         "extract_link_batch_id", "extract_link_batch_number", "extract_link_batch_total",
         "extract_link_result_index", "extract_link_cdk_remaining",
+        # 注册时的非敏感位置摘要。
+        "registration_country_code", "registration_country", "registration_region", "registration_ip",
         # Codex / Agent 状态提示。
         "codex_error", "codex_agent_message", "codex_agent_runtime_id",
         "codex_agent_sub2api_url", "codex_agent_sub2api_mode", "codex_agent_sub2api_total",

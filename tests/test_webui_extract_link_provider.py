@@ -167,6 +167,11 @@ class WebUiExtractLinkProviderTests(unittest.TestCase):
             "extract_link_result_index": 0,
             "extract_link_cdk_remaining": 9,
             "extract_link_cdk": "SECRET-CDK",
+            "registration_country_code": "US",
+            "registration_country": "United States",
+            "registration_region": "California",
+            "registration_ip": "203.0.113.10",
+            "proxy_used": "http://user:password@proxy.example:8080",
         }
 
         compact = _compact_account_for_list(row)
@@ -174,8 +179,13 @@ class WebUiExtractLinkProviderTests(unittest.TestCase):
         self.assertEqual(compact["extract_link_provider"], "kakao_batch")
         self.assertEqual(compact["extract_link_batch_number"], 1)
         self.assertEqual(compact["extract_link_batch_total"], 3)
+        self.assertEqual(compact["registration_country_code"], "US")
+        self.assertEqual(compact["registration_country"], "United States")
+        self.assertEqual(compact["registration_region"], "California")
+        self.assertEqual(compact["registration_ip"], "203.0.113.10")
         self.assertNotIn("access_token", compact)
         self.assertNotIn("extract_link_cdk", compact)
+        self.assertNotIn("proxy_used", compact)
 
 
 if __name__ == "__main__":
