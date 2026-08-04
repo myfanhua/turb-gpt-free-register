@@ -31,6 +31,10 @@ class PlanCheckSameProxyTests(unittest.TestCase):
                  "_registration_recheck_delay",
                  return_value=2.0,
              ), \
+             patch(
+                 "core.roxybrowser_client.prepare_proxy_for_roxy",
+                 return_value=proxy,
+             ) as prepare, \
              patch.object(plan_check_service.time, "sleep") as sleep, \
              patch.object(
                  plan_check_service,
@@ -47,6 +51,7 @@ class PlanCheckSameProxyTests(unittest.TestCase):
             )
 
         self.assertEqual(result, second)
+        prepare.assert_called_once_with(proxy)
         self.assertEqual(
             check.call_args_list,
             [

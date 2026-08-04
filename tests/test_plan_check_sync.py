@@ -6,6 +6,31 @@ from core import plan_check_service
 
 
 class PlanCheckSyncTests(unittest.TestCase):
+    def test_check_account_plan_now_starts_saved_local_proxy_bridge(self):
+        proxy = "http://sid-account168:bridge@127.0.0.1:25001"
+        result = {
+            "ok": True,
+            "current_plan_type": "free",
+            "checked_at": "2026-08-04T12:00:00",
+        }
+        with patch.object(plan_check_service.proxy_cfg, "PROXY_CHAIN_ENABLED", True), \
+             patch.object(plan_check_service.proxy_cfg, "PROXY_CHAIN_LISTEN_HOST", "127.0.0.1"), \
+             patch.object(plan_check_service.proxy_cfg, "PROXY_CHAIN_LISTEN_PORT", 25001), \
+             patch("core.roxybrowser_client.prepare_proxy_for_roxy", return_value=proxy) as prepare, \
+             patch.object(plan_check_service, "_wait_for_rate_slot"), \
+             patch.object(plan_check_service, "check_account_plan", return_value=result) as check, \
+             patch.object(plan_check_service.db, "update_account_plan_check"):
+            actual = plan_check_service.check_account_plan_now(
+                account_id=168,
+                email="account168@example.com",
+                access_token="token-value",
+                proxy=proxy,
+            )
+
+        self.assertEqual(actual, result)
+        prepare.assert_called_once_with(proxy)
+        check.assert_called_once_with("token-value", proxy=proxy, timezone_offset_min="-")
+
     def test_check_account_plan_now_uses_rate_limit_and_persists_result(self):
         result = {
             "ok": True,

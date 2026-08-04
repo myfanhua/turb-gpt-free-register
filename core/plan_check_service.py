@@ -8,6 +8,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from urllib.parse import unquote, urlparse
 
 from config import proxy as proxy_cfg
 from core import db
@@ -58,6 +59,31 @@ def _registration_recheck_delay() -> float:
     return _float_setting("PLAN_CHECK_REGISTRATION_RECHECK_DELAY", 2.0, 0.0, 30.0)
 
 
+def _prepare_proxy_for_plan_check(proxy: str | None) -> str | None:
+    """Ensure a persisted local proxy-chain URL has a live bridge server."""
+    selected = str(proxy or "").strip()
+    if not selected or not bool(getattr(proxy_cfg, "PROXY_CHAIN_ENABLED", False)):
+        return selected or None
+
+    parsed = urlparse(selected)
+    username = unquote(parsed.username or "")
+    password = unquote(parsed.password or "")
+    bridge_host = str(getattr(proxy_cfg, "PROXY_CHAIN_LISTEN_HOST", "127.0.0.1") or "127.0.0.1")
+    bridge_port = int(getattr(proxy_cfg, "PROXY_CHAIN_LISTEN_PORT", 25001) or 25001)
+    is_saved_bridge = (
+        parsed.hostname == bridge_host
+        and parsed.port == bridge_port
+        and username.startswith("sid-")
+        and password == "bridge"
+    )
+    if not is_saved_bridge:
+        return selected
+
+    from core.roxybrowser_client import prepare_proxy_for_roxy
+
+    return prepare_proxy_for_roxy(selected)
+
+
 def check_account_plan_now(
     *,
     account_id: int,
@@ -69,10 +95,11 @@ def check_account_plan_now(
 ) -> dict:
     """同步查询当前套餐，并与后台查询共享请求限速节奏。"""
     try:
+        selected_proxy = _prepare_proxy_for_plan_check(proxy)
         _wait_for_rate_slot()
         result = check_account_plan(
             access_token,
-            proxy=proxy,
+            proxy=selected_proxy,
             timezone_offset_min=timezone_offset_min,
         )
     except Exception as exc:
@@ -117,10 +144,11 @@ def _run_plan_check(
         if not db.mark_account_plan_check_running(account_id):
             return {"ok": False, "error": "账号已删除或套餐查询状态已被重置"}
 
+        selected_proxy = _prepare_proxy_for_plan_check(proxy)
         _wait_for_rate_slot()
         result = check_account_plan(
             access_token,
-            proxy=proxy,
+            proxy=selected_proxy,
             timezone_offset_min=timezone_offset_min,
         )
 
@@ -138,7 +166,7 @@ def _run_plan_check(
             _wait_for_rate_slot()
             recheck_result = check_account_plan(
                 access_token,
-                proxy=proxy,
+                proxy=selected_proxy,
                 timezone_offset_min=timezone_offset_min,
                 max_attempts=1,
             )

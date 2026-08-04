@@ -42,3 +42,15 @@
 - [ ] Run the complete pytest suite.
 - [ ] Run `git diff --check` and inspect `git status --short` so runtime logs remain untracked and uncommitted.
 - [ ] Commit only the design, plan, tests, and implementation files on `codex/hero-sms-provider`.
+
+### Task 4: Restore persisted local bridges after service restart
+
+**Files:**
+- Modify: `core/plan_check_service.py`
+- Modify: `tests/test_plan_check_sync.py`
+- Modify: `tests/test_plan_check_same_proxy.py`
+
+- [ ] Add failing synchronous and background-query tests requiring a saved `sid-*:bridge@127.0.0.1:25001` proxy to call `prepare_proxy_for_roxy` before the request.
+- [ ] Detect saved local bridge URLs from the configured bridge host, port, SID username, and `bridge` password.
+- [ ] Start or reuse the configured proxy-chain bridge and pass the prepared URL to both the initial query and registration recheck.
+- [ ] Run the focused tests and full suite before restarting the WebUI service.
