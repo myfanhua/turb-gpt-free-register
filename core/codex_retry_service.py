@@ -191,6 +191,7 @@ def _check_plus_gate(email: str, *, plus_confirmed: bool = False) -> dict:
         email=email,
         access_token=access_token,
         trigger="codex_retry_gate",
+        proxy=account.get("proxy_used") or None,
     )
     if not plan_result.get("ok"):
         reason = str(plan_result.get("error") or "套餐查询失败")

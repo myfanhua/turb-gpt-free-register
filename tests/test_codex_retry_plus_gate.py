@@ -70,7 +70,12 @@ class CodexRetryPlusGateTests(unittest.TestCase):
         for index, plan in enumerate(("plus", "chatgpt_plus"), start=1):
             with self.subTest(plan=plan):
                 email = f"plus-{index}@example.com"
-                account = {"id": index, "email": email, "access_token": "token-value"}
+                account = {
+                    "id": index,
+                    "email": email,
+                    "access_token": "token-value",
+                    "proxy_used": f"http://sid-{index}:bridge@127.0.0.1:25001",
+                }
                 result, plan_check, oauth, update = self._run_worker(
                     email,
                     account,
@@ -83,6 +88,7 @@ class CodexRetryPlusGateTests(unittest.TestCase):
                     email=email,
                     access_token="token-value",
                     trigger="codex_retry_gate",
+                    proxy=f"http://sid-{index}:bridge@127.0.0.1:25001",
                 )
                 oauth.assert_called_once_with(email, force=True)
                 update.assert_called_once_with(email, "success", None)

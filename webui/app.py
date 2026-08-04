@@ -603,12 +603,13 @@ def create_app(auth_code: str | None = None) -> Flask:
         if not token:
             return jsonify({"ok": False, "error": "该账号没有 access_token"}), 400
         account_id = int(acc.get("id"))
+        proxy = data.get("proxy") if "proxy" in data else (acc.get("proxy_used") or None)
         queued = plan_check_service.enqueue_account_plan_check(
             account_id=account_id,
             email=acc.get("email") or "",
             access_token=token,
             trigger="manual",
-            proxy=data.get("proxy") if "proxy" in data else None,
+            proxy=proxy,
             timezone_offset_min=str(data.get("timezone_offset_min") or "-"),
         )
         if queued.get("busy"):
@@ -626,8 +627,9 @@ def create_app(auth_code: str | None = None) -> Flask:
             return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
         if len(ids) > 500:
             return jsonify({"ok": False, "error": "单次最多查询 500 个账号"}), 400
-        # 与单账号查询保持一致：未传时使用独立网络策略。
-        proxy = data.get("proxy") if "proxy" in data else None
+        # 显式传入 proxy 时覆盖；否则每个账号分别复用注册时的代理出口。
+        has_proxy_override = "proxy" in data
+        proxy_override = data.get("proxy") if has_proxy_override else None
         timezone_offset_min = str(data.get("timezone_offset_min") or "-")
 
         items = []
@@ -660,7 +662,7 @@ def create_app(auth_code: str | None = None) -> Flask:
                 email=acc.get("email") or "",
                 access_token=acc.get("access_token") or "",
                 trigger="manual_bulk",
-                proxy=proxy,
+                proxy=proxy_override if has_proxy_override else (acc.get("proxy_used") or None),
                 timezone_offset_min=timezone_offset_min,
             )
             item = {"id": acc.get("id"), "email": acc.get("email"), **queued}
