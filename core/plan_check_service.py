@@ -91,6 +91,7 @@ def check_account_plan_now(
     access_token: str,
     trigger: str = "codex_retry_gate",
     proxy: str | None = None,
+    device_id: str | None = None,
     timezone_offset_min: str = "-",
 ) -> dict:
     """同步查询当前套餐，并与后台查询共享请求限速节奏。"""
@@ -101,6 +102,7 @@ def check_account_plan_now(
             access_token,
             proxy=selected_proxy,
             timezone_offset_min=timezone_offset_min,
+            device_id=device_id,
         )
     except Exception as exc:
         result = {
@@ -138,6 +140,7 @@ def _run_plan_check(
     access_token: str,
     trigger: str,
     proxy: str | None,
+    device_id: str | None,
     timezone_offset_min: str,
 ) -> dict:
     try:
@@ -150,6 +153,7 @@ def _run_plan_check(
             access_token,
             proxy=selected_proxy,
             timezone_offset_min=timezone_offset_min,
+            device_id=device_id,
         )
 
         recheck_delay = _registration_recheck_delay()
@@ -168,6 +172,7 @@ def _run_plan_check(
                 access_token,
                 proxy=selected_proxy,
                 timezone_offset_min=timezone_offset_min,
+                device_id=device_id,
                 max_attempts=1,
             )
             if recheck_result.get("ok"):
@@ -219,6 +224,7 @@ def enqueue_account_plan_check(
     access_token: str,
     trigger: str,
     proxy: str | None = None,
+    device_id: str | None = None,
     timezone_offset_min: str = "-",
 ) -> dict:
     """把查询放入统一线程池；重复查询或队列满时不提交。"""
@@ -227,6 +233,14 @@ def enqueue_account_plan_check(
     access_token = str(access_token or "").strip()
     if not access_token:
         return {"accepted": False, "busy": False, "error": "账号缺少 access_token"}
+    device_id = str(device_id or "").strip()
+    if not device_id:
+        return {
+            "accepted": False,
+            "busy": False,
+            "missing_device_context": True,
+            "error": "账号缺少注册 device_id，为保护 Access Token 已停止查询",
+        }
     if not _QUEUE_SLOTS.acquire(blocking=False):
         return {"accepted": False, "busy": False, "queue_full": True, "error": "套餐查询队列已满，请稍后重试"}
 
@@ -242,6 +256,7 @@ def enqueue_account_plan_check(
             access_token=access_token,
             trigger=str(trigger or "manual"),
             proxy=proxy,
+            device_id=device_id,
             timezone_offset_min=str(timezone_offset_min or "-"),
         )
     except Exception as exc:

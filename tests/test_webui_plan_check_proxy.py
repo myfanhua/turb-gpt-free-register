@@ -25,6 +25,7 @@ class WebUiPlanCheckProxyTests(unittest.TestCase):
             "email": email,
             "access_token": f"token-{account_id}",
             "proxy_used": proxy,
+            "device_id": f"device-{account_id}",
         }
 
     def test_single_check_defaults_to_account_registration_proxy(self):
@@ -43,6 +44,7 @@ class WebUiPlanCheckProxyTests(unittest.TestCase):
             trigger="manual",
             proxy="http://sid-7:bridge@127.0.0.1:25001",
             timezone_offset_min="-",
+            device_id="device-7",
         )
 
     def test_single_check_explicit_proxy_overrides_account_proxy(self):
@@ -80,6 +82,7 @@ class WebUiPlanCheckProxyTests(unittest.TestCase):
                 trigger="manual_bulk",
                 proxy="http://sid-11:bridge@127.0.0.1:25001",
                 timezone_offset_min="-",
+                device_id="device-11",
             ),
             call(
                 account_id=12,
@@ -88,6 +91,7 @@ class WebUiPlanCheckProxyTests(unittest.TestCase):
                 trigger="manual_bulk",
                 proxy="http://sid-12:bridge@127.0.0.1:25001",
                 timezone_offset_min="-",
+                device_id="device-12",
             ),
         ])
 
@@ -110,6 +114,18 @@ class WebUiPlanCheckProxyTests(unittest.TestCase):
             [item.kwargs["proxy"] for item in enqueue.call_args_list],
             ["http://explicit-proxy", "http://explicit-proxy"],
         )
+
+    def test_single_check_stops_when_account_has_no_saved_device_id(self):
+        account = self._account(18, "missing-device@example.com", "http://stored-proxy")
+        account["device_id"] = None
+        with patch("webui.app.db.get_account", return_value=account), patch(
+            "webui.app.plan_check_service.enqueue_account_plan_check"
+        ) as enqueue:
+            response = self.client.post("/api/accounts/check-plan", json={"account_id": 18})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("device_id", response.get_json()["error"])
+        enqueue.assert_not_called()
 
 
 if __name__ == "__main__":

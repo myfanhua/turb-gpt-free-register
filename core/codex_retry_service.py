@@ -185,6 +185,13 @@ def _check_plus_gate(email: str, *, plus_confirmed: bool = False) -> dict:
             "status": "failed",
             "message": "Plus 前置检验失败：账号缺少 access_token",
         }
+    device_id = str(account.get("device_id") or "").strip()
+    if not device_id:
+        return {
+            "ok": False,
+            "status": "failed",
+            "message": "Plus 前置检验失败：账号缺少注册 device_id",
+        }
 
     plan_result = plan_check_service.check_account_plan_now(
         account_id=int(account.get("id") or 0),
@@ -192,6 +199,7 @@ def _check_plus_gate(email: str, *, plus_confirmed: bool = False) -> dict:
         access_token=access_token,
         trigger="codex_retry_gate",
         proxy=account.get("proxy_used") or None,
+        device_id=device_id,
     )
     if not plan_result.get("ok"):
         reason = str(plan_result.get("error") or "套餐查询失败")

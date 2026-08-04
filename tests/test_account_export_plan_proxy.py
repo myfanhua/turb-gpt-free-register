@@ -13,6 +13,7 @@ class AccountExportPlanProxyTests(unittest.TestCase):
             "region": "California",
             "ip": "203.0.113.10",
         }
+        device_id = "11111111-2222-4333-8444-555555555555"
         with patch("core.db.insert_account", return_value=42) as insert, \
              patch("core.account_export._append_batch_archive", return_value="batch"), \
              patch(
@@ -27,7 +28,7 @@ class AccountExportPlanProxyTests(unittest.TestCase):
                 email="user@example.com",
                 access_token="token-value",
                 proxy_used=registration_proxy,
-                extra={"account": {"planType": "free"}},
+                extra={"account": {"planType": "free"}, "device_id": device_id},
             )
 
         self.assertEqual(row_id, 42)
@@ -40,10 +41,10 @@ class AccountExportPlanProxyTests(unittest.TestCase):
             user_name=None,
             plan_type="free",
             expires_at=None,
-            device_id=None,
+            device_id=device_id,
             proxy_used=registration_proxy,
             email_source=None,
-            extra={"account": {"planType": "free"}},
+            extra={"account": {"planType": "free"}, "device_id": device_id},
             codex_status=None,
             codex_error=None,
             registration_country_code="US",
@@ -57,6 +58,7 @@ class AccountExportPlanProxyTests(unittest.TestCase):
             access_token="token-value",
             trigger="registration_auto",
             proxy=registration_proxy,
+            device_id=device_id,
         )
 
     def test_registration_auto_keeps_default_route_when_proxy_missing(self):
@@ -97,13 +99,7 @@ class AccountExportPlanProxyTests(unittest.TestCase):
             registration_region=None,
             registration_ip=None,
         )
-        enqueue.assert_called_once_with(
-            account_id=43,
-            email="direct@example.com",
-            access_token="token-value",
-            trigger="registration_auto",
-            proxy=None,
-        )
+        enqueue.assert_not_called()
 
     def test_registration_location_falls_back_to_configured_proxy_country(self):
         registration_proxy = "http://sid-account168:bridge@127.0.0.1:25001"

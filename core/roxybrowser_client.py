@@ -30,6 +30,7 @@ class RoxyOpenResult:
     ws_endpoint: str | None = None
     created_by_run: bool = False
     registration_proxy: str | None = None
+    account_device_id: str | None = None
 
 
 def _strip_slashes(value: str) -> str:
@@ -47,6 +48,32 @@ def _mask_proxy(proxy_url: str) -> str:
         port = f":{parsed.port}" if parsed.port else ""
         return f"{parsed.scheme}://***:***@{host}{port}"
     return str(proxy_url or "").strip()
+
+
+def install_account_device_id(driver, device_id: str) -> str:
+    """Install one account-scoped oai-did before any OpenAI navigation."""
+    value = str(device_id or "").strip()
+    if not value:
+        raise ValueError("device_id 为空")
+    driver.execute_cdp_cmd("Network.enable", {})
+    for url in (
+        "https://chatgpt.com/",
+        "https://auth.openai.com/",
+        "https://sentinel.openai.com/",
+    ):
+        result = driver.execute_cdp_cmd("Network.setCookie", {
+            "name": "oai-did",
+            "value": value,
+            "url": url,
+            "path": "/",
+            "secure": True,
+            "httpOnly": False,
+            "sameSite": "Lax",
+        })
+        if isinstance(result, dict) and result.get("success") is False:
+            raise RuntimeError(f"Roxy 写入账号 device_id 失败: {url}")
+    setattr(driver, "_account_device_id", value)
+    return value
 
 
 def prepare_proxy_for_roxy(proxy_url: str) -> str:

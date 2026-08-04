@@ -7,6 +7,7 @@ from core import plan_check_service
 class PlanCheckSameProxyTests(unittest.TestCase):
     def test_registration_recheck_reuses_explicit_proxy(self):
         proxy = "http://sid-abc123:bridge@127.0.0.1:25001"
+        device_id = "11111111-2222-4333-8444-555555555555"
         first = {
             "ok": True,
             "current_plan_type": "free",
@@ -48,6 +49,7 @@ class PlanCheckSameProxyTests(unittest.TestCase):
                 trigger="registration_auto",
                 proxy=proxy,
                 timezone_offset_min="-",
+                device_id=device_id,
             )
 
         self.assertEqual(result, second)
@@ -55,11 +57,17 @@ class PlanCheckSameProxyTests(unittest.TestCase):
         self.assertEqual(
             check.call_args_list,
             [
-                call("token-value", proxy=proxy, timezone_offset_min="-"),
                 call(
                     "token-value",
                     proxy=proxy,
                     timezone_offset_min="-",
+                    device_id=device_id,
+                ),
+                call(
+                    "token-value",
+                    proxy=proxy,
+                    timezone_offset_min="-",
+                    device_id=device_id,
                     max_attempts=1,
                 ),
             ],

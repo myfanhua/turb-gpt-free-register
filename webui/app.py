@@ -602,6 +602,12 @@ def create_app(auth_code: str | None = None) -> Flask:
         token = (acc.get("access_token") or "").strip()
         if not token:
             return jsonify({"ok": False, "error": "该账号没有 access_token"}), 400
+        device_id = str(acc.get("device_id") or "").strip()
+        if not device_id:
+            return jsonify({
+                "ok": False,
+                "error": "账号缺少注册 device_id，为保护 Access Token 已停止查询",
+            }), 409
         account_id = int(acc.get("id"))
         proxy = data.get("proxy") if "proxy" in data else (acc.get("proxy_used") or None)
         queued = plan_check_service.enqueue_account_plan_check(
@@ -610,6 +616,7 @@ def create_app(auth_code: str | None = None) -> Flask:
             access_token=token,
             trigger="manual",
             proxy=proxy,
+            device_id=device_id,
             timezone_offset_min=str(data.get("timezone_offset_min") or "-"),
         )
         if queued.get("busy"):
@@ -651,6 +658,13 @@ def create_app(auth_code: str | None = None) -> Flask:
             if not (acc.get("access_token") or "").strip():
                 skipped.append({"id": acc_id, "email": acc.get("email"), "reason": "缺少 access_token"})
                 continue
+            if not str(acc.get("device_id") or "").strip():
+                skipped.append({
+                    "id": acc_id,
+                    "email": acc.get("email"),
+                    "reason": "缺少注册 device_id，为保护 Access Token 已停止查询",
+                })
+                continue
             items.append(acc)
 
         started = []
@@ -663,6 +677,7 @@ def create_app(auth_code: str | None = None) -> Flask:
                 access_token=acc.get("access_token") or "",
                 trigger="manual_bulk",
                 proxy=proxy_override if has_proxy_override else (acc.get("proxy_used") or None),
+                device_id=str(acc.get("device_id") or "").strip(),
                 timezone_offset_min=timezone_offset_min,
             )
             item = {"id": acc.get("id"), "email": acc.get("email"), **queued}

@@ -310,6 +310,7 @@ def check_account_plan(
     token: str,
     *,
     proxy: Optional[str] = None,
+    device_id: str | None = None,
     timezone_offset_min: str = "-",
     timeout: float | None = None,
     max_attempts: int | None = None,
@@ -359,7 +360,11 @@ def check_account_plan(
         resp = None
         try:
             # 套餐查询只需要稳定的请求头，不需要额外访问 IP 地理信息接口。
-            env = BrowserSession(proxy=route["proxy"], detect_exit_geo=False)
+            env = BrowserSession(
+                proxy=route["proxy"],
+                detect_exit_geo=False,
+                device_id=device_id,
+            )
             resp = env.session.get(
                 url,
                 headers=_common_headers(env, token),

@@ -25,6 +25,9 @@ class CodexRetryPlusGateTests(unittest.TestCase):
             codex_retry_service._RESERVED_AT.clear()
 
     def _run_worker(self, email, account, plan_result, *, plus_confirmed=False):
+        if account is not None:
+            account = dict(account)
+            account.setdefault("device_id", "device-test")
         self.assertTrue(codex_retry_service.reserve(email))
         with patch.object(
             codex_retry_service.db,
@@ -89,6 +92,7 @@ class CodexRetryPlusGateTests(unittest.TestCase):
                     access_token="token-value",
                     trigger="codex_retry_gate",
                     proxy=f"http://sid-{index}:bridge@127.0.0.1:25001",
+                    device_id="device-test",
                 )
                 oauth.assert_called_once_with(email, force=True)
                 update.assert_called_once_with(email, "success", None)
@@ -206,6 +210,24 @@ class CodexRetryPlusGateTests(unittest.TestCase):
             "status": "failed",
             "message": "Plus 前置检验失败：账号不存在",
         })
+        plan_check.assert_not_called()
+
+    def test_missing_device_context_stops_before_plan_query(self):
+        account = {
+            "id": 19,
+            "email": "missing-device@example.com",
+            "access_token": "token-value",
+            "device_id": None,
+        }
+        with patch.object(
+            codex_retry_service.db,
+            "get_account_by_email",
+            return_value=account,
+        ), patch("core.plan_check_service.check_account_plan_now") as plan_check:
+            result = codex_retry_service._check_plus_gate(account["email"])
+
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("device_id", result["message"])
         plan_check.assert_not_called()
 
 

@@ -9,12 +9,13 @@ from contextvars import ContextVar
 from urllib.parse import urlparse
 
 from config import roxybrowser as _roxy_cfg
+from core import db
 from core.email_provider import wait_for_otp
 from core.humanize import delay as human_delay
 from core import sms_provider
 from core.sms_country_router import PreferredCountrySelector
 from core.openai_auth import AccountUnusableError, detect_account_unusable_response_body
-from core.roxybrowser_client import RoxyBrowserClient
+from core.roxybrowser_client import RoxyBrowserClient, install_account_device_id
 from core.roxy_registration import (
     _build_driver,
     _center_browser_window,
@@ -62,6 +63,17 @@ def _resolve_token_exchange_proxy(opened, explicit_proxy: str | None) -> str | N
         return registration_proxy
     fallback = str(explicit_proxy or "").strip()
     return fallback or None
+
+
+def _resolve_account_device_id(email: str, explicit_device_id: str | None = None) -> str:
+    value = str(explicit_device_id or "").strip()
+    if value:
+        return value
+    account = db.get_account_by_email(email)
+    value = str((account or {}).get("device_id") or "").strip()
+    if not value:
+        raise RuntimeError("账号缺少注册 device_id，已停止 Roxy 操作")
+    return value
 
 
 def _preflight_token_exchange_transport(session, token_url: str) -> int:
@@ -1446,6 +1458,17 @@ def clear_roxy_browser_auth_state(driver) -> None:
     time.sleep(1.0)
     logger.info("[Codex][Browser] 注册窗口登录态清理完成，准备开始 Codex 授权")
 
+
+def _prepare_account_device_context(
+    driver,
+    device_id: str,
+    *,
+    clear_existing_state: bool,
+) -> str:
+    if clear_existing_state:
+        clear_roxy_browser_auth_state(driver)
+    return install_account_device_id(driver, device_id)
+
 def _run_roxy_codex_oauth_once(
     email: str,
     otp_provider=None,
@@ -1455,6 +1478,7 @@ def _run_roxy_codex_oauth_once(
     existing_opened=None,
     reuse_existing_profile: bool = False,
     clear_existing_state: bool = True,
+    device_id: str | None = None,
 ) -> dict:
     """指纹浏览器 Codex OAuth 入口。
 
@@ -1469,6 +1493,8 @@ def _run_roxy_codex_oauth_once(
         return proto._codex_result(status="skipped", message="email 为空")
     if otp_provider is None:
         otp_provider = wait_for_otp
+
+    account_device_id = _resolve_account_device_id(email, device_id)
 
     client = None if reuse_existing_profile else RoxyBrowserClient()
     opened = existing_opened if reuse_existing_profile else client.open_profile()
@@ -1499,7 +1525,11 @@ def _run_roxy_codex_oauth_once(
 
         if auth_source == "local":
             token_proxy = _resolve_token_exchange_proxy(opened, proxy)
-            token_session = proto.BrowserSession(proxy=token_proxy, detect_exit_geo=False)
+            token_session = proto.BrowserSession(
+                proxy=token_proxy,
+                detect_exit_geo=False,
+                device_id=account_device_id,
+            )
             proxy_source = "Roxy 环境代理" if getattr(opened, "registration_proxy", None) else ("显式代理" if proxy else "代理池")
             logger.info("[Codex][Browser] Token 交换将复用%s，先执行免费网络预检", proxy_source)
             _preflight_token_exchange_transport(token_session, proto._cfg.CODEX_TOKEN_URL)
@@ -1509,8 +1539,11 @@ def _run_roxy_codex_oauth_once(
             _center_browser_window(driver)
         driver.set_page_load_timeout(int(_roxy_cfg.ROXY_SELENIUM_TIMEOUT))
         logger.info("[Codex][Browser] 开始授权：%s，profile=%s，reuse_existing_profile=%s", email, opened.profile_id, reuse_existing_profile)
-        if reuse_existing_profile and clear_existing_state:
-            clear_roxy_browser_auth_state(driver)
+        _prepare_account_device_context(
+            driver,
+            account_device_id,
+            clear_existing_state=bool(reuse_existing_profile and clear_existing_state),
+        )
 
         _fill_email_and_otp(driver, email, otp_provider, auth_url)
         human_delay("api")
@@ -1568,6 +1601,7 @@ def _run_roxy_codex_oauth_once(
         session = token_session or proto.BrowserSession(
             proxy=_resolve_token_exchange_proxy(opened, proxy),
             detect_exit_geo=False,
+            device_id=account_device_id,
         )
         token_resp = proto.exchange_codex_token(session, code, code_verifier)
         id_claims = proto._parse_id_token(token_resp.get("id_token", ""))
@@ -1618,6 +1652,7 @@ def run_roxy_codex_oauth(
     existing_opened=None,
     reuse_existing_profile: bool = False,
     clear_existing_state: bool = True,
+    device_id: str | None = None,
 ) -> dict:
     """指纹浏览器 Codex OAuth 入口；CPA callback 409 timeout 时重新开启一轮授权。"""
     from core import codex_oauth as proto
@@ -1639,6 +1674,7 @@ def run_roxy_codex_oauth(
             existing_opened=existing_opened,
             reuse_existing_profile=reuse_existing_profile,
             clear_existing_state=clear_existing_state,
+            device_id=device_id,
         )
         last_result = result
         if result.get("ok"):

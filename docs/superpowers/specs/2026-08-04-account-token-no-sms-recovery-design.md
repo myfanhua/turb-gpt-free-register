@@ -10,6 +10,7 @@
 - WebUI 单账号和批量套餐查询在请求体未提供 `proxy` 时传入 `None`，随后走独立默认网络策略，而不是账号保存的注册代理。
 - Codex 补跑的 Plus 前置查询同样没有传入账号代理。
 - 账号记录中的通用 `refresh_token` 属于 Outlook 邮箱取件凭据，不是 ChatGPT OAuth refresh token；不得用它刷新 ChatGPT Access Token。
+- Roxy 注册流程没有把真实浏览器的 `oai-did` 保存到账号 `device_id`；后续套餐查询每次创建新的 `BrowserSession`，会为同一个账号生成不同设备 UUID。
 
 ## 设计
 
@@ -22,6 +23,14 @@
 账号保存的是带独立 SID 的本地桥接地址时，套餐查询在发出请求前根据当前链式代理配置恢复 `127.0.0.1:25001` 桥接服务。这样 WebUI 服务重启后仍可继续使用保存的账号代理。
 
 注册出口实时定位服务返回空结果时，从当次代理用户名中的 `region-XX` 保存国家代码作为降级值；IP 和地区仍保持空值，避免把推断值写成实测地址。
+
+### 账号设备身份
+
+- 每个新账号在首次创建 Roxy 环境前生成唯一 `device_id`，通过 CDP 写入 ChatGPT/OpenAI 的 `oai-did` Cookie。
+- 注册成功时把该值保存到账号记录。
+- 同一账号后续所有套餐查询、Token 请求和新建 Roxy 环境都复用保存的 `device_id`。
+- 不同账号之间不得共享 `device_id`。
+- 旧账号缺少 `device_id` 时，不使用随机设备身份发送已有 Access Token；相关查询直接停止并显示缺少设备上下文。
 
 ### Codex 前置查询
 
@@ -43,4 +52,7 @@ Plus 前置查询复用账号的 `proxy_used`。这项修改只保证用户主�
 - 服务重启后，保存的本地桥接代理会在查询前自动恢复。
 - 实时定位失败时，注册地址至少显示代理配置国家，且不伪造 IP。
 - Codex Plus 前置查询传入账号 `proxy_used`。
+- Roxy 注册保存实际注入的 `device_id`。
+- 单个、批量和同步套餐查询传递账号 `device_id`。
+- Roxy 后续操作重新注入同一账号的 `device_id`；缺失时在打开授权页面前停止。
 - 原有套餐查询、Codex gate 与全量测试继续通过。

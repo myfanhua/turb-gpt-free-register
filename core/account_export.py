@@ -396,6 +396,7 @@ def save_account_data(
     """
     from core.db import insert_account
     extra = extra or {}
+    registration_device_id = str(extra.get("device_id") or "").strip() or None
     user = extra.get("user") or {}
     account = extra.get("account") or {}
     # 从 extra.codex 抽出顶层 codex 状态/错误，方便 WebUI 直接读账号字段
@@ -422,7 +423,7 @@ def save_account_data(
         user_name=user.get("name"),
         plan_type=account.get("planType"),
         expires_at=extra.get("expires"),
-        device_id=extra.get("device_id"),
+        device_id=registration_device_id,
         proxy_used=proxy_used,
         email_source=email_source,
         extra=extra,
@@ -447,6 +448,12 @@ def save_account_data(
     logger.info(f"[Save] 批次归档目录: {batch_folder}")
     # session 中的 account.planType 不能说明 Plus 试用资格。账号落库后只负责
     # 入队，由专用线程池异步查询并回写，避免占用注册工作线程。
+    if not registration_device_id:
+        logger.warning(
+            "[Plan] 账号缺少注册 device_id，为保护 Access Token 跳过注册后自动套餐查询: %s",
+            email,
+        )
+        return row_id
     try:
         from core.plan_check_service import enqueue_account_plan_check
 
@@ -456,6 +463,7 @@ def save_account_data(
             access_token=access_token,
             trigger="registration_auto",
             proxy=proxy_used,
+            device_id=registration_device_id,
         )
         if queued.get("accepted"):
             logger.info(f"[Plan] 注册后自动查询已入队: id={row_id}, email={email}")

@@ -32,7 +32,13 @@ class BrowserSession:
     使用 curl_cffi 的 impersonate 功能绕过 Cloudflare TLS 指纹检测。
     """
 
-    def __init__(self, proxy: str = None, *, detect_exit_geo: bool = True):
+    def __init__(
+        self,
+        proxy: str = None,
+        *,
+        detect_exit_geo: bool = True,
+        device_id: str | None = None,
+    ):
         """
         初始化会话。
 
@@ -51,8 +57,8 @@ class BrowserSession:
         else:
             self.proxy = proxy
 
-        # 生成设备ID（oai-did），整个注册流程复用
-        self.device_id = str(uuid.uuid4())
+        # 同一账号可传入已保存的设备ID；首次会话才生成新值。
+        self.device_id = str(device_id or "").strip() or str(uuid.uuid4())
 
         # 生成 auth_session_logging_id
         self.auth_session_logging_id = str(uuid.uuid4())

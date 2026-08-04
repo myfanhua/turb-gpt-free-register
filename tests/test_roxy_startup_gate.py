@@ -30,6 +30,9 @@ class _FakeDriver:
     def set_page_load_timeout(self, seconds):
         self.events.append(f"timeout-{self.name}-{seconds}")
 
+    def execute_cdp_cmd(self, _method, _params):
+        return {"success": True}
+
     def get(self, url):
         self.events.append(f"get-start-{self.name}")
         if self.name == "first":
@@ -42,6 +45,36 @@ class _FakeDriver:
 
 
 class RoxyStartupGateTests(unittest.TestCase):
+    def test_startup_installs_account_device_id_before_login_navigation(self):
+        events = []
+        client = _FakeClient("device", events)
+        driver = _FakeDriver(
+            "device",
+            events,
+            threading.Event(),
+            threading.Event(),
+        )
+        device_id = "11111111-2222-4333-8444-555555555555"
+
+        with patch.object(roxy_registration, "_build_driver", return_value=driver), \
+             patch.object(roxy_registration, "_center_browser_window"), \
+             patch.object(roxy_registration, "human_delay"), \
+             patch.object(roxy_registration, "_maybe_accept"), \
+             patch.object(roxy_registration, "_wait_for_email_input_ready", return_value=object()), \
+             patch.object(
+                 roxy_registration,
+                 "install_account_device_id",
+                 side_effect=lambda _driver, value: events.append(f"device-{value}") or value,
+             ) as install:
+            opened, _ = roxy_registration._open_roxy_registration_browser(
+                client,
+                device_id=device_id,
+            )
+
+        install.assert_called_once_with(driver, device_id)
+        self.assertLess(events.index(f"device-{device_id}"), events.index("get-start-device"))
+        self.assertEqual(opened.account_device_id, device_id)
+
     def test_second_registration_waits_until_first_login_page_finishes_loading(self):
         events = []
         first_navigation_started = threading.Event()
@@ -151,6 +184,9 @@ class RoxyStartupGateTests(unittest.TestCase):
 
             def set_page_load_timeout(self, seconds):
                 events.append(f"timeout-{self.profile_id}-{seconds}")
+
+            def execute_cdp_cmd(self, _method, _params):
+                return {"success": True}
 
             def get(self, _url):
                 events.append(f"get-{self.profile_id}")

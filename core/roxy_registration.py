@@ -7,6 +7,7 @@ import random
 import string
 import threading
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -16,7 +17,7 @@ from core.account_export import save_account_data
 from core.email_provider import wait_for_otp, resolve_email_source
 from core.humanize import delay as human_delay
 from core.icloud_mail_client import ICloudProviderUnavailableError
-from core.roxybrowser_client import RoxyBrowserClient, RoxyOpenResult
+from core.roxybrowser_client import RoxyBrowserClient, RoxyOpenResult, install_account_device_id
 
 logger = logging.getLogger(__name__)
 
@@ -1593,8 +1594,13 @@ def _check_manual_stop() -> None:
         return
 
 
-def _open_roxy_registration_browser(client: RoxyBrowserClient) -> tuple[RoxyOpenResult, object]:
+def _open_roxy_registration_browser(
+    client: RoxyBrowserClient,
+    *,
+    device_id: str | None = None,
+) -> tuple[RoxyOpenResult, object]:
     """串行创建 Roxy 环境并完成首次登录页加载。"""
+    account_device_id = str(device_id or "").strip() or str(uuid.uuid4())
     _check_manual_stop()
     logger.info("[Roxy] 等待启动门控：创建环境、打开窗口并加载登录页")
     with _ROXY_STARTUP_LOCK:
@@ -1610,6 +1616,8 @@ def _open_roxy_registration_browser(client: RoxyBrowserClient) -> tuple[RoxyOpen
                 driver = _build_driver(opened)
                 _center_browser_window(driver)
                 driver.set_page_load_timeout(int(_cfg.ROXY_SELENIUM_TIMEOUT))
+                install_account_device_id(driver, account_device_id)
+                opened.account_device_id = account_device_id
                 logger.info("[Roxy注册] 开始启动浏览器，profile=%s", opened.profile_id)
                 logger.info("[Roxy注册] 打开登录页：https://chatgpt.com/auth/login")
                 driver.get("https://chatgpt.com/auth/login")
@@ -1771,6 +1779,7 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
                     existing_opened=opened,
                     force=True,
                     clear_existing_state=True,
+                    device_id=opened.account_device_id,
                 )
             else:
                 logger.info("[Roxy注册][Codex] ENABLE_CODEX_AUTO=False，注册后跳过 Codex OAuth")
@@ -1789,6 +1798,7 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
                 "user": session_info.get("user"),
                 "account": session_info.get("account"),
                 "expires": session_info.get("expires"),
+                "device_id": opened.account_device_id,
                 "roxybrowser": {"profile_id": opened.profile_id, "open_result": opened.raw},
                 "registration_password": openai_password,
                 "codex": codex_result,

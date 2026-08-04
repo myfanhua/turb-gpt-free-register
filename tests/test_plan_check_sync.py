@@ -8,6 +8,7 @@ from core import plan_check_service
 class PlanCheckSyncTests(unittest.TestCase):
     def test_check_account_plan_now_starts_saved_local_proxy_bridge(self):
         proxy = "http://sid-account168:bridge@127.0.0.1:25001"
+        device_id = "11111111-2222-4333-8444-555555555555"
         result = {
             "ok": True,
             "current_plan_type": "free",
@@ -25,13 +26,20 @@ class PlanCheckSyncTests(unittest.TestCase):
                 email="account168@example.com",
                 access_token="token-value",
                 proxy=proxy,
+                device_id=device_id,
             )
 
         self.assertEqual(actual, result)
         prepare.assert_called_once_with(proxy)
-        check.assert_called_once_with("token-value", proxy=proxy, timezone_offset_min="-")
+        check.assert_called_once_with(
+            "token-value",
+            proxy=proxy,
+            timezone_offset_min="-",
+            device_id=device_id,
+        )
 
     def test_check_account_plan_now_uses_rate_limit_and_persists_result(self):
+        device_id = "11111111-2222-4333-8444-555555555555"
         result = {
             "ok": True,
             "current_plan_type": "plus",
@@ -45,11 +53,17 @@ class PlanCheckSyncTests(unittest.TestCase):
                 email="plus@example.com",
                 access_token="token-value",
                 trigger="codex_retry_gate",
+                device_id=device_id,
             )
 
         self.assertEqual(actual, result)
         wait.assert_called_once_with()
-        check.assert_called_once_with("token-value", proxy=None, timezone_offset_min="-")
+        check.assert_called_once_with(
+            "token-value",
+            proxy=None,
+            timezone_offset_min="-",
+            device_id=device_id,
+        )
         update.assert_called_once_with(acc_id=42, result=result)
 
     def test_check_account_plan_now_returns_and_persists_structured_failure(self):

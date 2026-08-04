@@ -67,3 +67,26 @@
 - [ ] Infer the country code from the configured upstream template only when live lookup returned no country code.
 - [ ] Persist only the inferred country code; keep region and IP empty.
 - [ ] Backfill account 168 with country code `US` while preserving its missing historical IP.
+
+### Task 6: Persist one device identity per account
+
+**Files:**
+- Modify: `core/session.py`
+- Modify: `core/roxybrowser_client.py`
+- Modify: `core/roxy_registration.py`
+- Modify: `core/account_export.py`
+- Modify: `core/chatgpt_plan.py`
+- Modify: `core/plan_check_service.py`
+- Modify: `core/roxy_codex_oauth.py`
+- Modify: `webui/app.py`
+- Test: `tests/test_account_device_context.py`
+- Test: `tests/test_webui_plan_check_proxy.py`
+- Test: `tests/test_plan_check_sync.py`
+
+- [ ] Add failing tests proving a supplied `device_id` is retained by `BrowserSession` and written as `oai-did` cookies in Roxy.
+- [ ] Generate one device ID before the first Roxy registration navigation and save the same value with the account.
+- [ ] Thread the saved device ID through single, bulk, automatic and synchronous plan checks.
+- [ ] Stop manual and automatic token checks when an existing account has no saved device context.
+- [ ] Inject the saved device ID into every later Roxy OAuth environment before navigation, including after browser-state clearing.
+- [ ] Pass the same device ID to Codex token-exchange HTTP sessions.
+- [ ] Run focused tests, full tests, commit and restart the WebUI service without starting real registration or SMS tasks.
