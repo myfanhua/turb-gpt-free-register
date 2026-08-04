@@ -39,6 +39,21 @@ def _should_retry_otp_fetch(exc: Exception) -> bool:
     return not isinstance(exc, ICloudProviderUnavailableError)
 
 
+def _next_otp_after_ts(
+    current_after_ts: float,
+    *,
+    previous_code_rejected: bool,
+) -> float:
+    """Keep delayed first-delivery OTPs eligible across fetch-timeout resends.
+
+    A mailbox page may expose a delivered message later than the browser's
+    resend click. Moving the cutoff after every fetch timeout can therefore
+    make each newly visible message look stale. Only advance the cutoff after
+    a code was actually submitted and rejected.
+    """
+    return time.time() if previous_code_rejected else float(current_after_ts)
+
+
 def _should_retry_roxy_startup(exc: BaseException) -> bool:
     if not isinstance(exc, Exception) or type(exc).__name__ == "StopRequested":
         return False
@@ -1676,7 +1691,10 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
                         type(exc).__name__,
                         str(exc)[:180],
                     )
-                    otp_after_ts = time.time()
+                    otp_after_ts = _next_otp_after_ts(
+                        otp_after_ts,
+                        previous_code_rejected=False,
+                    )
                     resend = _click_resend_email_otp(driver, timeout=25)
                     if resend.get("advanced"):
                         break
@@ -1703,7 +1721,10 @@ def run_roxy_registration(email: str, name: str, birthday: str, proxy: str = Non
             if otp_attempt >= max_otp_attempts:
                 raise RuntimeError("邮箱验证码连续错误/过期，已达到最大重试次数")
             logger.warning("[Roxy注册][OTP] 验证码错误/过期，准备重新发送并重新获取验证码（%s/%s）", otp_attempt + 1, max_otp_attempts)
-            otp_after_ts = time.time()
+            otp_after_ts = _next_otp_after_ts(
+                otp_after_ts,
+                previous_code_rejected=True,
+            )
             resend = _click_resend_email_otp(driver, timeout=25)
             if resend.get("advanced"):
                 break
