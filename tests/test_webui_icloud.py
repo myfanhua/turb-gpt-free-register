@@ -108,6 +108,37 @@ class ICloudWebUiTests(unittest.TestCase):
             },
         ])
 
+    @patch("webui.app.db.import_icloud_emails")
+    def test_import_accepts_explicit_icloud_url_source(self, import_icloud):
+        import_icloud.return_value = {"inserted": 1, "updated": 0, "skipped": 0, "invalid": 0}
+        response = self.client.post("/api/outlook/import", json={
+            "source": "icloud_url",
+            "text": "new-url@icloud.com----https://pickup.example/show/credential/new-url@icloud.com",
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["parsed"], 1)
+        import_icloud.assert_called_once_with([{
+            "email": "new-url@icloud.com",
+            "token": "",
+            "pickup_url": "https://pickup.example/show/credential/new-url@icloud.com",
+        }])
+
+    @patch("webui.app.db.import_icloud_emails")
+    def test_explicit_icloud_url_source_marks_token_only_line_invalid(self, import_icloud):
+        import_icloud.return_value = {"inserted": 0, "updated": 0, "skipped": 0, "invalid": 1}
+        response = self.client.post("/api/outlook/import", json={
+            "source": "icloud_url",
+            "text": "token-only@icloud.com----tok_only",
+        })
+
+        self.assertEqual(response.status_code, 200)
+        import_icloud.assert_called_once_with([{
+            "email": "token-only@icloud.com",
+            "token": "",
+            "pickup_url": "",
+        }])
+
     @patch("webui.app.db.list_icloud_email_pool")
     def test_list_icloud_pool_returns_only_masked_token(self, list_pool):
         list_pool.return_value = [{"id": 1, "email": "one@icloud.com", "status": "available", "token_masked": "tok_****1234"}]
@@ -116,6 +147,21 @@ class ICloudWebUiTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload[0]["source"], "icloud_api")
         self.assertNotIn("token", payload[0])
+
+    @patch("webui.app.db.list_icloud_email_pool")
+    def test_list_explicit_icloud_url_pool_uses_url_filter(self, list_pool):
+        list_pool.return_value = [{
+            "id": 2,
+            "email": "url@icloud.com",
+            "status": "available",
+            "pickup_mode": "independent_url",
+        }]
+        response = self.client.get("/api/outlook?source=icloud_url")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload[0]["source"], "icloud_url")
+        list_pool.assert_called_once_with(status=None, limit=500, pickup_filter="url")
 
     @patch("webui.app.svc.submit_registration", return_value=[{"id": 1}])
     @patch("webui.app.db.icloud_email_pool_summary", return_value={"available": 1, "total": 1})

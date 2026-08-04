@@ -684,6 +684,7 @@
             <option value="outlook">Outlook 邮箱池</option>
             <option value="generic_api">通用 API 取码邮箱</option>
             <option value="icloud_api">iCloud API 邮箱池</option>
+            <option value="icloud_url">iCloud 独立 URL</option>
           </select>
           <span class="hint">注册来源可在配置里填多个，例如：outlook,generic_api</span>
         </label>
@@ -707,6 +708,7 @@ iCloud URL: 邮箱----独立取件URL"></textarea>
               <option value="outlook">Outlook 邮箱池</option>
               <option value="generic_api">通用 API 邮箱池</option>
               <option value="icloud_api">iCloud API 邮箱池</option>
+              <option value="icloud_url">iCloud 独立 URL</option>
               <option value="cloudflare_domain">域名邮箱池</option>
             </select>
             <input id="qOutlook" placeholder="搜索邮箱、状态…">
@@ -2512,8 +2514,9 @@ $('#copyAllLines').addEventListener('click', async () => {
 
 // ---------- 邮箱池 ----------
 function poolKey(r) { return `${r.source || $('#poolSource')?.value || 'outlook'}|${r.email || ''}`; }
+function isICloudPoolSource(source) { return source === 'icloud_api' || source === 'icloud_url'; }
 function poolLabel(src) {
-  return ({outlook:'Outlook', generic_api:'通用API', icloud_api:'iCloud API', cloudflare_domain:'域名邮箱'})[src] || src || '-';
+  return ({outlook:'Outlook', generic_api:'通用API', icloud_api:'iCloud API', icloud_url:'iCloud 独立 URL', cloudflare_domain:'域名邮箱'})[src] || src || '-';
 }
 function icloudPickupLabel(mode) {
   return ({
@@ -2539,10 +2542,10 @@ function renderOutlook() {
   const total = OUTLOOK_TOTAL;
   const rows = OUTLOOK;
   $('#outlookBody').innerHTML = rows.map(r => {
-    const tokenPreview = r.source === 'icloud_api'
+    const tokenPreview = isICloudPoolSource(r.source)
       ? `${icloudPickupLabel(r.pickup_mode)}${r.token_masked ? ` · ${r.token_masked}` : ''}`
       : (short(r.access_token || '', 36) || '未生成');
-    const tokenCopyButton = r.source === 'icloud_api'
+    const tokenCopyButton = isICloudPoolSource(r.source)
       ? ''
       : cbtn('复制Token', r.access_token, 'primary');
     return `
@@ -2555,7 +2558,7 @@ function renderOutlook() {
       <td class="muted">${esc(r.imported_at || r.created_at || '-')}</td>
       <td class="muted">${esc(r.used_at || '-')}</td>
       <td class="actions">
-        ${cbtn('复制邮箱', r.email)} ${tokenCopyButton} ${r.source === 'icloud_api' ? '' : cbtn('复制整行', r.account_copy_line, 'good')}
+        ${cbtn('复制邮箱', r.email)} ${tokenCopyButton} ${isICloudPoolSource(r.source) ? '' : cbtn('复制整行', r.account_copy_line, 'good')}
         ${r.status !== 'available'
           ? `<button data-pool-act="available" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}">恢复可用</button>`
           : ''}
@@ -2700,7 +2703,7 @@ async function deleteSelectedOutlook() {
   }
 }
 function syncImportRegisteredMode() {
-  const isICloud = $('#importSource')?.value === 'icloud_api';
+  const isICloud = isICloudPoolSource($('#importSource')?.value);
   const checkbox = $('#importAsRegistered');
   if (!checkbox) return;
   if (isICloud) checkbox.checked = false;
@@ -2715,15 +2718,15 @@ $('#btnImport').addEventListener('click', async () => {
   $('#btnImport').disabled = true;
   try {
     const source = $('#importSource').value;
-    const as_registered = source === 'icloud_api' ? false : ($('#importAsRegistered')?.checked ?? true);
+    const as_registered = isICloudPoolSource(source) ? false : ($('#importAsRegistered')?.checked ?? true);
     const r = await api('/api/outlook/import', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, source, as_registered}) });
     const mode = r.as_registered ? '已注册账号' : '邮箱池素材';
-    const summary = source === 'icloud_api'
+    const summary = isICloudPoolSource(source)
       ? `解析 ${r.parsed} 行，新增 ${r.inserted || 0}，更新 ${r.updated || 0}，重复 ${r.skipped || 0}，无效 ${r.invalid || 0}`
       : `按 ${mode} 导入：解析 ${r.parsed} 行，新增 ${r.inserted}，跳过 ${r.skipped}${r.as_registered ? '；可到“账号”页选择后批量补跑 Codex' : ''}`;
     const importedCount = (r.inserted || 0) + (r.updated || 0) > 0;
-    const hint = source === 'icloud_api' && !importedCount
-      ? '；请保留原文检查格式，推荐每行：邮箱----Token'
+    const hint = isICloudPoolSource(source) && !importedCount
+      ? `；请保留原文检查格式，推荐每行：${source === 'icloud_url' ? '邮箱----独立取件URL' : '邮箱----Token'}`
       : '';
     $('#importResult').innerHTML = `<div class="banner ${importedCount ? 'info' : 'warn'}">${esc(summary + hint)}</div>`;
     if (importedCount) $('#importText').value = '';

@@ -2039,10 +2039,16 @@ def delete_icloud_email(email: str) -> bool:
         return True
 
 
-def list_icloud_email_pool(status: str | None = None, limit: int = 500) -> list[dict]:
+def list_icloud_email_pool(
+    status: str | None = None,
+    limit: int = 500,
+    pickup_filter: str = "all",
+) -> list[dict]:
     """列出脱敏后的 iCloud 邮箱池记录。"""
+    pickup_filter = str(pickup_filter or "all").strip().lower()
     with _LOCK:
         rows = _load_icloud_emails()
+        rows = [row for row in rows if _icloud_row_matches_filter(row, pickup_filter)]
         if status:
             rows = [row for row in rows if row.get("status") == status]
         rows = sorted(rows, key=lambda item: int(item.get("id") or 0), reverse=True)
