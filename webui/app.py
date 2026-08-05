@@ -284,6 +284,8 @@ def create_app(auth_code: str | None = None) -> Flask:
         archived = str(request.args.get("archived", default="0") or "0").lower()
         plan_filter = str(request.args.get("plan", default="") or "").lower()
         q = str(request.args.get("q", default="") or "").strip()
+        date_from = str(request.args.get("date_from", default="") or "").strip() or None
+        date_to = str(request.args.get("date_to", default="") or "").strip() or None
         # 新分页接口：传 page/page_size 或 paged=1 时返回 {items,total,page,page_size,...}
         paged = str(request.args.get("paged", default="") or "").lower() in {"1", "true", "yes"}
         page_arg = request.args.get("page", default=None, type=int)
@@ -292,11 +294,11 @@ def create_app(auth_code: str | None = None) -> Flask:
             page = max(1, int(page_arg or 1))
             page_size = max(1, min(500, int(page_size_arg or limit or 50)))
             offset = (page - 1) * page_size
-            result = db.list_accounts_page(limit=page_size, offset=offset, archived=archived, plan_filter=plan_filter, q=q)
+            result = db.list_accounts_page(limit=page_size, offset=offset, archived=archived, plan_filter=plan_filter, q=q, date_from=date_from, date_to=date_to)
             result["items"] = [_compact_account_for_list(r) for r in (result.get("items") or [])]
             result.update({"ok": True, "page": page, "page_size": page_size, "compact": True})
             return jsonify(result)
-        return jsonify(db.list_accounts(limit=limit, archived=archived, plan_filter=plan_filter, q=q))
+        return jsonify(db.list_accounts(limit=limit, archived=archived, plan_filter=plan_filter, q=q, date_from=date_from, date_to=date_to))
 
     @app.get("/api/accounts/plan-check-status")
     def api_account_plan_check_status():
@@ -1536,7 +1538,11 @@ def create_app(auth_code: str | None = None) -> Flask:
     # ----------------------------------------------------------
     @app.get("/api/codex")
     def api_codex_list():
-        rows = db.list_codex_accounts()
+        rows = db.list_codex_accounts(
+            archived=str(request.args.get("archived", default="0") or "0").lower(),
+            date_from=str(request.args.get("date_from", default="") or "").strip() or None,
+            date_to=str(request.args.get("date_to", default="") or "").strip() or None,
+        )
         q = str(request.args.get("q", default="") or "").strip()
         if q:
             rows = [r for r in rows if _matches_query(r, q)]
@@ -1555,6 +1561,53 @@ def create_app(auth_code: str | None = None) -> Flask:
             "summary": db.codex_accounts_summary(),
             "accounts": rows[:limit],
         })
+
+    @app.post("/api/codex/archive")
+    def api_codex_archive():
+        """归档/取消归档一条 Codex 授权凭证。Body {filename, archived}。"""
+        data = request.get_json(silent=True) or {}
+        filename = str(data.get("filename") or "").strip()
+        archived = bool(data.get("archived", True))
+        if not filename:
+            return jsonify({"ok": False, "error": "filename 必填"}), 400
+        try:
+            rec = db.archive_codex(filename=filename, archived=archived)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        if rec is None:
+            return jsonify({"ok": False, "error": f"凭证不存在: {filename}"}), 404
+        return jsonify({"ok": True, "filename": filename, "archived": archived, "record": rec})
+
+    @app.post("/api/codex/archive-bulk")
+    def api_codex_archive_bulk():
+        """批量归档/取消归档 Codex 授权凭证。Body {filenames:[...], archived}。"""
+        data = request.get_json(silent=True) or {}
+        filenames = data.get("filenames") or []
+        archived = bool(data.get("archived", True))
+        if not isinstance(filenames, list) or not filenames:
+            return jsonify({"ok": False, "error": "filenames 必须是非空数组"}), 400
+        if len(filenames) > 1000:
+            return jsonify({"ok": False, "error": "单次最多 1000 个"}), 400
+        updated = []
+        skipped = []
+        seen = set()
+        for fname in filenames:
+            if not isinstance(fname, str) or not fname:
+                skipped.append({"filename": str(fname), "reason": "非法文件名"})
+                continue
+            if fname in seen:
+                continue
+            seen.add(fname)
+            try:
+                rec = db.archive_codex(filename=fname, archived=archived)
+            except ValueError as exc:
+                skipped.append({"filename": fname, "reason": str(exc)})
+                continue
+            if rec is None:
+                skipped.append({"filename": fname, "reason": "凭证不存在"})
+            else:
+                updated.append({"filename": fname, "archived": archived})
+        return jsonify({"ok": True, "updated": updated, "updated_count": len(updated), "archived": archived, "skipped": skipped})
 
     @app.get("/api/codex/download/<path:filename>")
     def api_codex_download(filename: str):

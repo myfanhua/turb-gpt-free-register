@@ -370,6 +370,101 @@
       display: inline-flex; align-items: center; gap: 8px;
       color: #606266; font-size: 14px; white-space: nowrap;
     }
+    .accounts-filter-v2 .acc-v2-date {
+      height: 40px; padding: 0 8px;
+      border: 1px solid #dcdfe6; border-radius: 6px;
+      background: #fff; color: #606266; font-size: 14px;
+      box-sizing: border-box; vertical-align: middle;
+      font-family: inherit;
+    }
+    .accounts-filter-v2 .acc-v2-date:hover,
+    .accounts-filter-v2 .acc-v2-date:focus { border-color: #409eff; outline: none; }
+    .accounts-filter-v2 .acc-v2-date-select,
+    .codex-filter-v2 .acc-v2-date-select {
+      position: relative; display: inline-flex; vertical-align: middle;
+    }
+    .accounts-filter-v2 .acc-v2-date-select-btn,
+    .codex-filter-v2 .acc-v2-date-select-btn {
+      min-height: 32px; margin: 0; padding: 0 28px 0 12px;
+      border: 1px solid #dcdfe6; border-radius: 6px; background: #fff;
+      color: #606266; font: inherit; font-size: 13px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: flex-start;
+      box-sizing: border-box; position: relative; text-align: left;
+      white-space: nowrap;
+    }
+    .accounts-filter-v2 .acc-v2-date-select-btn:hover,
+    .accounts-filter-v2 .acc-v2-date-select.open .acc-v2-date-select-btn,
+    .codex-filter-v2 .acc-v2-date-select-btn:hover,
+    .codex-filter-v2 .acc-v2-date-select.open .acc-v2-date-select-btn {
+      border-color: #377DFF;
+    }
+    .accounts-filter-v2 .acc-v2-date-select-btn::after,
+    .codex-filter-v2 .acc-v2-date-select-btn::after {
+      content: ""; position: absolute; right: 10px; top: 50%;
+      width: 0; height: 0; margin-top: -2px;
+      border-left: 5px solid transparent; border-right: 5px solid transparent;
+      border-top: 6px solid #909399;
+    }
+    .accounts-filter-v2 .acc-v2-date-select.open .acc-v2-date-select-btn::after,
+    .codex-filter-v2 .acc-v2-date-select.open .acc-v2-date-select-btn::after {
+      margin-top: -4px; border-top: none; border-bottom: 6px solid #909399;
+    }
+    .acc-v2-date-select-menu {
+      display: none; position: absolute; left: 0; top: calc(100% + 6px);
+      min-width: 300px; padding: 10px; z-index: 300;
+      border-radius: 8px; background: #fff;
+      box-shadow: 0 8px 24px rgba(15,23,42,.12), 0 0 0 1px rgba(15,23,42,.04);
+      box-sizing: border-box; font-size: 13px; color: #606266;
+    }
+    .acc-v2-date-select.open .acc-v2-date-select-menu { display: block; }
+    .acc-v2-date-select-menu-row {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    }
+    .acc-v2-date-select-menu-row:last-of-type { margin-bottom: 0; }
+    .acc-v2-date-select-menu-row span { white-space: nowrap; color: #606266; }
+    .acc-v2-date-select-menu .acc-v2-date { flex: 1; min-width: 0; height: 32px; }
+    .acc-v2-date-select-menu .jobs-tb-btn {
+      min-height: 30px; padding: 0 10px; font-size: 13px; line-height: 1;
+    }
+    .acc-v2-date-select-actions {
+      display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px;
+    }
+    .cal { min-width: 264px; user-select: none; }
+    .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .cal-nav {
+      width: 28px; height: 28px; padding: 0;
+      border: 1px solid #dcdfe6; border-radius: 6px; background: #fff;
+      color: #606266; font-size: 16px; line-height: 1; cursor: pointer;
+    }
+    .cal-nav:hover { border-color: #377DFF; color: #377DFF; }
+    .cal-title { font-weight: 600; color: #303133; font-size: 14px; }
+    .cal-week {
+      display: grid; grid-template-columns: repeat(7, 1fr);
+      text-align: center; color: #909399; font-size: 12px; margin-bottom: 6px;
+    }
+    .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+    .cal-cell {
+      height: 32px; padding: 0; border: none; border-radius: 6px;
+      background: transparent; color: #606266; font: inherit; font-size: 13px;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      box-sizing: border-box;
+    }
+    .cal-cell:hover { background: #f5f7fa; color: #377DFF; }
+    .cal-cell.other { color: #c0c4cc; }
+    .cal-cell.start, .cal-cell.end { background: #377DFF; color: #fff; font-weight: 600; }
+    .cal-cell.start { border-radius: 6px 0 0 6px; }
+    .cal-cell.end { border-radius: 0 6px 6px 0; }
+    .cal-cell.start.end { border-radius: 6px; }
+    .cal-cell.in-range { background: #EBF2FF; color: #377DFF; }
+    .cal-foot {
+      margin-top: 10px; padding-top: 10px; border-top: 1px solid #ebeef5;
+    }
+    .cal-foot-btns { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .cal-foot-btns .jobs-tb-btn { min-height: 26px; padding: 0 8px; font-size: 12px; }
+    .cal-foot-tip {
+      margin-top: 8px; color: #909399; font-size: 12px;
+      line-height: 1.4; user-select: none; text-align: center;
+    }
     .jobs-toolbar-v2 .el-input-number,
     .accounts-filter-v2 .el-input-number {
       position: relative; display: inline-flex; width: 150px; height: 40px;
@@ -992,6 +1087,16 @@
     #codexToolbarV2 {
       padding: 12px 16px 16px;
       justify-content: flex-start;
+    }
+    #codexToolbarV2 .jobs-tb-btn {
+      min-height: 32px; padding: 0 12px; font-size: 13px;
+    }
+    #codexToolbarV2 .jobs-tb-btn.is-active {
+      color: #377DFF; background: #EBF2FF; border-color: #9BBEFF;
+      font-weight: 500;
+    }
+    #codexToolbarV2 .jobs-tb-btn.is-active:hover {
+      background: #dce8ff; border-color: #3A7FFF; color: #3A7FFF;
     }
     .codex-table-v2-wrap { overflow: auto; padding: 0; }
     .codex-table-v2 {
@@ -2023,6 +2128,14 @@
           </label>
           <button type="button" class="acc-v2-toggle" id="showArchivedAccountsV2" aria-pressed="false" title="默认只显示未归档账号；开启后单独查看归档账号">查看归档</button>
           <button type="button" class="acc-v2-toggle" id="showPlusAccountsOnlyV2" aria-pressed="false" title="只查询/显示已开通 Plus 的账号">已开通Plus</button>
+          <div class="acc-v2-date-select" id="dateSelectAccountsV2">
+            <button type="button" class="acc-v2-date-select-btn" id="btnDateFilterAccountsV2" title="按注册时间筛选日期范围">📅 日期筛选</button>
+            <div class="acc-v2-date-select-menu" id="dateFilterPanelAccountsV2"></div>
+          </div>
+          <div class="hidden">
+            <input type="date" id="dateFromAccountsV2">
+            <input type="date" id="dateToAccountsV2">
+          </div>
           <button type="button" class="jobs-tb-btn" id="btnRefreshAccountsV2" title="重新加载当前筛选条件和当前页账号列表">刷新账号</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--primary" id="btnCheckSelectedLiveTopV2" onclick="checkSelectedLive()" title="重新登录选中账号；成功且未封号则标记正常，并刷新最新 AT/accessToken">查活</button>
 
@@ -2051,6 +2164,7 @@
           <span class="acc-v2-btn-group-title">批量</span>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnNoteSelectedAccountsV2" disabled title="给选中的账号统一设置备注，留空可清空备注">备注</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnCopySelectedLinesV2" disabled title="复制选中账号的完整整行，每个账号一行">复制行</button>
+          <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnCopySelectedEmailsV2" disabled title="复制选中账号的邮箱，每个账号一行">复制邮箱</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnDownloadSelectedTxtV2" disabled title="把选中账号的完整整行保存为 TXT 文件，每个账号一行">下载TXT</button>
           <button type="button" class="jobs-tb-btn" id="btnArchiveSelectedAccountsV2" disabled title="归档选中的账号；默认账号列表将不再查询/显示这些账号">归档选中</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--danger" id="btnDeleteSelectedAccountsV2" disabled title="删除选中的本地账号/token记录">删除</button>
@@ -2140,11 +2254,21 @@
         <div class="acc-v2-btn-group acc-v2-search-wrap">
           <input id="qCodexV2" type="search" placeholder="搜索邮箱、plan、account_id…" autocomplete="off">
         </div>
+        <div class="acc-v2-date-select" id="dateSelectCodexV2">
+          <button type="button" class="acc-v2-date-select-btn" id="btnDateFilterCodexV2" title="按凭证文件修改时间筛选日期范围">📅 日期筛选</button>
+          <div class="acc-v2-date-select-menu" id="dateFilterPanelCodexV2"></div>
+        </div>
+        <div class="hidden">
+          <input type="date" id="dateFromCodexV2">
+          <input type="date" id="dateToCodexV2">
+        </div>
         <button type="button" class="jobs-tb-btn" id="btnRefreshCodexV2" title="重新加载 Codex 凭证列表">刷新</button>
       </div>
       <div class="jobs-toolbar-v2" id="codexToolbarV2">
+        <button type="button" class="jobs-tb-btn" id="showArchivedCodexV2" aria-pressed="false" title="默认只显示未归档凭证；开启后单独查看归档凭证">查看归档</button>
         <button type="button" class="jobs-tb-btn jobs-tb-btn--primary" id="btnCodexDownloadBulkV2" disabled title="把选中的多个本地凭证打包成一个 JSON 文件下载（备份/迁移用，CPA 不能直接读，需先解包）">下载本地</button>
         <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnCodexDownloadBulkCpaV2" disabled title="从 CPA auth-files 下载选中账号的真实 Codex JSON，并打包成 ZIP（可直接解压放入 CPA auth-dir）">从CPA下载</button>
+        <button type="button" class="jobs-tb-btn" id="btnCodexArchiveBulkV2" disabled title="归档选中的 Codex 授权凭证；默认列表不再显示">归档选中</button>
         <button type="button" class="jobs-tb-btn jobs-tb-btn--danger" id="btnCodexDeleteBulkV2" disabled title="删除选中的本地 Codex JSON 凭证文件">删除选中</button>
       </div>
       <div class="codex-table-v2-wrap">
@@ -2980,8 +3104,10 @@ async function loadAccounts() {
     const archived = SHOW_ARCHIVED_ACCOUNTS ? 'only' : '0';
     const plan = SHOW_PLUS_ACCOUNTS_ONLY ? 'plus' : '';
     const q = getAccountsQuery();
+    const dateFrom = document.getElementById('dateFromAccountsV2')?.value || '';
+    const dateTo = document.getElementById('dateToAccountsV2')?.value || '';
     const p = PAGERS.accounts;
-    const res = await api(`/api/accounts?paged=1&page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}&q=${encodeURIComponent(q)}`);
+    const res = await api(`/api/accounts?paged=1&page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}&q=${encodeURIComponent(q)}&date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`);
     ACCOUNTS = res.items || [];
     ACCOUNTS_TOTAL = Number(res.total || ACCOUNTS.length || 0);
     const totalPages = Math.max(1, Math.ceil(ACCOUNTS_TOTAL / p.size));
@@ -3320,7 +3446,7 @@ function updateAccountSelectionUi(pageRows = null) {
     'btnCheckSelectedPlansV2', 'btnExtractSelectedLinksV2',
     'btnGenerateSelectedAgentV2', 'btnDownloadSelectedAgentV2', 'btnUploadSelectedAgentSub2V2',
     'btnRetrySelectedCodexV2', 'btnDownloadSelectedCpaV2', 'btnStopSelectedCodexV2',
-    'btnNoteSelectedAccountsV2', 'btnCopySelectedLinesV2',
+    'btnNoteSelectedAccountsV2', 'btnCopySelectedLinesV2', 'btnCopySelectedEmailsV2',
     'btnDownloadSelectedTxtV2', 'btnArchiveSelectedAccountsV2', 'btnDeleteSelectedAccountsV2',
   ];
   v2Ids.forEach(id => {
@@ -3659,6 +3785,14 @@ async function refreshAccountsList(btn) {
   });
   const refreshV2 = $('#btnRefreshAccountsV2');
   if (refreshV2) refreshV2.addEventListener('click', () => refreshAccountsList(refreshV2));
+
+  bindDateFilterPanel({
+    btnId: 'btnDateFilterAccountsV2',
+    panelId: 'dateFilterPanelAccountsV2',
+    fromId: 'dateFromAccountsV2',
+    toId: 'dateToAccountsV2',
+    onApply: () => { ACCOUNT_SELECTED.clear(); PAGERS.accounts.page = 1; loadAccounts(); },
+  });
 })();
 
 
@@ -3685,6 +3819,154 @@ async function copySelectedAccountLines() {
     copyText(lines.join('\n'));
     showToast(`已复制 ${lines.length} 行`);
   } catch(err) { showToast('复制失败: ' + err.message); }
+}
+
+function bindDateFilterPanel({ btnId, panelId, fromId, toId, onApply }) {
+  const btn = document.getElementById(btnId);
+  const panel = document.getElementById(panelId);
+  if (!btn || !panel) return;
+  const wrap = panel.closest('.acc-v2-date-select');
+  const now = new Date();
+  let viewY = now.getFullYear();
+  let viewM = now.getMonth();
+  let start = document.getElementById(fromId)?.value || '';
+  let end = document.getElementById(toId)?.value || '';
+  let openSnapshot = { start, end };
+  let dirty = false;
+  if (start) { const d = new Date(start); viewY = d.getFullYear(); viewM = d.getMonth(); }
+  const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const setHidden = () => {
+    const f = document.getElementById(fromId); if (f) f.value = start;
+    const t = document.getElementById(toId); if (t) t.value = end;
+  };
+  const syncBtnText = () => {
+    btn.textContent = (start || end) ? `📅 ${start || '…'} ~ ${end || '…'}` : '📅 日期筛选';
+  };
+  const close = () => {
+    if (wrap) wrap.classList.remove('open');
+    else panel.classList.remove('open');
+    // 只选了开始/结束其中一端就关闭 → 还原到打开前的完整状态，避免留下残缺筛选
+    if (dirty && !(start && end)) {
+      start = openSnapshot.start;
+      end = openSnapshot.end;
+      setHidden();
+      syncBtnText();
+    }
+    dirty = false;
+  };
+
+  const render = () => {
+    const y = viewY, m = viewM;
+    const firstDay = new Date(y, m, 1);
+    const dim = new Date(y, m + 1, 0).getDate();
+    const lead = firstDay.getDay();
+    const cells = [];
+    for (let i = lead - 1; i >= 0; i--) cells.push({ d: new Date(y, m, -i), other: true });
+    for (let day = 1; day <= dim; day++) cells.push({ d: new Date(y, m, day), other: false });
+    let tail = 1;
+    while (cells.length % 7 !== 0) cells.push({ d: new Date(y, m + 1, tail++), other: true });
+    panel.innerHTML = `
+      <div class="cal">
+        <div class="cal-head">
+          <button type="button" class="cal-nav" data-cal-nav="-1" title="上个月">‹</button>
+          <span class="cal-title">${y}年${m + 1}月</span>
+          <button type="button" class="cal-nav" data-cal-nav="1" title="下个月">›</button>
+        </div>
+        <div class="cal-week">${['日', '一', '二', '三', '四', '五', '六'].map(w => `<span>${w}</span>`).join('')}</div>
+        <div class="cal-grid">
+          ${cells.map(({ d, other }) => {
+            const ds = fmt(d);
+            const cls = ['cal-cell'];
+            if (other) cls.push('other');
+            if (start && end && ds > start && ds < end) cls.push('in-range');
+            if (ds === start || ds === end) cls.push(ds === start && ds === end ? 'start end' : (ds === start ? 'start' : 'end'));
+            return `<button type="button" class="${cls.join(' ')}" data-date="${ds}" data-other="${other ? 1 : 0}">${d.getDate()}</button>`;
+          }).join('')}
+        </div>
+        <div class="cal-foot">
+          <div class="cal-foot-btns">
+            <button type="button" class="jobs-tb-btn" data-quick-date="today">今天</button>
+            <button type="button" class="jobs-tb-btn" data-quick-date="yesterday">昨天</button>
+            <button type="button" class="jobs-tb-btn" data-quick-date="3d">近3天</button>
+            <button type="button" class="jobs-tb-btn" data-quick-date="7d">近7天</button>
+          </div>
+          <div class="cal-foot-tip">双击某个日期，只看当天</div>
+        </div>
+      </div>`;
+    panel.querySelectorAll('[data-cal-nav]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      viewM += Number(b.dataset.calNav);
+      if (viewM < 0) { viewM = 11; viewY--; }
+      if (viewM > 11) { viewM = 0; viewY++; }
+      render();
+    }));
+    panel.querySelectorAll('[data-date]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ds = b.dataset.date;
+      if (b.dataset.other === '1') {
+        const d = new Date(ds);
+        viewY = d.getFullYear(); viewM = d.getMonth();
+      }
+      dirty = true;
+      if (!start || (start && end)) { start = ds; end = ''; }
+      else { end = ds; if (end < start) [start, end] = [end, start]; }
+      setHidden();
+      syncBtnText();
+      if (start && end) { close(); if (onApply) onApply(); }
+      else render();
+    }));
+    panel.querySelectorAll('[data-date]').forEach(b => b.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      start = b.dataset.date;
+      end = start;
+      dirty = false;
+      setHidden();
+      syncBtnText();
+      close();
+      if (onApply) onApply();
+    }));
+    panel.querySelectorAll('[data-quick-date]').forEach(b => b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const en = new Date();
+      const st = new Date();
+      const k = b.dataset.quickDate;
+      if (k === 'yesterday') { st.setDate(st.getDate() - 1); en.setDate(en.getDate() - 1); }
+      else if (k === '3d') st.setDate(st.getDate() - 2);
+      else if (k === '7d') st.setDate(st.getDate() - 6);
+      start = fmt(st); end = fmt(en);
+      dirty = false;
+      setHidden(); syncBtnText(); close(); if (onApply) onApply();
+    }));
+  };
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willOpen = wrap ? !wrap.classList.contains('open') : !panel.classList.contains('open');
+    close();
+    if (willOpen) {
+      openSnapshot = { start, end };
+      dirty = false;
+      if (wrap) wrap.classList.add('open');
+      render();
+    }
+  });
+  document.addEventListener('click', (e) => {
+    if (e.target.closest(`#${btnId}, #${panelId}`)) return;
+    close();
+  });
+  syncBtnText();
+}
+
+function copySelectedAccountEmails() {
+  const ids = Array.from(ACCOUNT_SELECTED).map(Number);
+  if (!ids.length) { showToast('请先选择账号'); return; }
+  const emails = ACCOUNTS
+    .filter(r => ids.includes(Number(r.id)))
+    .map(r => (r.email || '').trim())
+    .filter(Boolean);
+  if (!emails.length) { showToast('选中账号没有可复制的邮箱'); return; }
+  copyText(emails.join('\n'));
+  showToast(`已复制 ${emails.length} 个邮箱`);
 }
 
 async function downloadSelectedAccountTxt() {
@@ -4288,6 +4570,7 @@ async function copySelectedAccountTokens() {
   bind('btnStopSelectedCodexV2', stopSelectedCodex);
   bind('btnNoteSelectedAccountsV2', noteSelectedAccounts);
   bind('btnCopySelectedLinesV2', copySelectedAccountLines);
+  bind('btnCopySelectedEmailsV2', copySelectedAccountEmails);
   bind('btnCopyAllTokensV2', copyCurrentPageTokens);
   bind('btnCopyAllLinesV2', copyCurrentPageLines);
   bind('btnDownloadSelectedTxtV2', downloadSelectedAccountTxt);
@@ -4720,11 +5003,15 @@ function getCodexQuery() {
   const el = document.getElementById('qCodexV2');
   return (el ? el.value : '').trim();
 }
+let CODEX_SHOW_ARCHIVED = false;
 async function loadCodex() {
   try {
     const p = PAGERS.codex;
     const q = getCodexQuery();
-    const r = await api(`/api/codex?paged=1&page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&q=${encodeURIComponent(q)}`);
+    const archived = CODEX_SHOW_ARCHIVED ? 'only' : '0';
+    const dateFrom = document.getElementById('dateFromCodexV2')?.value || '';
+    const dateTo = document.getElementById('dateToCodexV2')?.value || '';
+    const r = await api(`/api/codex?paged=1&page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&q=${encodeURIComponent(q)}&archived=${encodeURIComponent(archived)}&date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`);
     CODEX = r.accounts || [];
     CODEX_TOTAL = Number(r.total || CODEX.length || 0);
     const totalPages = Math.max(1, Math.ceil(CODEX_TOTAL / p.size));
@@ -4739,6 +5026,12 @@ async function loadCodex() {
 const CODEX_SELECTED = new Set();
 function _codexUpdateSelectedHint() {
   const none = CODEX_SELECTED.size === 0;
+  const archiveBtn = document.getElementById('btnCodexArchiveBulkV2');
+  if (archiveBtn) {
+    archiveBtn.disabled = none;
+    archiveBtn.textContent = CODEX_SHOW_ARCHIVED ? '恢复选中' : '归档选中';
+    archiveBtn.title = CODEX_SHOW_ARCHIVED ? '把选中的归档凭证恢复到默认列表' : '归档选中的 Codex 授权凭证；默认列表不再显示';
+  }
   ['btnCodexDownloadBulkV2', 'btnCodexDownloadBulkCpaV2', 'btnCodexDeleteBulkV2'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = none;
@@ -4791,12 +5084,13 @@ function renderCodex() {
     const moreItems = [
       `<button type="button" class="good" data-codex-download-cpa="${esc(r.filename)}" title="按邮箱从 CPA auth-files 下载真实 Codex JSON">从CPA下载</button>`,
       exported ? `<button type="button" data-codex-reset="${esc(r.filename)}" title="重新标记为未导出">重置标记</button>` : '',
+      `<button type="button" class="${r.archived ? 'good' : ''}" data-codex-archive="${esc(r.filename)}" data-archived="${r.archived ? '0' : '1'}" title="${r.archived ? '恢复到默认 Codex 列表' : '归档后默认列表不再显示'}">${r.archived ? '恢复' : '归档'}</button>`,
     ].filter(Boolean).join('');
     return `
     <tr>
       <td class="col-check"><input type="checkbox" class="codex-row-check" data-fname="${esc(r.filename)}" ${checked}></td>
       <td class="col-email" title="${esc(r.email || '')}">
-        <div class="acc-v2-email">${esc(r.email || '-')}</div>
+        <div class="acc-v2-email">${esc(r.email || '-')}${r.archived ? ' <span class="pill status-used" title="已归档">归档</span>' : ''}</div>
         <div class="acc-v2-sub" title="${esc(r.filename)}">${esc(r.filename)}</div>
       </td>
       <td class="col-plan">${esc(r.plan || '-')}</td>
@@ -4911,6 +5205,47 @@ async function onCodexBodyClick(e) {
       loadCodex();
     } catch(err) { showToast('重置失败: ' + err.message); }
   }
+  const ar = e.target.closest('[data-codex-archive]');
+  if (ar) {
+    const fname = ar.dataset.codexArchive;
+    const archived = ar.dataset.archived === '1';
+    ar.disabled = true;
+    try {
+      await api('/api/codex/archive', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({filename: fname, archived}) });
+      CODEX_SELECTED.delete(fname);
+      showToast(archived ? '已归档' : '已恢复');
+      loadCodex();
+    } catch(err) {
+      showToast('归档失败: ' + err.message);
+      ar.disabled = false;
+    }
+  }
+}
+async function codexArchiveSelected() {
+  if (CODEX_SELECTED.size === 0) return;
+  const filenames = Array.from(CODEX_SELECTED);
+  const archived = !CODEX_SHOW_ARCHIVED;
+  if (!confirm(`${archived ? '归档' : '恢复'}选中的 ${filenames.length} 个 Codex 授权凭证？`)) return;
+  try {
+    const r = await api('/api/codex/archive-bulk', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({filenames, archived}),
+    });
+    (r.updated || []).forEach(item => CODEX_SELECTED.delete(item.filename));
+    showToast(`${archived ? '归档' : '恢复'}成功 ${r.updated_count || 0} 个`);
+    loadCodex();
+  } catch(err) { showToast('归档失败: ' + err.message); }
+}
+function applyCodexArchivedFilter(on) {
+  CODEX_SHOW_ARCHIVED = !!on;
+  const btn = document.getElementById('showArchivedCodexV2');
+  if (btn) {
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.classList.toggle('is-active', on);
+  }
+  CODEX_SELECTED.clear();
+  PAGERS.codex.page = 1;
+  loadCodex();
 }
 async function codexDownloadBulkLocal() {
   if (CODEX_SELECTED.size === 0) return;
@@ -5022,9 +5357,19 @@ async function codexDeleteBulk() {
   }
   const refreshV2 = $('#btnRefreshCodexV2');
   if (refreshV2) refreshV2.addEventListener('click', loadCodex);
+  const archivedV2 = $('#showArchivedCodexV2');
+  if (archivedV2) archivedV2.addEventListener('click', () => applyCodexArchivedFilter(!CODEX_SHOW_ARCHIVED));
+  bindDateFilterPanel({
+    btnId: 'btnDateFilterCodexV2',
+    panelId: 'dateFilterPanelCodexV2',
+    fromId: 'dateFromCodexV2',
+    toId: 'dateToCodexV2',
+    onApply: () => { PAGERS.codex.page = 1; loadCodex(); },
+  });
   const bind = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
   bind('btnCodexDownloadBulkV2', codexDownloadBulkLocal);
   bind('btnCodexDownloadBulkCpaV2', codexDownloadBulkCpa);
+  bind('btnCodexArchiveBulkV2', codexArchiveSelected);
   bind('btnCodexDeleteBulkV2', codexDeleteBulk);
   document.addEventListener('click', (e) => {
     if (e.target.closest('.codex-table-v2 .acc-v2-more')) return;
