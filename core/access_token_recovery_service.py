@@ -145,7 +145,7 @@ def _run_recovery(*, account_id: int, trigger: str) -> dict:
     except Exception as exc:
         error = _sanitize_error(exc)
         db.fail_account_access_token_recovery(account_id, error=error, status="failed")
-        logger.exception("[补AT] 账号恢复失败: account_id=%s", account_id)
+        logger.error("[补AT] 账号恢复失败: account_id=%s error=%s", account_id, error)
         return {"ok": False, "status": "failed", "error": error}
 
 

@@ -136,6 +136,7 @@ def _open_browser(
         device_id=device_id,
         proxy=proxy,
         stop_checker=stop_checker,
+        email_ready_timeout=60,
     )
     return client, opened, driver
 

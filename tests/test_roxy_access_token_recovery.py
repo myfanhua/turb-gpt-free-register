@@ -7,6 +7,24 @@ from core.roxybrowser_client import RoxyOpenResult
 
 
 class RoxyAccessTokenRecoveryTests(unittest.TestCase):
+    def test_recovery_allows_slow_login_page_to_finish_loading(self):
+        opened = Mock()
+        driver = Mock()
+        with patch.object(recovery, "RoxyBrowserClient", return_value=Mock()), \
+             patch.object(
+                 recovery,
+                 "_open_roxy_registration_browser",
+                 return_value=(opened, driver),
+             ) as open_browser:
+            result = recovery._open_browser(
+                proxy="http://stored-proxy",
+                device_id="device-1",
+                should_stop=lambda: False,
+            )
+
+        self.assertEqual(result[1:], (opened, driver))
+        self.assertEqual(open_browser.call_args.kwargs["email_ready_timeout"], 60)
+
     def test_login_password_switches_to_email_otp_and_returns_session(self):
         driver = Mock()
         opened = RoxyOpenResult(

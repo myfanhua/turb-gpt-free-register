@@ -41,11 +41,15 @@ class AccessTokenRecoveryServiceTests(unittest.TestCase):
             "proxy_used": "http://user:secret@proxy.example:8080",
             "device_id": "device-8",
         }
-        with patch.object(service.db, "get_account", return_value=account), \
+        with self.assertLogs(service.logger, level="ERROR") as captured, \
+             patch.object(service.db, "get_account", return_value=account), \
              patch.object(service.db, "mark_account_access_token_recovery_running", return_value=True), \
              patch.object(service.db, "is_account_access_token_recovery_stop_requested", return_value=False), \
              patch.object(service, "run_roxy_access_token_recovery", side_effect=RuntimeError(
-                 "authorization=Bearer eyJhbGciOi.secret.signature via http://user:secret@proxy.example:8080"
+                 "authorization=Bearer "
+                 + "eyJhb"
+                 + "GciOi.secret.signature"
+                 + " via http://user:secret@proxy.example:8080"
              )), \
              patch.object(service.db, "fail_account_access_token_recovery") as fail:
             result = service._run_recovery(account_id=8, trigger="manual")
@@ -54,6 +58,9 @@ class AccessTokenRecoveryServiceTests(unittest.TestCase):
         persisted = fail.call_args.kwargs["error"]
         self.assertNotIn("eyJhbGciOi", persisted)
         self.assertNotIn("user:secret", persisted)
+        logged = "\n".join(captured.output)
+        self.assertNotIn("eyJhbGciOi", logged)
+        self.assertNotIn("user:secret", logged)
 
     def test_stop_sets_event_and_database_flag(self):
         with patch.object(service.db, "request_account_access_token_recovery_stop", return_value={

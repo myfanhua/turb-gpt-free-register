@@ -1643,6 +1643,7 @@ def _open_roxy_registration_browser(
     device_id: str | None = None,
     proxy: str | None = None,
     stop_checker=None,
+    email_ready_timeout: int = 25,
 ) -> tuple[RoxyOpenResult, object]:
     """串行创建 Roxy 环境并完成首次登录页加载。"""
     account_device_id = str(device_id or "").strip() or str(uuid.uuid4())
@@ -1669,7 +1670,7 @@ def _open_roxy_registration_browser(
                 driver.get("https://chatgpt.com/auth/login")
                 human_delay("navigate")
                 _maybe_accept(driver)
-                _wait_for_email_input_ready(driver, timeout=25)
+                _wait_for_email_input_ready(driver, timeout=max(1, int(email_ready_timeout or 25)))
                 logger.info("[Roxy注册] 登录页与邮箱输入框已就绪，释放启动门控")
                 return opened, driver
             except BaseException as exc:
