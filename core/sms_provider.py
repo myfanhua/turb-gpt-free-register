@@ -555,6 +555,8 @@ def acquire_number(
     http: CurlSession | None = None,
     service: str | None = None,
     country: str | None = None,
+    *,
+    max_price=None,
 ) -> tuple[str, str]:
     """
     取一个手机号（getNumber）。
@@ -633,8 +635,13 @@ def acquire_number(
             "service": service or _cfg.SMS_SERVICE,
             "country": country or _cfg.SMS_COUNTRY,
         }
-        if _cfg.SMS_MAX_PRICE:
-            params["maxPrice"] = _cfg.SMS_MAX_PRICE
+        request_max_price = (
+            str(max_price).strip()
+            if max_price is not None
+            else str(_cfg.SMS_MAX_PRICE or "").strip()
+        )
+        if request_max_price:
+            params["maxPrice"] = request_max_price
 
         text = _request_handler(http, params)
         # 成功格式：ACCESS_NUMBER:激活ID:号码

@@ -2,6 +2,7 @@
 import threading
 import time
 import unittest
+from decimal import Decimal
 from unittest.mock import patch
 
 from config import codex as codex_config
@@ -108,6 +109,45 @@ class SmsActivateProviderTests(unittest.TestCase):
         self.assertEqual(http.calls[0]["params"]["service"], "dr")
         self.assertEqual(http.calls[0]["params"]["country"], "12")
         self.assertEqual(http.calls[0]["params"]["maxPrice"], "1.5")
+
+    def test_sms_activate_acquire_uses_per_request_max_price(self):
+        http = _Http(["ACCESS_NUMBER:act-low:573001112233"])
+        with patch.object(codex_config, "SMS_PROVIDER", "sms_activate"), patch.object(
+            codex_config,
+            "SMS_API_BASE",
+            "https://hero-sms.com/stubs/handler_api.php",
+        ), patch.object(codex_config, "SMS_API_KEY", "secret"), patch.object(
+            codex_config, "SMS_SERVICE", "dr"
+        ), patch.object(codex_config, "SMS_COUNTRY", "33"), patch.object(
+            codex_config, "SMS_MAX_PRICE", "0.11"
+        ):
+            result = sms_provider.acquire_number(
+                http=http,
+                country="33",
+                max_price="0.055",
+            )
+
+        self.assertEqual(result, ("act-low", "573001112233"))
+        self.assertEqual(http.calls[0]["params"]["maxPrice"], "0.055")
+
+    def test_sms_activate_acquire_preserves_decimal_max_price(self):
+        http = _Http(["ACCESS_NUMBER:act-low:573001112233"])
+        with patch.object(codex_config, "SMS_PROVIDER", "sms_activate"), patch.object(
+            codex_config,
+            "SMS_API_BASE",
+            "https://hero-sms.com/stubs/handler_api.php",
+        ), patch.object(codex_config, "SMS_API_KEY", "secret"), patch.object(
+            codex_config, "SMS_SERVICE", "dr"
+        ), patch.object(codex_config, "SMS_COUNTRY", "33"), patch.object(
+            codex_config, "SMS_MAX_PRICE", "0.11"
+        ):
+            sms_provider.acquire_number(
+                http=http,
+                country="33",
+                max_price=Decimal("0.0275"),
+            )
+
+        self.assertEqual(http.calls[0]["params"]["maxPrice"], "0.0275")
 
     def test_sms_activate_wait_for_code_parses_status_ok(self):
         http = _Http(["STATUS_OK:482913"])
