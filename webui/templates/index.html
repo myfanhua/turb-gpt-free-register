@@ -1761,12 +1761,8 @@ async function recoverOneAccessToken(id, btn) {
   const account = ACCOUNTS.find(item => Number(item.id) === Number(id));
   if (!account) { showToast('账号不存在'); return; }
   const force = account.has_access_token && !account.access_token_invalid;
-  const action = account.has_access_token ? '重补并替换 AT' : '补 AT';
-  const reason = account.access_token_invalid
-    ? '该账号套餐检测返回 HTTP 401，已标记为 AT 失效。'
-    : (force ? '该账号未标记 HTTP 401，本次将强制重新登录。' : '该账号当前没有 AT。');
-  if (!confirm(`确定为该账号${action}吗？\n\n${account.email || ('#' + id)}\n\n${reason}\n成功后才写入新 AT；失败会保留旧 AT。`)) return;
   btn.disabled = true;
+  showToast('正在提交重补 AT 任务…');
   try {
     const result = await api('/api/accounts/recover-access-token', {
       method: 'POST',
@@ -1801,12 +1797,8 @@ async function recoverSelectedAccessTokens() {
   if (!ids.length) { showToast('请先选择账号'); return; }
   const selected = ids.map(id => ACCOUNTS.find(item => Number(item.id) === id)).filter(Boolean);
   const eligible = selected.filter(item => !['queued', 'running'].includes(item.at_recovery_status));
-  const busy = selected.length - eligible.length;
   if (!eligible.length) { showToast('选中账号都在重补 AT'); return; }
-  const invalid = eligible.filter(item => item.access_token_invalid).length;
-  const forced = eligible.filter(item => item.has_access_token && !item.access_token_invalid).length;
-  const missing = eligible.filter(item => !item.has_access_token).length;
-  if (!confirm(`确定批量重补 ${eligible.length} 个账号吗？\n\nHTTP 401 失效 ${invalid} 个；普通强制重补 ${forced} 个；缺失 AT ${missing} 个；运行中跳过 ${busy} 个。\n\n成功后才替换，失败保留旧 AT。`)) return;
+  showToast(`正在提交 ${eligible.length} 个重补 AT 任务…`);
   const result = await api('/api/accounts/recover-access-token-bulk', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},

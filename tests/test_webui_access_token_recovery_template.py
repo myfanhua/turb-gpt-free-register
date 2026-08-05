@@ -42,6 +42,11 @@ class WebUiAccessTokenRecoveryTemplateTests(unittest.TestCase):
             self.html,
         )
 
+    def test_recover_buttons_do_not_depend_on_native_confirm_dialogs(self):
+        self.assertNotIn("if (!confirm(`确定为该账号${action}吗？", self.html)
+        self.assertNotIn("if (!confirm(`确定批量重补 ${eligible.length} 个账号吗？", self.html)
+        self.assertIn("showToast('正在提交重补 AT 任务…')", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()
