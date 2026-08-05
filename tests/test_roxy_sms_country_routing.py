@@ -115,7 +115,7 @@ def test_build_selector_returns_none_for_fixed_provider(provider):
         assert roxy_codex_oauth._build_sms_country_selector() is None
 
 
-def test_choose_country_uses_live_offers_and_selector_reason():
+def test_choose_offer_uses_live_offers_and_selector_reason():
     selector = PreferredCountrySelector(["A", "B"], fallback_country="Z")
     http = object()
 
@@ -127,27 +127,27 @@ def test_choose_country_uses_live_offers_and_selector_reason():
             return_value=[offer("A", "0.20", 4), offer("B", "0.10", 2)],
         ) as get_offers,
     ):
-        country = roxy_codex_oauth._choose_sms_country(selector, http, force=True)
+        selected = roxy_codex_oauth._choose_sms_offer(selector, http, force=True)
 
-    assert country == "B"
+    assert selected == offer("B", "0.10", 2)
     assert selector.last_reason == "lowest_price"
     get_offers.assert_called_once_with(
         ["A", "B"], service="openai", http=http, force=True
     )
 
 
-def test_choose_country_uses_saved_order_only_when_price_api_errors():
+def test_choose_offer_propagates_price_api_errors():
     selector = PreferredCountrySelector(["A", "B"], fallback_country="Z")
     with patch.object(
         roxy_codex_oauth.sms_provider,
         "get_country_offers",
         side_effect=SmsProviderError("prices unavailable"),
     ):
-        assert roxy_codex_oauth._choose_sms_country(selector, object()) == "A"
-    assert selector.last_reason == "saved_order_fallback"
+        with pytest.raises(SmsProviderError, match="prices unavailable"):
+            roxy_codex_oauth._choose_sms_offer(selector, object())
 
 
-def test_price_transport_error_uses_saved_order_for_number_acquisition():
+def test_price_transport_error_stops_before_number_acquisition():
     provider_cfg = cfg()
     http = Mock()
     patches = phone_flow_patches()
@@ -185,9 +185,10 @@ def test_price_transport_error_uses_saved_order_for_number_acquisition():
         for item in patches:
             stack.enter_context(item)
 
-        roxy_codex_oauth._do_phone_verification_if_present(object())
+        with pytest.raises(RuntimeError, match="price transport failed"):
+            roxy_codex_oauth._do_phone_verification_if_present(object())
 
-    acquire.assert_called_once_with(http, country="A")
+    acquire.assert_not_called()
 
 
 def test_choose_country_propagates_no_balance_from_price_api():
@@ -198,7 +199,7 @@ def test_choose_country_propagates_no_balance_from_price_api():
         side_effect=SmsNoBalanceError("NO_BALANCE"),
     ):
         with pytest.raises(SmsNoBalanceError):
-            roxy_codex_oauth._choose_sms_country(selector, object())
+            roxy_codex_oauth._choose_sms_offer(selector, object())
 
 
 def test_choose_country_propagates_no_eligible_live_result():
@@ -212,7 +213,7 @@ def test_choose_country_propagates_no_eligible_live_result():
         patch.object(roxy_codex_oauth.logger, "info") as info,
     ):
         with pytest.raises(NoEligibleSmsCountry):
-            roxy_codex_oauth._choose_sms_country(selector, object())
+            roxy_codex_oauth._choose_sms_offer(selector, object())
     assert any(
         args[2] == "no_eligible_country" and "A=0.10/0" in args[3]
         for args, _kwargs in info.call_args_list
@@ -238,14 +239,41 @@ def test_no_numbers_switches_country_without_consuming_actual_attempt():
         )
 
     assert acquire.call_args_list == [
-        call(ANY, country="A"),
-        call(ANY, country="B"),
+        call(ANY, country="A", max_price=Decimal("0.10")),
+        call(ANY, country="B", max_price=Decimal("0.20")),
     ]
     attempt_logs = [args for args, _kwargs in info.call_args_list if "手机验证尝试" in str(args[0])]
     assert attempt_logs == [
-        ("[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s", 1, 5, "sms_activate", "222")
+        (
+            "[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s，country=%s，request_max_price=%s",
+            1,
+            5,
+            "sms_activate",
+            "222",
+            "B",
+            Decimal("0.20"),
+        )
     ]
     retry_sleep.assert_not_called()
+
+
+def test_colombia_lowest_quote_becomes_get_number_max_price():
+    provider_cfg = cfg()
+    provider_cfg.SMS_PREFERRED_COUNTRIES = ["33"]
+    provider_cfg.SMS_COUNTRY = "33"
+    provider_cfg.SMS_MAX_PRICE = "0.11"
+
+    acquire, _, _ = run_phone_flow(
+        provider_cfg,
+        offers=[offer("33", "0.055", 4857)],
+        acquire=[("id-co", "573001112233")],
+    )
+
+    acquire.assert_called_once_with(
+        ANY,
+        country="33",
+        max_price=Decimal("0.055"),
+    )
 
 
 def test_no_numbers_after_activation_is_recorded_as_actual_number_failure():
@@ -330,11 +358,13 @@ def test_fixed_provider_no_numbers_retries_without_consuming_actual_attempt(prov
     ]
     assert attempt_logs == [
         (
-            "[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s",
+            "[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s，country=%s，request_max_price=%s",
             1,
             5,
             provider,
             "123",
+            "-",
+            "-",
         )
     ]
 

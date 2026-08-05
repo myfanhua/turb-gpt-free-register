@@ -1202,49 +1202,32 @@ def _build_sms_country_selector() -> PreferredCountrySelector | None:
     )
 
 
-def _choose_sms_country(selector, http, force: bool = False) -> str | None:
+def _choose_sms_offer(selector, http, force: bool = False):
     if selector is None:
         return None
-    try:
-        offers = sms_provider.get_country_offers(
-            selector.preferred_countries,
-            service=sms_provider._cfg.SMS_SERVICE,
-            http=http,
-            force=force,
-        )
-    except sms_provider.SmsNoBalanceError:
-        raise
-    except Exception as exc:
-        logger.warning(
-            "[Codex][Browser] SMS 国家报价不可用，按保存顺序选择：%s: %s",
-            type(exc).__name__,
-            str(exc)[:180],
-        )
-        country = None
-        try:
-            country = selector.choose(None, allow_order_fallback=True)
-            return country
-        finally:
-            logger.info(
-                "[Codex][Browser] SMS 国家选择 country=%s reason=%s offers=%s",
-                country or "-",
-                selector.last_reason,
-                "fallback",
-            )
+    offers = sms_provider.get_country_offers(
+        selector.preferred_countries,
+        service=sms_provider._cfg.SMS_SERVICE,
+        http=http,
+        force=force,
+    )
 
     summary = ",".join(
         f"{item.country_code}={item.price}/{item.available_count}" for item in offers
     ) or "-"
-    country = None
+    selected = None
     try:
-        country = selector.choose(offers)
-        return country
+        selected = selector.choose_offer(offers)
+        return selected
     finally:
         logger.info(
-            "[Codex][Browser] SMS 国家选择 country=%s reason=%s offers=%s",
-            country or "-",
+            "[Codex][Browser] SMS 国家选择 country=%s reason=%s offers=%s quoted_price=%s request_max_price=%s stock=%s",
+            selected.country_code if selected else "-",
             selector.last_reason,
             summary,
+            selected.price if selected else "-",
+            selected.price if selected else "-",
+            selected.available_count if selected else "-",
         )
 
 
@@ -1273,16 +1256,36 @@ def _do_phone_verification_if_present(driver) -> None:
         actual_attempt = 0
         fixed_no_numbers_attempt = 0
         while actual_attempt < max_retries:
-            country = _choose_sms_country(
+            selected_offer = _choose_sms_offer(
                 selector,
                 http,
                 force=bool(selector and selector.needs_offer_refresh),
             )
+            country = selected_offer.country_code if selected_offer else None
+            request_max_price = selected_offer.price if selected_offer else None
             activation_id = None
             try:
-                activation_id, phone = sms_provider.acquire_number(http, country=country)
+                if selected_offer is None:
+                    activation_id, phone = sms_provider.acquire_number(
+                        http,
+                        country=country,
+                    )
+                else:
+                    activation_id, phone = sms_provider.acquire_number(
+                        http,
+                        country=country,
+                        max_price=request_max_price,
+                    )
                 actual_attempt += 1
-                logger.info("[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s", actual_attempt, max_retries, provider, phone)
+                logger.info(
+                    "[Codex][Browser] 手机验证尝试 %s/%s，provider=%s，号码=+%s，country=%s，request_max_price=%s",
+                    actual_attempt,
+                    max_retries,
+                    provider,
+                    phone,
+                    country or "-",
+                    request_max_price if request_max_price is not None else "-",
+                )
                 logger.info("[Codex][Browser] 准备手机号输入页，重新设置新手机号")
                 _ensure_add_phone_input(driver, reason=f"attempt-{actual_attempt}")
                 _prepare_phone_submission(driver, f"+{phone}")
