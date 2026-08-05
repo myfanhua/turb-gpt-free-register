@@ -69,6 +69,7 @@
 - `at_recovery_started_at`。
 - `at_recovery_completed_at`。
 - `at_recovery_log_file`：任务日志位置。
+- `at_recovery_stop_requested`：运行中任务的协作式停止标记；不作为用户可操作状态展示。
 
 数据库提供原子领取、标记运行、完成、失败、停止和中断恢复方法。成功写回账号时必须在同一锁保护范围内更新账号记录并触发现有账号 JSON、Token 文本和静态查看页同步。
 
@@ -86,10 +87,11 @@
 ### 登录环境
 
 1. 优先使用账号的 `proxy_used`。
-2. `proxy_used` 为空时使用当前注册代理配置。
+2. `proxy_used` 为空时调用当前注册代理选择器取得本次代理。
 3. 优先使用账号的 `device_id`。
 4. `device_id` 为空时生成新的 UUID；只有成功取得有效 session 后才正式写回账号。
-5. 登录环境沿用现有 Roxy 启动门控、窗口清理和代理桥恢复能力。
+5. Roxy 创建环境必须支持显式传入上述代理；保存的是本次实际交给 Roxy 的代理地址。
+6. 登录环境沿用现有 Roxy 启动门控、窗口清理和代理桥恢复能力。保存的是本地代理桥地址时，启动前先恢复对应 SID 的桥接路由。
 
 ### 网页登录
 
@@ -112,6 +114,7 @@
 - `plan_type`。
 - `expires_at`。
 - `device_id`。
+- `proxy_used`：本次成功登录实际使用的代理；账号原来已有值时保持同一路由，缺失时保存兜底代理。
 - session 中已有的用户、账号和过期信息。
 - `at_recovery_status=success` 及完成时间。
 
@@ -142,11 +145,13 @@
 - `access_token` 为空且未运行时显示“补 AT”。
 - 状态为 `queued` / `running` 时显示“补 AT 中”和“停止”。
 - 状态为 `failed` / `stopped` 时显示简短原因，并允许再次补 AT。
+- 有补 AT 记录时可查看最近一次任务日志。
 - 成功后沿用现有 Token 复制和账号操作。
 
 ### 批量操作
 
 - 新增“补缺失 AT”。
+- 新增“停止补 AT”，只作用于选中账号中排队或运行的任务。
 - 只处理当前勾选账号。
 - 提交确认框显示可执行数量和将跳过的已有 AT 数量。
 - 返回并展示 `started`、`busy`、`failed` 和 `skipped` 分类统计。
@@ -159,6 +164,10 @@
   - Body：`{account_ids:[...]}`。
 - `POST /api/accounts/recover-access-token/<account_id>/stop`
   - 停止排队或运行中的任务。
+- `POST /api/accounts/recover-access-token/stop-bulk`
+  - Body：`{account_ids:[...]}`，停止选中的补 AT 任务。
+- `GET /api/accounts/recover-access-token/<account_id>/log`
+  - 返回该账号最近一次补 AT 日志尾部，不返回完整 Access Token。
 
 现有账号列表接口返回补 AT 状态字段和经过截断、清洗的错误信息，不返回新的完整 Token 字段。
 
