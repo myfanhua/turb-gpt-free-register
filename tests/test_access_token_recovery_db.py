@@ -11,7 +11,20 @@ class AccessTokenRecoveryDbTests(unittest.TestCase):
     def setUp(self):
         self.accounts = [
             {"id": 1, "email": "missing@example.com", "access_token": ""},
-            {"id": 2, "email": "ready@example.com", "access_token": "TOKEN_READY"},
+            {
+                "id": 2,
+                "email": "invalid@example.com",
+                "access_token": "TOKEN_OLD_INVALID",
+                "plan_check_ok": False,
+                "plan_check_error": "HTTP 401",
+            },
+            {
+                "id": 3,
+                "email": "normal@example.com",
+                "access_token": "TOKEN_OLD_NORMAL",
+                "plan_check_ok": True,
+                "plan_check_error": None,
+            },
         ]
         self.saved = []
         self.load_patch = patch.object(db, "_load_accounts", side_effect=lambda: self.accounts)
@@ -27,18 +40,47 @@ class AccessTokenRecoveryDbTests(unittest.TestCase):
         self.load_patch.stop()
         self.save_patch.stop()
 
-    def test_claim_only_accepts_missing_token_account(self):
-        claimed = db.claim_account_access_token_recovery(
-            1, trigger="manual", log_file="C:/logs/one.log"
-        )
-        existing = db.claim_account_access_token_recovery(
-            2, trigger="manual", log_file="C:/logs/two.log"
+    def test_claim_accepts_http_401_account_without_force(self):
+        result = db.claim_account_access_token_recovery(
+            2,
+            trigger="auto_invalid",
+            log_file="C:/logs/invalid.log",
+            force=False,
         )
 
-        self.assertTrue(claimed["accepted"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(self.accounts[1]["at_recovery_status"], "queued")
+        self.assertFalse(self.accounts[1]["at_recovery_force"])
+
+    def test_claim_requires_force_for_existing_non_401_token(self):
+        skipped = db.claim_account_access_token_recovery(
+            3,
+            trigger="manual",
+            log_file="C:/logs/normal.log",
+            force=False,
+        )
+        forced = db.claim_account_access_token_recovery(
+            3,
+            trigger="manual",
+            log_file="C:/logs/normal-force.log",
+            force=True,
+        )
+
+        self.assertTrue(skipped["skipped"])
+        self.assertIn("HTTP 401", skipped["error"])
+        self.assertTrue(forced["accepted"])
+        self.assertTrue(self.accounts[2]["at_recovery_force"])
+
+    def test_missing_token_remains_eligible_without_force(self):
+        result = db.claim_account_access_token_recovery(
+            1,
+            trigger="manual",
+            log_file="C:/logs/missing.log",
+            force=False,
+        )
+
+        self.assertTrue(result["accepted"])
         self.assertEqual(self.accounts[0]["at_recovery_status"], "queued")
-        self.assertTrue(existing["skipped"])
-        self.assertEqual(self.accounts[1]["access_token"], "TOKEN_READY")
 
     def test_second_claim_is_busy(self):
         db.claim_account_access_token_recovery(1, trigger="manual", log_file="C:/logs/one.log")
@@ -49,7 +91,7 @@ class AccessTokenRecoveryDbTests(unittest.TestCase):
         self.assertFalse(second["accepted"])
         self.assertTrue(second["busy"])
 
-    def test_success_writes_session_metadata_without_overwriting_existing_token(self):
+    def test_success_writes_session_metadata_for_missing_token(self):
         db.claim_account_access_token_recovery(1, trigger="manual", log_file="C:/logs/one.log")
         db.mark_account_access_token_recovery_running(1)
         result = db.complete_account_access_token_recovery(
@@ -76,15 +118,48 @@ class AccessTokenRecoveryDbTests(unittest.TestCase):
         extra = json.loads(row["extra_json"])
         self.assertEqual(extra["account"]["id"], "acct-1")
 
-        self.accounts[1]["at_recovery_status"] = "running"
-        untouched = db.complete_account_access_token_recovery(
+    def test_success_replaces_invalid_token_only_when_new_token_differs(self):
+        db.claim_account_access_token_recovery(
             2,
-            session_info={"accessToken": "TOKEN_DIFFERENT"},
+            trigger="auto_invalid",
+            log_file="C:/logs/invalid.log",
+            force=False,
+        )
+        db.mark_account_access_token_recovery_running(2)
+        result = db.complete_account_access_token_recovery(
+            2,
+            session_info={"accessToken": "TOKEN_NEW", "user": {}, "account": {}},
             device_id="device-2",
             proxy_used="http://proxy-2",
+            previous_access_token="TOKEN_OLD_INVALID",
         )
-        self.assertTrue(untouched["already_present"])
-        self.assertEqual(self.accounts[1]["access_token"], "TOKEN_READY")
+
+        self.assertTrue(result["updated"])
+        self.assertTrue(result["replaced"])
+        self.assertEqual(self.accounts[1]["access_token"], "TOKEN_NEW")
+
+    def test_same_or_concurrently_changed_token_is_not_overwritten(self):
+        self.accounts[1]["at_recovery_status"] = "running"
+        with self.assertRaisesRegex(ValueError, "新的 Access Token"):
+            db.complete_account_access_token_recovery(
+                2,
+                session_info={"accessToken": "TOKEN_OLD_INVALID"},
+                device_id="device-2",
+                proxy_used="http://proxy-2",
+                previous_access_token="TOKEN_OLD_INVALID",
+            )
+        self.assertEqual(self.accounts[1]["access_token"], "TOKEN_OLD_INVALID")
+
+        self.accounts[1]["access_token"] = "TOKEN_CHANGED_ELSEWHERE"
+        with self.assertRaisesRegex(RuntimeError, "已被其他任务更新"):
+            db.complete_account_access_token_recovery(
+                2,
+                session_info={"accessToken": "TOKEN_NEW"},
+                device_id="device-2",
+                proxy_used="http://proxy-2",
+                previous_access_token="TOKEN_OLD_INVALID",
+            )
+        self.assertEqual(self.accounts[1]["access_token"], "TOKEN_CHANGED_ELSEWHERE")
 
     def test_stop_and_restart_recovery_preserve_account_data(self):
         db.claim_account_access_token_recovery(1, trigger="manual", log_file="C:/logs/one.log")

@@ -977,31 +977,44 @@ def recover_interrupted_codex_agents() -> int:
         return recovered
 
 
+def is_account_access_token_invalid(row: dict | None) -> bool:
+    """套餐检测明确返回 HTTP 401 时，认定已保存的 Access Token 失效。"""
+    row = row or {}
+    if not str(row.get("access_token") or "").strip():
+        return False
+    error = str(row.get("plan_check_error") or "").strip().lower()
+    return bool(row.get("plan_check_ok") is False and "401" in error)
+
+
 def claim_account_access_token_recovery(
     acc_id: int,
     *,
     trigger: str,
     log_file: str,
+    force: bool = False,
 ) -> dict:
-    """原子领取一个缺失 Access Token 的账号。"""
+    """原子领取缺失、HTTP 401 失效或手动强制重补的账号。"""
     with _LOCK:
         accounts = _load_accounts()
         row = next((item for item in accounts if int(item.get("id") or 0) == int(acc_id)), None)
         if row is None:
             return {"accepted": False, "busy": False, "skipped": True, "error": "账号不存在"}
-        if str(row.get("access_token") or "").strip():
-            return {
-                "accepted": False,
-                "busy": False,
-                "skipped": True,
-                "error": "账号已有 access_token",
-            }
         if str(row.get("at_recovery_status") or "") in {"queued", "running"}:
             return {
                 "accepted": False,
                 "busy": True,
                 "skipped": False,
-                "error": "该账号正在补 AT",
+                "error": "该账号正在重补 AT",
+            }
+
+        has_token = bool(str(row.get("access_token") or "").strip())
+        invalid = is_account_access_token_invalid(row)
+        if has_token and not invalid and not bool(force):
+            return {
+                "accepted": False,
+                "busy": False,
+                "skipped": True,
+                "error": "账号 AT 未标记为 HTTP 401；如需重补请使用强制模式",
             }
 
         now = _now()
@@ -1009,6 +1022,7 @@ def claim_account_access_token_recovery(
             "at_recovery_status": "queued",
             "at_recovery_error": None,
             "at_recovery_trigger": str(trigger or "manual"),
+            "at_recovery_force": bool(force),
             "at_recovery_queued_at": now,
             "at_recovery_started_at": None,
             "at_recovery_completed_at": None,
@@ -1023,6 +1037,8 @@ def claim_account_access_token_recovery(
             "skipped": False,
             "account_id": int(row.get("id") or 0),
             "email": str(row.get("email") or ""),
+            "access_token_invalid": invalid,
+            "forced": bool(force),
         }
 
 
@@ -1108,10 +1124,14 @@ def complete_account_access_token_recovery(
     session_info: dict,
     device_id: str,
     proxy_used: str | None,
+    previous_access_token: str = "",
 ) -> dict:
     token = str((session_info or {}).get("accessToken") or "").strip()
     if not token:
         raise ValueError("session_info 缺少 accessToken")
+    previous = str(previous_access_token or "").strip()
+    if previous and token == previous:
+        raise ValueError("登录未返回新的 Access Token")
     user = (session_info or {}).get("user") or {}
     account = (session_info or {}).get("account") or {}
 
@@ -1119,16 +1139,11 @@ def complete_account_access_token_recovery(
         accounts = _load_accounts()
         row = next((item for item in accounts if int(item.get("id") or 0) == int(acc_id)), None)
         if row is None:
-            return {"updated": False, "already_present": False, "error": "账号不存在"}
+            return {"updated": False, "replaced": False, "error": "账号不存在"}
+        current = str(row.get("access_token") or "").strip()
+        if current != previous:
+            raise RuntimeError("账号 Access Token 已被其他任务更新，本次结果未写入")
         now = _now()
-        if str(row.get("access_token") or "").strip():
-            row["at_recovery_status"] = "success"
-            row["at_recovery_error"] = None
-            row["at_recovery_completed_at"] = now
-            row["at_recovery_stop_requested"] = False
-            row["updated_at"] = now
-            _save_accounts(accounts)
-            return {"updated": False, "already_present": True}
 
         extra = {}
         try:
@@ -1162,7 +1177,7 @@ def complete_account_access_token_recovery(
         row["at_recovery_completed_at"] = now
         row["updated_at"] = now
         _save_accounts(accounts)
-        return {"updated": True, "already_present": False}
+        return {"updated": True, "replaced": bool(previous)}
 
 
 def recover_interrupted_access_token_recoveries() -> int:
@@ -1609,6 +1624,7 @@ def list_account_plan_check_statuses(limit: int = 5000, offset: int = 0, archive
                     item.pop(expire_key, None)
             item["codex_agent_has_token"] = bool(str(row.get("codex_agent_token") or "").strip())
             item["has_access_token"] = bool(str(row.get("access_token") or "").strip())
+            item["access_token_invalid"] = is_account_access_token_invalid(row)
             item["has_at_recovery_log"] = bool(str(row.get("at_recovery_log_file") or "").strip())
             items.append(item)
         latest = max((str(row.get("updated_at") or "") for row in all_rows), default="")
@@ -1636,6 +1652,7 @@ def list_account_plan_check_statuses(limit: int = 5000, offset: int = 0, archive
                     "codex_status": row.get("codex_status"),
                     "codex_agent_status": row.get("codex_agent_status"),
                     "has_access_token": bool(str(row.get("access_token") or "").strip()),
+                    "access_token_invalid": is_account_access_token_invalid(row),
                     "at_recovery_status": row.get("at_recovery_status"),
                     "at_recovery_error": row.get("at_recovery_error"),
                 }
