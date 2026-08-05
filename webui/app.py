@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 from flask import Flask, Response, jsonify, render_template, request
 
-from core import codex_retry_service, db, plan_check_service, extract_link_service, codex_agent_service, sms_provider
+from core import access_token_recovery_service, codex_retry_service, db, plan_check_service, extract_link_service, codex_agent_service, sms_provider
 from webui.auth import init_auth, register_auth_routes
 from core import registration_service as svc
 from webui import config_editor
@@ -188,11 +188,14 @@ def _compact_account_for_list(row: dict) -> dict:
         # Codex / Agent 状态提示。
         "codex_error", "codex_agent_message", "codex_agent_runtime_id",
         "codex_agent_sub2api_url", "codex_agent_sub2api_mode", "codex_agent_sub2api_total",
+        "at_recovery_status", "at_recovery_error", "at_recovery_trigger",
+        "at_recovery_queued_at", "at_recovery_started_at", "at_recovery_completed_at",
     )
     for key in optional_keys:
         value = row.get(key)
         if value is not None and value != "":
             out[key] = value
+    out["has_at_recovery_log"] = bool(str(row.get("at_recovery_log_file") or "").strip())
     plan = str(row.get("current_plan_type") or row.get("plan_type") or "").lower()
     if any(x in plan for x in ("plus", "pro", "team", "go")):
         expire = row.get("expires_at")
@@ -309,6 +312,9 @@ def create_app(auth_code: str | None = None) -> Flask:
     recovered_plan_checks = db.recover_interrupted_plan_checks()
     if recovered_plan_checks:
         logger.warning("已恢复 %s 个因 WebUI 重启中断的套餐查询状态", recovered_plan_checks)
+    recovered_access_tokens = db.recover_interrupted_access_token_recoveries()
+    if recovered_access_tokens:
+        logger.warning("已恢复 %s 个因 WebUI 重启中断的补 AT 状态", recovered_access_tokens)
     recovered_extract_links = db.recover_interrupted_extract_links()
     failed_extract_links = int(recovered_extract_links.get("failed_count") or 0)
     if failed_extract_links:
@@ -407,6 +413,104 @@ def create_app(auth_code: str | None = None) -> Flask:
             snapshot = db.list_account_plan_check_statuses(limit=max(1, min(5000, limit)), archived=archived, plan_filter=plan_filter, q=q)
         snapshot["queue"] = plan_check_service.queue_settings()
         return jsonify(snapshot)
+
+    @app.post("/api/accounts/recover-access-token")
+    def api_account_recover_access_token():
+        data = request.get_json(silent=True) or {}
+        raw_id = data.get("account_id") or data.get("id")
+        try:
+            account_id = int(raw_id)
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "account_id 无效"}), 400
+        result = access_token_recovery_service.enqueue_account_access_token_recovery(
+            account_id=account_id,
+            trigger="manual",
+        )
+        result = {key: value for key, value in result.items() if key != "future"}
+        if result.get("accepted"):
+            return jsonify({"ok": True, "started": True, **result}), 202
+        if result.get("busy"):
+            return jsonify({"ok": False, **result}), 409
+        if result.get("skipped"):
+            return jsonify({"ok": True, **result}), 200
+        return jsonify({"ok": False, **result}), 503
+
+    @app.post("/api/accounts/recover-access-token-bulk")
+    def api_accounts_recover_access_token_bulk():
+        data = request.get_json(silent=True) or {}
+        ids = data.get("account_ids") or data.get("ids") or []
+        if not isinstance(ids, list) or not ids:
+            return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
+        if len(ids) > 500:
+            return jsonify({"ok": False, "error": "单次最多提交 500 个账号"}), 400
+        started, busy, failed, skipped = [], [], [], []
+        seen = set()
+        for raw in ids:
+            try:
+                account_id = int(raw)
+            except (TypeError, ValueError):
+                skipped.append({"id": raw, "reason": "ID 非法"})
+                continue
+            if account_id in seen:
+                continue
+            seen.add(account_id)
+            result = access_token_recovery_service.enqueue_account_access_token_recovery(
+                account_id=account_id,
+                trigger="manual_bulk",
+            )
+            item = {
+                "id": account_id,
+                **{key: value for key, value in result.items() if key != "future"},
+            }
+            if result.get("accepted"):
+                started.append(item)
+            elif result.get("busy"):
+                busy.append(item)
+            elif result.get("skipped"):
+                skipped.append({"id": account_id, "reason": result.get("error") or "已跳过"})
+            else:
+                failed.append(item)
+        return jsonify({
+            "ok": True,
+            "started": started,
+            "started_count": len(started),
+            "busy": busy,
+            "busy_count": len(busy),
+            "failed": failed,
+            "failed_count": len(failed),
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+        }), 202
+
+    @app.post("/api/accounts/recover-access-token/<int:account_id>/stop")
+    def api_account_recover_access_token_stop(account_id: int):
+        result = access_token_recovery_service.request_stop(account_id)
+        status = 200 if result.get("stopped") else 409
+        return jsonify({"ok": bool(result.get("stopped")), **result}), status
+
+    @app.post("/api/accounts/recover-access-token/stop-bulk")
+    def api_accounts_recover_access_token_stop_bulk():
+        data = request.get_json(silent=True) or {}
+        ids = data.get("account_ids") or data.get("ids") or []
+        if not isinstance(ids, list) or not ids:
+            return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
+        result = access_token_recovery_service.request_stop_bulk(ids)
+        return jsonify({"ok": True, **result})
+
+    @app.get("/api/accounts/recover-access-token/<int:account_id>/log")
+    def api_account_recover_access_token_log(account_id: int):
+        account = db.get_account(account_id)
+        if not account:
+            return jsonify({"ok": False, "error": "账号不存在"}), 404
+        status = account.get("at_recovery_status")
+        return jsonify({
+            "ok": True,
+            "account_id": account_id,
+            "email": account.get("email"),
+            "status": status,
+            "running": status in {"queued", "running"},
+            "log": access_token_recovery_service.read_log(account_id),
+        })
 
 
     @app.get("/api/accounts/<int:acc_id>/secret")
