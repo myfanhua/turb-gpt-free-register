@@ -95,7 +95,7 @@ def _should_stop(account_id: int) -> bool:
     )
 
 
-def _run_recovery(*, account_id: int, trigger: str) -> dict:
+def _run_recovery(*, account_id: int, trigger: str, force: bool = False) -> dict:
     try:
         if not db.mark_account_access_token_recovery_running(account_id):
             account = db.get_account(account_id) or {}
@@ -104,21 +104,13 @@ def _run_recovery(*, account_id: int, trigger: str) -> dict:
             return {
                 "ok": False,
                 "status": "failed",
-                "error": "账号已删除或补 AT 状态已重置",
+                "error": "账号已删除或重补 AT 状态已重置",
             }
 
         account = db.get_account(account_id)
         if not account:
             raise RuntimeError("账号不存在")
-        if str(account.get("access_token") or "").strip():
-            complete = db.complete_account_access_token_recovery(
-                account_id,
-                session_info={"accessToken": str(account.get("access_token"))},
-                device_id=str(account.get("device_id") or ""),
-                proxy_used=account.get("proxy_used"),
-            )
-            return {"ok": True, "status": "success", **complete}
-
+        previous_access_token = str(account.get("access_token") or "").strip()
         proxy = (
             str(account.get("proxy_used") or "").strip()
             or str(proxy_cfg.pick_proxy() or "").strip()
@@ -136,6 +128,7 @@ def _run_recovery(*, account_id: int, trigger: str) -> dict:
             session_info=result["session_info"],
             device_id=result["device_id"],
             proxy_used=result.get("proxy_used"),
+            previous_access_token=previous_access_token,
         )
         return {"ok": True, "status": "success", **persisted}
     except AccessTokenRecoveryStopped as exc:
@@ -145,17 +138,32 @@ def _run_recovery(*, account_id: int, trigger: str) -> dict:
     except Exception as exc:
         error = _sanitize_error(exc)
         db.fail_account_access_token_recovery(account_id, error=error, status="failed")
-        logger.error("[补AT] 账号恢复失败: account_id=%s error=%s", account_id, error)
+        logger.error("[重补AT] 账号恢复失败: account_id=%s error=%s", account_id, error)
         return {"ok": False, "status": "failed", "error": error}
 
 
-def _run_recovery_with_log(*, account_id: int, trigger: str, log_file: str) -> dict:
+def _run_recovery_with_log(
+    *,
+    account_id: int,
+    trigger: str,
+    force: bool,
+    log_file: str,
+) -> dict:
     try:
         with _RecoveryLogContext(log_file):
-            logger.info("[补AT] 开始: account_id=%s trigger=%s", account_id, trigger)
-            result = _run_recovery(account_id=account_id, trigger=trigger)
             logger.info(
-                "[补AT] 完成: account_id=%s status=%s",
+                "[重补AT] 开始: account_id=%s trigger=%s force=%s",
+                account_id,
+                trigger,
+                bool(force),
+            )
+            result = _run_recovery(
+                account_id=account_id,
+                trigger=trigger,
+                force=force,
+            )
+            logger.info(
+                "[重补AT] 完成: account_id=%s status=%s",
                 account_id,
                 result.get("status"),
             )
@@ -170,19 +178,21 @@ def enqueue_account_access_token_recovery(
     *,
     account_id: int,
     trigger: str = "manual",
+    force: bool = False,
 ) -> dict:
     if not _QUEUE_SLOTS.acquire(blocking=False):
         return {
             "accepted": False,
             "busy": False,
             "skipped": False,
-            "error": "补 AT 队列已满",
+            "error": "重补 AT 队列已满",
         }
     log_file = str(_LOG_DIR / f"at-recovery-{int(account_id)}-{uuid.uuid4().hex}.log")
     claim = db.claim_account_access_token_recovery(
         int(account_id),
         trigger=trigger,
         log_file=log_file,
+        force=bool(force),
     )
     if not claim.get("accepted"):
         _QUEUE_SLOTS.release()
@@ -193,6 +203,7 @@ def enqueue_account_access_token_recovery(
             _run_recovery_with_log,
             account_id=int(account_id),
             trigger=trigger,
+            force=bool(force),
             log_file=log_file,
         )
     except Exception as exc:
