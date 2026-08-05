@@ -22,6 +22,50 @@ def test_choose_uses_cheapest_in_stock_preferred_country():
     assert selector.needs_offer_refresh is False
 
 
+def test_choose_offer_returns_lowest_complete_offer():
+    selector = PreferredCountrySelector(
+        ["31", "33"], fallback_country="33", max_price="0.11"
+    )
+
+    selected = selector.choose_offer(
+        [offer("31", "0.055", 3), offer("33", "0.0275", 9)]
+    )
+
+    assert selected == offer("33", "0.0275", 9)
+    assert selector.current_country == "33"
+    assert selector.last_reason == "lowest_price"
+
+
+def test_choose_country_compatibility_wraps_choose_offer():
+    selector = PreferredCountrySelector(
+        ["31", "33"], fallback_country="33", max_price="0.11"
+    )
+
+    assert selector.choose(
+        [offer("31", "0.055", 3), offer("33", "0.0275", 9)]
+    ) == "33"
+
+
+def test_number_failure_requires_fresh_same_country_quote():
+    selector = PreferredCountrySelector(
+        ["31", "33"],
+        fallback_country="33",
+        failure_switch=2,
+        max_price="0.11",
+    )
+    assert selector.choose_offer(
+        [offer("31", "0.055"), offer("33", "0.08")]
+    ).country_code == "31"
+
+    selector.record_number_failure("31")
+
+    assert selector.needs_offer_refresh is True
+    assert selector.choose_offer(
+        [offer("31", "0.04"), offer("33", "0.05")]
+    ) == offer("31", "0.04")
+    assert selector.last_reason == "same_country_second_attempt"
+
+
 def test_equal_prices_use_normalized_saved_preference_order():
     selector = PreferredCountrySelector(
         [" 187 ", "33", "187", "", "33"], fallback_country="6"
@@ -41,7 +85,7 @@ def test_first_number_failure_reuses_country_then_threshold_switches():
     assert selector.record_number_failure("33") == 1
     assert selector.failure_count("33") == 1
     assert selector.current_country == "33"
-    assert selector.needs_offer_refresh is False
+    assert selector.needs_offer_refresh is True
 
     assert selector.choose(offers) == "33"
     assert selector.last_reason == "same_country_second_attempt"

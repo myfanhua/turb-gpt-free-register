@@ -74,11 +74,11 @@ class PreferredCountrySelector:
         code = str(country or "").strip()
         count = self.failure_count(code) + 1
         self._failure_counts[code] = count
+        self.needs_offer_refresh = True
         if count >= self._failure_switch:
             self._failure_blocked.add(code)
             if self.current_country == code:
                 self.current_country = None
-            self.needs_offer_refresh = True
             self.last_reason = "failure_threshold"
         else:
             self.last_reason = "same_country_second_attempt"
@@ -101,27 +101,14 @@ class PreferredCountrySelector:
     ) -> str:
         if offers is None:
             if allow_order_fallback:
-                self._restart_failure_cycle_if_exhausted(
-                    [
-                        code
-                        for code in self.preferred_countries
-                        if code not in self._no_numbers
-                    ]
-                )
-                if (
-                    self.current_country in self.preferred_countries
-                    and 0
-                    < self.failure_count(self.current_country)
-                    < self._failure_switch
-                    and self.current_country not in self._no_numbers
-                    and self.current_country not in self._failure_blocked
-                ):
-                    return self._select(
-                        self.current_country, "same_country_second_attempt"
-                    )
-                for code in self.preferred_countries:
-                    if code not in self._no_numbers and code not in self._failure_blocked:
-                        return self._select(code, "saved_order_fallback")
+                return self._choose_country_without_offers()
+        return self.choose_offer(offers).country_code
+
+    def choose_offer(
+        self,
+        offers: list[SmsCountryOffer] | None,
+    ) -> SmsCountryOffer:
+        if offers is None:
             self.current_country = None
             self.needs_offer_refresh = True
             self.last_reason = "no_eligible_country"
@@ -142,7 +129,9 @@ class PreferredCountrySelector:
             and 0 < self.failure_count(self.current_country) < self._failure_switch
             and self.current_country in eligible
         ):
-            return self._select(self.current_country, "same_country_second_attempt")
+            code = self.current_country
+            self._select(code, "same_country_second_attempt")
+            return eligible[code]
 
         if not eligible:
             self.current_country = None
@@ -160,7 +149,31 @@ class PreferredCountrySelector:
                 preference_index[candidate],
             ),
         )
-        return self._select(code, "lowest_price")
+        self._select(code, "lowest_price")
+        return eligible[code]
+
+    def _choose_country_without_offers(self) -> str:
+        self._restart_failure_cycle_if_exhausted(
+            [
+                code
+                for code in self.preferred_countries
+                if code not in self._no_numbers
+            ]
+        )
+        if (
+            self.current_country in self.preferred_countries
+            and 0 < self.failure_count(self.current_country) < self._failure_switch
+            and self.current_country not in self._no_numbers
+            and self.current_country not in self._failure_blocked
+        ):
+            return self._select(self.current_country, "same_country_second_attempt")
+        for code in self.preferred_countries:
+            if code not in self._no_numbers and code not in self._failure_blocked:
+                return self._select(code, "saved_order_fallback")
+        self.current_country = None
+        self.needs_offer_refresh = True
+        self.last_reason = "no_eligible_country"
+        raise NoEligibleSmsCountry(self._reasons_without_offers())
 
     def _select(self, code: str, reason: str) -> str:
         self.current_country = code
