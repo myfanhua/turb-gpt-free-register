@@ -30,6 +30,7 @@ _LOG_DIR = _PROJECT_ROOT / "注册日志"
 _PLAN_CHECK_STALE_SECONDS = 120
 _PLAN_CHECK_QUEUE_STALE_SECONDS = 1800
 _KAKAO_EXTRACT_STALE_SECONDS = 1500
+_AT_RECOVERY_STALE_SECONDS = 1800
 
 _OUTLOOK_JSON = _PROJECT_ROOT / "用于注册的邮箱.json"
 _OUTLOOK_TXT = _PROJECT_ROOT / "用于注册的邮箱.txt"
@@ -976,6 +977,213 @@ def recover_interrupted_codex_agents() -> int:
         return recovered
 
 
+def claim_account_access_token_recovery(
+    acc_id: int,
+    *,
+    trigger: str,
+    log_file: str,
+) -> dict:
+    """原子领取一个缺失 Access Token 的账号。"""
+    with _LOCK:
+        accounts = _load_accounts()
+        row = next((item for item in accounts if int(item.get("id") or 0) == int(acc_id)), None)
+        if row is None:
+            return {"accepted": False, "busy": False, "skipped": True, "error": "账号不存在"}
+        if str(row.get("access_token") or "").strip():
+            return {
+                "accepted": False,
+                "busy": False,
+                "skipped": True,
+                "error": "账号已有 access_token",
+            }
+        if str(row.get("at_recovery_status") or "") in {"queued", "running"}:
+            return {
+                "accepted": False,
+                "busy": True,
+                "skipped": False,
+                "error": "该账号正在补 AT",
+            }
+
+        now = _now()
+        row.update({
+            "at_recovery_status": "queued",
+            "at_recovery_error": None,
+            "at_recovery_trigger": str(trigger or "manual"),
+            "at_recovery_queued_at": now,
+            "at_recovery_started_at": None,
+            "at_recovery_completed_at": None,
+            "at_recovery_log_file": str(log_file or ""),
+            "at_recovery_stop_requested": False,
+            "updated_at": now,
+        })
+        _save_accounts(accounts)
+        return {
+            "accepted": True,
+            "busy": False,
+            "skipped": False,
+            "account_id": int(row.get("id") or 0),
+            "email": str(row.get("email") or ""),
+        }
+
+
+def mark_account_access_token_recovery_running(acc_id: int) -> bool:
+    with _LOCK:
+        accounts = _load_accounts()
+        row = next((item for item in accounts if int(item.get("id") or 0) == int(acc_id)), None)
+        if row is None or row.get("at_recovery_status") != "queued":
+            return False
+        if bool(row.get("at_recovery_stop_requested")):
+            return False
+        now = _now()
+        row["at_recovery_status"] = "running"
+        row["at_recovery_started_at"] = now
+        row["updated_at"] = now
+        _save_accounts(accounts)
+        return True
+
+
+def request_account_access_token_recovery_stop(acc_id: int) -> dict:
+    with _LOCK:
+        accounts = _load_accounts()
+        row = next((item for item in accounts if int(item.get("id") or 0) == int(acc_id)), None)
+        if row is None:
+            return {"stopped": False, "running": False, "error": "账号不存在"}
+        status = str(row.get("at_recovery_status") or "")
+        now = _now()
+        if status == "queued":
+            row["at_recovery_status"] = "stopped"
+            row["at_recovery_error"] = "用户手动停止"
+            row["at_recovery_stop_requested"] = True
+            row["at_recovery_completed_at"] = now
+            row["updated_at"] = now
+            _save_accounts(accounts)
+            return {"stopped": True, "running": False, "status": "stopped"}
+        if status == "running":
+            row["at_recovery_stop_requested"] = True
+            row["updated_at"] = now
+            _save_accounts(accounts)
+            return {"stopped": True, "running": True, "status": "running"}
+        return {
+            "stopped": False,
+            "running": False,
+            "error": "该账号没有正在执行的补 AT 任务",
+        }
+
+
+def is_account_access_token_recovery_stop_requested(acc_id: int) -> bool:
+    with _LOCK:
+        row = next(
+            (item for item in _load_accounts() if int(item.get("id") or 0) == int(acc_id)),
+            None,
+        )
+        return bool(row and row.get("at_recovery_stop_requested"))
+
+
+def fail_account_access_token_recovery(
+    acc_id: int,
+    *,
+    error: str,
+    status: str = "failed",
+) -> bool:
+    if status not in {"failed", "stopped"}:
+        raise ValueError("补 AT 失败状态只能是 failed 或 stopped")
+    with _LOCK:
+        accounts = _load_accounts()
+        row = next((item for item in accounts if int(item.get("id") or 0) == int(acc_id)), None)
+        if row is None:
+            return False
+        now = _now()
+        row["at_recovery_status"] = status
+        row["at_recovery_error"] = str(error or "")[:500]
+        row["at_recovery_stop_requested"] = status == "stopped"
+        row["at_recovery_completed_at"] = now
+        row["updated_at"] = now
+        _save_accounts(accounts)
+        return True
+
+
+def complete_account_access_token_recovery(
+    acc_id: int,
+    *,
+    session_info: dict,
+    device_id: str,
+    proxy_used: str | None,
+) -> dict:
+    token = str((session_info or {}).get("accessToken") or "").strip()
+    if not token:
+        raise ValueError("session_info 缺少 accessToken")
+    user = (session_info or {}).get("user") or {}
+    account = (session_info or {}).get("account") or {}
+
+    with _LOCK:
+        accounts = _load_accounts()
+        row = next((item for item in accounts if int(item.get("id") or 0) == int(acc_id)), None)
+        if row is None:
+            return {"updated": False, "already_present": False, "error": "账号不存在"}
+        now = _now()
+        if str(row.get("access_token") or "").strip():
+            row["at_recovery_status"] = "success"
+            row["at_recovery_error"] = None
+            row["at_recovery_completed_at"] = now
+            row["at_recovery_stop_requested"] = False
+            row["updated_at"] = now
+            _save_accounts(accounts)
+            return {"updated": False, "already_present": True}
+
+        extra = {}
+        try:
+            parsed = json.loads(str(row.get("extra_json") or "{}"))
+            if isinstance(parsed, dict):
+                extra = parsed
+        except Exception:
+            pass
+        extra.update({
+            "user": user,
+            "account": account,
+            "expires": (session_info or {}).get("expires"),
+        })
+
+        row["access_token"] = token
+        if user.get("id") is not None:
+            row["user_id"] = user.get("id")
+        if user.get("name") is not None:
+            row["user_name"] = user.get("name")
+        if account.get("planType") is not None:
+            row["plan_type"] = account.get("planType")
+        if (session_info or {}).get("expires") is not None:
+            row["expires_at"] = (session_info or {}).get("expires")
+        row["device_id"] = str(device_id or "").strip()
+        if str(proxy_used or "").strip():
+            row["proxy_used"] = str(proxy_used).strip()
+        row["extra_json"] = json.dumps(extra, ensure_ascii=False)
+        row["at_recovery_status"] = "success"
+        row["at_recovery_error"] = None
+        row["at_recovery_stop_requested"] = False
+        row["at_recovery_completed_at"] = now
+        row["updated_at"] = now
+        _save_accounts(accounts)
+        return {"updated": True, "already_present": False}
+
+
+def recover_interrupted_access_token_recoveries() -> int:
+    with _LOCK:
+        accounts = _load_accounts()
+        recovered = 0
+        now = _now()
+        for row in accounts:
+            if row.get("at_recovery_status") not in {"queued", "running"}:
+                continue
+            row["at_recovery_status"] = "failed"
+            row["at_recovery_error"] = "WebUI 重启导致补 AT 任务中断，请重新执行"
+            row["at_recovery_stop_requested"] = False
+            row["at_recovery_completed_at"] = now
+            row["updated_at"] = now
+            recovered += 1
+        if recovered:
+            _save_accounts(accounts)
+        return recovered
+
+
 def claim_account_plan_check(
     acc_id: int | None = None,
     email: str | None = None,
@@ -1377,6 +1585,8 @@ def list_account_plan_check_statuses(limit: int = 5000, offset: int = 0, archive
         "codex_agent_status", "codex_agent_message",
         "codex_agent_runtime_id", "codex_agent_sub2api_url",
         "codex_agent_sub2api_mode", "codex_agent_sub2api_total",
+        "at_recovery_status", "at_recovery_error", "at_recovery_trigger",
+        "at_recovery_queued_at", "at_recovery_started_at", "at_recovery_completed_at",
     )
     with _LOCK:
         all_rows = _filtered_decorated_accounts(archived=archived, plan_filter=plan_filter, q=q)
@@ -1399,6 +1609,7 @@ def list_account_plan_check_statuses(limit: int = 5000, offset: int = 0, archive
                     item.pop(expire_key, None)
             item["codex_agent_has_token"] = bool(str(row.get("codex_agent_token") or "").strip())
             item["has_access_token"] = bool(str(row.get("access_token") or "").strip())
+            item["has_at_recovery_log"] = bool(str(row.get("at_recovery_log_file") or "").strip())
             items.append(item)
         latest = max((str(row.get("updated_at") or "") for row in all_rows), default="")
         # updated_at 目前只有秒级精度；一次快速查询可能在同一秒内完成
@@ -1424,6 +1635,9 @@ def list_account_plan_check_statuses(limit: int = 5000, offset: int = 0, archive
                     "extract_link_error": row.get("extract_link_error"),
                     "codex_status": row.get("codex_status"),
                     "codex_agent_status": row.get("codex_agent_status"),
+                    "has_access_token": bool(str(row.get("access_token") or "").strip()),
+                    "at_recovery_status": row.get("at_recovery_status"),
+                    "at_recovery_error": row.get("at_recovery_error"),
                 }
                 for row in all_rows
             ],
