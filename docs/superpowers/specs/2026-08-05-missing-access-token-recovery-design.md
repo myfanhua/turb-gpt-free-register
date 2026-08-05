@@ -1,5 +1,7 @@
 # 缺失 Access Token 自动补全设计
 
+> 此设计的“仅补缺失 AT”范围已被 `2026-08-05-invalid-access-token-recovery-design.md` 替代；实现以失效 AT 重补设计为准。
+
 ## 目标
 
 为已存在于账号列表、但 `access_token` 为空的账号增加独立的自动补 AT 功能。用户可以从账号行发起单账号补全，也可以勾选多个账号批量补全。
