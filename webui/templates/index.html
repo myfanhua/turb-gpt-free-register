@@ -288,8 +288,8 @@
       width: 100%; max-width: 100%; min-width: 0;
       max-height: 320px; overflow: auto; line-height: 1.5;
     }
-    #logPanel, #retryLogPanel, #qrPanel { min-width: 0; max-width: 100%; overflow-x: hidden; }
-    #logPanel:not(.hidden), #retryLogPanel:not(.hidden), #qrPanel:not(.hidden) {
+    #logPanel, #retryLogPanel, #atRecoveryLogModal, #qrPanel { min-width: 0; max-width: 100%; overflow-x: hidden; }
+    #logPanel:not(.hidden), #retryLogPanel:not(.hidden), #atRecoveryLogModal:not(.hidden), #qrPanel:not(.hidden) {
       position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
       z-index: 1000; display: block; width: min(1100px, calc(100vw - 48px));
       max-height: min(760px, calc(100vh - 48px)); overflow: hidden;
@@ -297,9 +297,9 @@
       background: var(--surface); box-shadow: 0 0 0 9999px rgba(15,23,42,.45), 0 24px 70px rgba(15,23,42,.34);
     }
     #qrPanel:not(.hidden) { width: min(520px, calc(100vw - 48px)); text-align: center; }
-    #logPanel h3, #retryLogPanel h3, #qrPanel h3 { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
-    #logPanel h3 .btn, #retryLogPanel h3 .btn, #qrPanel h3 .btn { margin-left:auto; float:none !important; }
-    #logPanel .log, #retryLogPanel .log { max-height: calc(min(760px, calc(100vh - 48px)) - 74px); margin-top:0; }
+    #logPanel h3, #retryLogPanel h3, #atRecoveryLogModal h3, #qrPanel h3 { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+    #logPanel h3 .btn, #retryLogPanel h3 .btn, #atRecoveryLogModal h3 .btn, #qrPanel h3 .btn { margin-left:auto; float:none !important; }
+    #logPanel .log, #retryLogPanel .log, #atRecoveryLogModal .log { max-height: calc(min(760px, calc(100vh - 48px)) - 74px); margin-top:0; }
     #qrPanel img { display:block; max-width:min(360px, calc(100vw - 96px)); max-height:420px; margin:12px auto; border:1px solid var(--line); border-radius:10px; background:#fff; }
     #qrPanel .qr-link { display:block; word-break:break-all; white-space:normal; font-size:12px; color:var(--muted); margin-top:8px; }
     .hidden { display: none !important; }
@@ -562,6 +562,11 @@
         </div>
         <div class="accounts-actionbar">
           <div class="btn-group">
+            <span class="btn-group-title">Access Token</span>
+            <button class="btn primary" id="btnRecoverSelectedAccessTokens" disabled title="给选中的缺失 Access Token 账号自动登录补 AT">补缺失AT</button>
+            <button class="btn danger" id="btnStopSelectedAccessTokenRecovery" disabled title="停止选中账号中排队或运行的补 AT 任务">停止补AT</button>
+          </div>
+          <div class="btn-group">
             <span class="btn-group-title">套餐/提链</span>
             <button class="btn primary" id="btnCheckSelectedPlans" disabled title="查询选中账号当前套餐；free 账号会检查 Plus 试用资格">查套餐</button>
             <label class="inline-num" title="选择本次提链使用的服务">服务
@@ -619,6 +624,12 @@
           <button class="btn" id="btnCloseRetryLog" style="float:right;min-height:28px;">关闭</button>
         </h3>
         <div class="log" id="retryLogContent">加载中…</div>
+      </div>
+      <div class="body hidden" id="atRecoveryLogModal">
+        <h3>补 AT 日志：<span id="atRecoveryLogEmail" style="font-size:13px;font-weight:400;color:var(--muted);"></span>
+          <button class="btn" id="btnCloseAtRecoveryLog" style="float:right;min-height:28px;">关闭</button>
+        </h3>
+        <div class="log" id="atRecoveryLogContent">加载中…</div>
       </div>
     </section>
   </div>
@@ -1044,7 +1055,7 @@ async function refreshJobs() {
 
 let modalScrollY = 0;
 function updateModalScrollLock() {
-  const opened = !$('#logPanel').classList.contains('hidden') || !$('#retryLogPanel').classList.contains('hidden') || !$('#qrPanel').classList.contains('hidden');
+  const opened = !$('#logPanel').classList.contains('hidden') || !$('#retryLogPanel').classList.contains('hidden') || !$('#atRecoveryLogModal').classList.contains('hidden') || !$('#qrPanel').classList.contains('hidden');
   const locked = document.body.classList.contains('modal-open');
   if (opened && !locked) {
     modalScrollY = window.scrollY || document.documentElement.scrollTop || 0;
@@ -1411,9 +1422,12 @@ async function pollAccountPlanStatuses() {
         const isExtracting = ['queued', 'running'].includes(item.extract_link_status);
         const wasAgenting = ['queued', 'running'].includes(account?.codex_agent_status);
         const isAgenting = ['queued', 'running'].includes(item.codex_agent_status);
+        const wasRecovering = ['queued', 'running'].includes(account?.at_recovery_status);
+        const isRecovering = ['queued', 'running'].includes(item.at_recovery_status);
         if (wasChecking && !isChecking) needsFullReload = true;
         if (wasExtracting && !isExtracting) needsFullReload = true;
         if (wasAgenting && !isAgenting) needsFullReload = true;
+        if (wasRecovering && !isRecovering) needsFullReload = true;
         Object.assign(account, item);
       });
       planStatusRevision = snapshot.revision || '';
@@ -1639,6 +1653,27 @@ function _registrationLocationCell(r) {
     ${ip ? `<div class="sub-cell mono">${esc(ip)}</div>` : ''}
   </div>`;
 }
+function _accessTokenCell(r) {
+  if (r.has_access_token) return '<span class="mono" title="列表仅显示状态，完整 Token 请点复制">有Token</span>';
+  const status = r.at_recovery_status || '';
+  const error = r.at_recovery_error || '';
+  if (status === 'queued') return '<span class="pill status-running">补AT排队中</span>';
+  if (status === 'running') return '<span class="pill status-running">补AT中</span>';
+  if (status === 'failed') return `<div class="extract-link-cell"><span class="pill status-failed" title="${esc(error)}">补AT失败</span><div class="extract-link-error">${esc(error)}</div></div>`;
+  if (status === 'stopped') return `<span class="pill status-used" title="${esc(error)}">补AT已停止</span>`;
+  return '<span class="muted">无Token</span>';
+}
+function _accessTokenRecoveryAction(r) {
+  const status = r.at_recovery_status || '';
+  const log = r.has_at_recovery_log
+    ? `<button data-at-recovery-log="${esc(r.id)}" title="查看最近一次补 AT 日志">补AT日志</button>`
+    : '';
+  if (['queued', 'running'].includes(status)) {
+    return `<button class="danger" data-at-recovery-stop="${esc(r.id)}" title="停止该账号补 AT">停止补AT</button>${log}`;
+  }
+  if (r.has_access_token) return log;
+  return `<button class="primary" data-at-recover="${esc(r.id)}" title="通过网页版登录和邮箱验证码补 Access Token">补AT</button>${log}`;
+}
 function renderAccounts() {
   const p = PAGERS.accounts;
   const total = ACCOUNTS_TOTAL;
@@ -1650,7 +1685,7 @@ function renderAccounts() {
       <td><div class="main-cell">${esc(r.email)}${r.archived ? ' <span class="pill status-used" title="该账号已归档">归档</span>' : ''}</div><div class="sub-cell">${esc(r.user_name || '-')}</div></td>
       <td>${esc(REG_EMAIL_SOURCE_LABELS[r.email_source] || r.email_source || '-')}</td>
       <td>${_registrationLocationCell(r)}</td>
-      <td><span class="mono" title="列表仅显示预览，完整 Token 请点复制">${r.has_access_token ? '有Token' : '<span class="muted">无Token</span>'}</span></td>
+      <td>${_accessTokenCell(r)}</td>
       <td>${_planCell(r)}<div class="sub-cell">${_extractLinkCell(r)}</div></td>
       <td class="wrap" title="${esc(r.note || '')}">${r.note ? esc(short(r.note, 80)) : '<span class="muted">-</span>'}</td>
       <td>${r.totp_enabled ? '已启用' : '<span class="muted">未启用</span>'}</td>
@@ -1659,7 +1694,7 @@ function renderAccounts() {
       <td class="muted">${esc(r.created_at || '-')}</td>
       <td class="actions actions-cell">
         <div class="account-row-actions">
-          <div class="account-action-group"><button class="primary" data-account-copy-secret="access_token" data-account-id="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>复制Token</button> <button class="good" data-account-copy-secret="copy_line" data-account-id="${esc(r.id)}">复制整行</button></div>
+          <div class="account-action-group"><button class="primary" data-account-copy-secret="access_token" data-account-id="${esc(r.id)}" ${r.has_access_token ? '' : 'disabled'}>复制Token</button> ${_accessTokenRecoveryAction(r)} <button class="good" data-account-copy-secret="copy_line" data-account-id="${esc(r.id)}">复制整行</button></div>
           <div class="account-action-group"><button data-account-note="${esc(r.id)}" title="设置/清空该账号备注">备注</button> ${_planAction(r)} ${_extractLinkAction(r)}</div>
           <div class="account-action-group">${_codexAction(r)} <button data-codex-log="${esc(r.email)}" title="查看该账号最近一次 Codex 补跑日志">补跑日志</button></div>
           <div class="account-action-group danger-zone"><button data-account-archive="${esc(r.id)}" data-archived="${r.archived ? '0' : '1'}" title="${r.archived ? '恢复到默认账号列表' : '归档后默认账号列表不再显示'}">${r.archived ? '恢复' : '归档'}</button> <button class="danger" data-account-delete="${esc(r.id)}" data-email="${esc(r.email)}">删除</button></div>
@@ -1685,6 +1720,8 @@ function updateAccountSelectionUi(pageRows = null) {
   const downloadTxtBtn = $('#btnDownloadSelectedTxt');
   const noteSelectedBtn = $('#btnNoteSelectedAccounts');
   const archiveSelectedBtn = $('#btnArchiveSelectedAccounts');
+  const recoverAtBtn = $('#btnRecoverSelectedAccessTokens');
+  const stopRecoverAtBtn = $('#btnStopSelectedAccessTokenRecovery');
   if (hint) hint.textContent = `已选 ${ACCOUNT_SELECTED.size}`;
   if (bulkBtn) bulkBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (retryBulkBtn) retryBulkBtn.disabled = ACCOUNT_SELECTED.size === 0;
@@ -1698,6 +1735,8 @@ function updateAccountSelectionUi(pageRows = null) {
   if (copySelectedBtn) copySelectedBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (downloadTxtBtn) downloadTxtBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (noteSelectedBtn) noteSelectedBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  if (recoverAtBtn) recoverAtBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  if (stopRecoverAtBtn) stopRecoverAtBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (archiveSelectedBtn) {
     archiveSelectedBtn.disabled = ACCOUNT_SELECTED.size === 0;
     archiveSelectedBtn.textContent = SHOW_ARCHIVED_ACCOUNTS ? '恢复选中' : '归档选中';
@@ -1714,6 +1753,112 @@ function updateAccountSelectionUi(pageRows = null) {
   cbAll.checked = pageIds.length > 0 && checkedCount === pageIds.length;
   cbAll.indeterminate = checkedCount > 0 && checkedCount < pageIds.length;
   cbAll.disabled = pageIds.length === 0;
+}
+
+async function recoverOneAccessToken(id, btn) {
+  const account = ACCOUNTS.find(item => Number(item.id) === Number(id));
+  if (!account || account.has_access_token) { showToast('账号已有 Token 或不存在'); return; }
+  if (!confirm(`确定为该账号自动补 AT 吗？\n\n${account.email || ('#' + id)}\n\n流程使用网页版登录和原邮箱验证码；出现手机号验证时任务结束。`)) return;
+  btn.disabled = true;
+  try {
+    const result = await api('/api/accounts/recover-access-token', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({account_id: id}),
+    });
+    showToast(result.started ? '补 AT 已加入后台队列' : (result.error || '账号已跳过'));
+    await pollAccountPlanStatuses();
+  } catch (error) {
+    showToast('补 AT 提交失败: ' + error.message);
+    await pollAccountPlanStatuses();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function stopOneAccessTokenRecovery(id, btn) {
+  if (!confirm('确定停止该账号的补 AT 任务吗？')) return;
+  btn.disabled = true;
+  try {
+    const result = await api(`/api/accounts/recover-access-token/${encodeURIComponent(id)}/stop`, {method: 'POST'});
+    showToast(result.running ? '已发送停止信号' : '已停止排队任务');
+    await pollAccountPlanStatuses();
+  } catch (error) {
+    showToast('停止补 AT 失败: ' + error.message);
+    btn.disabled = false;
+  }
+}
+
+async function recoverSelectedAccessTokens() {
+  const ids = Array.from(ACCOUNT_SELECTED).map(Number);
+  if (!ids.length) { showToast('请先选择账号'); return; }
+  const selected = ids.map(id => ACCOUNTS.find(item => Number(item.id) === id)).filter(Boolean);
+  const eligible = selected.filter(item => !item.has_access_token && !['queued', 'running'].includes(item.at_recovery_status));
+  const skipped = selected.length - eligible.length;
+  if (!eligible.length) { showToast('选中账号没有可补 AT 项'); return; }
+  if (!confirm(`确定批量补 AT ${eligible.length} 个账号吗？\n\n已有 Token 或运行中的 ${skipped} 个账号会跳过。`)) return;
+  const result = await api('/api/accounts/recover-access-token-bulk', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({account_ids: ids}),
+  });
+  showToast(`已开始 ${result.started_count || 0} 个，忙碌 ${result.busy_count || 0} 个，跳过 ${result.skipped_count || 0} 个`);
+  await pollAccountPlanStatuses();
+}
+
+async function stopSelectedAccessTokenRecovery() {
+  const selected = Array.from(ACCOUNT_SELECTED)
+    .map(id => ACCOUNTS.find(item => Number(item.id) === Number(id)))
+    .filter(item => item && ['queued', 'running'].includes(item.at_recovery_status));
+  if (!selected.length) { showToast('选中账号里没有正在补 AT 的任务'); return; }
+  if (!confirm(`确定停止选中的 ${selected.length} 个补 AT 任务吗？`)) return;
+  const result = await api('/api/accounts/recover-access-token/stop-bulk', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({account_ids: selected.map(item => item.id)}),
+  });
+  showToast(`已停止 ${result.stopped_count || 0} 个，跳过 ${result.skipped_count || 0} 个`);
+  await pollAccountPlanStatuses();
+}
+
+let atRecoveryLogAccountId = null;
+let atRecoveryLogTimer = null;
+
+async function pollAccessTokenRecoveryLog() {
+  if (!atRecoveryLogAccountId) return;
+  try {
+    const result = await api(`/api/accounts/recover-access-token/${encodeURIComponent(atRecoveryLogAccountId)}/log`);
+    $('#atRecoveryLogEmail').textContent = result.email || `#${atRecoveryLogAccountId}`;
+    const content = $('#atRecoveryLogContent');
+    const atBottom = content.scrollTop + content.clientHeight >= content.scrollHeight - 30;
+    content.textContent = result.log || '暂无日志';
+    if (atBottom) content.scrollTop = content.scrollHeight;
+    if (!result.running && atRecoveryLogTimer) {
+      clearInterval(atRecoveryLogTimer);
+      atRecoveryLogTimer = null;
+      await loadAccounts();
+    }
+  } catch (error) {
+    $('#atRecoveryLogContent').textContent = '日志读取失败: ' + error.message;
+  }
+}
+
+function openAccessTokenRecoveryLog(id) {
+  atRecoveryLogAccountId = Number(id);
+  $('#atRecoveryLogModal').classList.remove('hidden');
+  updateModalScrollLock();
+  $('#atRecoveryLogContent').textContent = '加载中…';
+  pollAccessTokenRecoveryLog();
+  if (atRecoveryLogTimer) clearInterval(atRecoveryLogTimer);
+  atRecoveryLogTimer = setInterval(pollAccessTokenRecoveryLog, 2000);
+}
+
+function closeAccessTokenRecoveryLog() {
+  if (atRecoveryLogTimer) clearInterval(atRecoveryLogTimer);
+  atRecoveryLogTimer = null;
+  atRecoveryLogAccountId = null;
+  $('#atRecoveryLogModal').classList.add('hidden');
+  updateModalScrollLock();
 }
 
 // ---------- 补跑日志面板 ----------
@@ -1762,6 +1907,24 @@ $('#accountsBody').addEventListener('click', async (e) => {
     } finally {
       copySecretBtn.disabled = false;
     }
+    return;
+  }
+
+  const atRecoverBtn = e.target.closest('[data-at-recover]');
+  if (atRecoverBtn) {
+    await recoverOneAccessToken(Number(atRecoverBtn.dataset.atRecover), atRecoverBtn);
+    return;
+  }
+
+  const atStopBtn = e.target.closest('[data-at-recovery-stop]');
+  if (atStopBtn) {
+    await stopOneAccessTokenRecovery(Number(atStopBtn.dataset.atRecoveryStop), atStopBtn);
+    return;
+  }
+
+  const atLogBtn = e.target.closest('[data-at-recovery-log]');
+  if (atLogBtn) {
+    openAccessTokenRecoveryLog(Number(atLogBtn.dataset.atRecoveryLog));
     return;
   }
 
@@ -1899,6 +2062,9 @@ $('#accountsSelectAll').addEventListener('change', (e) => {
   renderAccounts();
 });
 $('#btnDeleteSelectedAccounts').addEventListener('click', deleteSelectedAccounts);
+$('#btnRecoverSelectedAccessTokens').addEventListener('click', recoverSelectedAccessTokens);
+$('#btnStopSelectedAccessTokenRecovery').addEventListener('click', stopSelectedAccessTokenRecovery);
+$('#btnCloseAtRecoveryLog').addEventListener('click', closeAccessTokenRecoveryLog);
 $('#btnArchiveSelectedAccounts').addEventListener('click', archiveSelectedAccounts);
 $('#btnCopySelectedLines').addEventListener('click', copySelectedAccountLines);
 $('#btnDownloadSelectedTxt').addEventListener('click', downloadSelectedAccountTxt);
