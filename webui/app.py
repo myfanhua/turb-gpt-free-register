@@ -155,6 +155,7 @@ def _compact_account_for_list(row: dict) -> dict:
         "id": row.get("id"),
         "email": row.get("email"),
         "has_access_token": bool(str(row.get("access_token") or "").strip()),
+        "access_token_invalid": db.is_account_access_token_invalid(row),
         "totp_enabled": bool(row.get("totp_secret")),
         "codex_agent_has_token": bool(str(row.get("codex_agent_token") or "").strip()),
     }
@@ -422,9 +423,11 @@ def create_app(auth_code: str | None = None) -> Flask:
             account_id = int(raw_id)
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "account_id 无效"}), 400
+        force = data.get("force") is True
         result = access_token_recovery_service.enqueue_account_access_token_recovery(
             account_id=account_id,
             trigger="manual",
+            force=force,
         )
         result = {key: value for key, value in result.items() if key != "future"}
         if result.get("accepted"):
@@ -443,6 +446,7 @@ def create_app(auth_code: str | None = None) -> Flask:
             return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
         if len(ids) > 500:
             return jsonify({"ok": False, "error": "单次最多提交 500 个账号"}), 400
+        force = data.get("force") is True
         started, busy, failed, skipped = [], [], [], []
         seen = set()
         for raw in ids:
@@ -457,6 +461,7 @@ def create_app(auth_code: str | None = None) -> Flask:
             result = access_token_recovery_service.enqueue_account_access_token_recovery(
                 account_id=account_id,
                 trigger="manual_bulk",
+                force=force,
             )
             item = {
                 "id": account_id,
