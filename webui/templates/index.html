@@ -563,7 +563,7 @@
         <div class="accounts-actionbar">
           <div class="btn-group">
             <span class="btn-group-title">Access Token</span>
-            <button class="btn primary" id="btnRecoverSelectedAccessTokens" disabled title="给选中的缺失 Access Token 账号自动登录补 AT">补缺失AT</button>
+              <button class="btn primary" id="btnRecoverSelectedAccessTokens" disabled title="给选中的账号重新登录并替换失效 Access Token">重补AT</button>
             <button class="btn danger" id="btnStopSelectedAccessTokenRecovery" disabled title="停止选中账号中排队或运行的补 AT 任务">停止补AT</button>
           </div>
           <div class="btn-group">
@@ -1654,25 +1654,27 @@ function _registrationLocationCell(r) {
   </div>`;
 }
 function _accessTokenCell(r) {
-  if (r.has_access_token) return '<span class="mono" title="列表仅显示状态，完整 Token 请点复制">有Token</span>';
   const status = r.at_recovery_status || '';
   const error = r.at_recovery_error || '';
-  if (status === 'queued') return '<span class="pill status-running">补AT排队中</span>';
-  if (status === 'running') return '<span class="pill status-running">补AT中</span>';
-  if (status === 'failed') return `<div class="extract-link-cell"><span class="pill status-failed" title="${esc(error)}">补AT失败</span><div class="extract-link-error">${esc(error)}</div></div>`;
-  if (status === 'stopped') return `<span class="pill status-used" title="${esc(error)}">补AT已停止</span>`;
+  if (status === 'queued') return '<span class="pill status-running">重补AT排队中</span>';
+  if (status === 'running') return '<span class="pill status-running">重补AT中</span>';
+  if (status === 'failed') return `<div class="extract-link-cell"><span class="pill status-failed" title="${esc(error)}">重补AT失败</span><div class="extract-link-error">${esc(error)}</div></div>`;
+  if (status === 'stopped') return `<span class="pill status-used" title="${esc(error)}">重补AT已停止</span>`;
+  if (r.access_token_invalid) return '<span class="pill status-failed" title="套餐检测返回 HTTP 401">AT失效</span>';
+  if (r.has_access_token) return '<span class="mono" title="列表仅显示状态，完整 Token 请点复制">有Token</span>';
   return '<span class="muted">无Token</span>';
 }
 function _accessTokenRecoveryAction(r) {
   const status = r.at_recovery_status || '';
   const log = r.has_at_recovery_log
-    ? `<button data-at-recovery-log="${esc(r.id)}" title="查看最近一次补 AT 日志">补AT日志</button>`
+    ? `<button data-at-recovery-log="${esc(r.id)}" title="查看最近一次重补 AT 日志">重补日志</button>`
     : '';
   if (['queued', 'running'].includes(status)) {
-    return `<button class="danger" data-at-recovery-stop="${esc(r.id)}" title="停止该账号补 AT">停止补AT</button>${log}`;
+    return `<button class="danger" data-at-recovery-stop="${esc(r.id)}" title="停止该账号重补 AT">停止重补</button>${log}`;
   }
-  if (r.has_access_token) return log;
-  return `<button class="primary" data-at-recover="${esc(r.id)}" title="通过网页版登录和邮箱验证码补 Access Token">补AT</button>${log}`;
+  const label = r.has_access_token ? '重补AT' : '补AT';
+  const cls = r.access_token_invalid ? 'danger' : 'primary';
+  return `<button class="${cls}" data-at-recover="${esc(r.id)}" title="通过网页版登录和邮箱验证码获取新的 Access Token">${label}</button>${log}`;
 }
 function renderAccounts() {
   const p = PAGERS.accounts;
@@ -1757,19 +1759,24 @@ function updateAccountSelectionUi(pageRows = null) {
 
 async function recoverOneAccessToken(id, btn) {
   const account = ACCOUNTS.find(item => Number(item.id) === Number(id));
-  if (!account || account.has_access_token) { showToast('账号已有 Token 或不存在'); return; }
-  if (!confirm(`确定为该账号自动补 AT 吗？\n\n${account.email || ('#' + id)}\n\n流程使用网页版登录和原邮箱验证码；出现手机号验证时任务结束。`)) return;
+  if (!account) { showToast('账号不存在'); return; }
+  const force = account.has_access_token && !account.access_token_invalid;
+  const action = account.has_access_token ? '重补并替换 AT' : '补 AT';
+  const reason = account.access_token_invalid
+    ? '该账号套餐检测返回 HTTP 401，已标记为 AT 失效。'
+    : (force ? '该账号未标记 HTTP 401，本次将强制重新登录。' : '该账号当前没有 AT。');
+  if (!confirm(`确定为该账号${action}吗？\n\n${account.email || ('#' + id)}\n\n${reason}\n成功后才写入新 AT；失败会保留旧 AT。`)) return;
   btn.disabled = true;
   try {
     const result = await api('/api/accounts/recover-access-token', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({account_id: id}),
+      body: JSON.stringify({account_id: id, force: force}),
     });
-    showToast(result.started ? '补 AT 已加入后台队列' : (result.error || '账号已跳过'));
+    showToast(result.started ? '重补 AT 已加入后台队列' : (result.error || '账号已跳过'));
     await pollAccountPlanStatuses();
   } catch (error) {
-    showToast('补 AT 提交失败: ' + error.message);
+    showToast('重补 AT 提交失败: ' + error.message);
     await pollAccountPlanStatuses();
   } finally {
     btn.disabled = false;
@@ -1793,14 +1800,17 @@ async function recoverSelectedAccessTokens() {
   const ids = Array.from(ACCOUNT_SELECTED).map(Number);
   if (!ids.length) { showToast('请先选择账号'); return; }
   const selected = ids.map(id => ACCOUNTS.find(item => Number(item.id) === id)).filter(Boolean);
-  const eligible = selected.filter(item => !item.has_access_token && !['queued', 'running'].includes(item.at_recovery_status));
-  const skipped = selected.length - eligible.length;
-  if (!eligible.length) { showToast('选中账号没有可补 AT 项'); return; }
-  if (!confirm(`确定批量补 AT ${eligible.length} 个账号吗？\n\n已有 Token 或运行中的 ${skipped} 个账号会跳过。`)) return;
+  const eligible = selected.filter(item => !['queued', 'running'].includes(item.at_recovery_status));
+  const busy = selected.length - eligible.length;
+  if (!eligible.length) { showToast('选中账号都在重补 AT'); return; }
+  const invalid = eligible.filter(item => item.access_token_invalid).length;
+  const forced = eligible.filter(item => item.has_access_token && !item.access_token_invalid).length;
+  const missing = eligible.filter(item => !item.has_access_token).length;
+  if (!confirm(`确定批量重补 ${eligible.length} 个账号吗？\n\nHTTP 401 失效 ${invalid} 个；普通强制重补 ${forced} 个；缺失 AT ${missing} 个；运行中跳过 ${busy} 个。\n\n成功后才替换，失败保留旧 AT。`)) return;
   const result = await api('/api/accounts/recover-access-token-bulk', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({account_ids: ids}),
+    body: JSON.stringify({account_ids: ids, force: true}),
   });
   showToast(`已开始 ${result.started_count || 0} 个，忙碌 ${result.busy_count || 0} 个，跳过 ${result.skipped_count || 0} 个`);
   await pollAccountPlanStatuses();

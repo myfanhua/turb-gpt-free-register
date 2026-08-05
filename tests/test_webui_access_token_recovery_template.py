@@ -26,6 +26,22 @@ class WebUiAccessTokenRecoveryTemplateTests(unittest.TestCase):
         self.assertIn("/api/accounts/recover-access-token-bulk", self.html)
         self.assertIn("/api/accounts/recover-access-token/stop-bulk", self.html)
 
+    def test_toolbar_and_rows_describe_invalid_token_recovery(self):
+        self.assertIn(">重补AT</button>", self.html)
+        self.assertIn("AT失效", self.html)
+        self.assertIn("重补AT", self.html)
+        self.assertNotIn(">补缺失AT</button>", self.html)
+
+    def test_single_and_bulk_requests_send_force_mode(self):
+        self.assertIn("force: force", self.html)
+        self.assertIn("JSON.stringify({account_ids: ids, force: true})", self.html)
+
+    def test_http_401_accounts_use_automatic_eligibility(self):
+        self.assertIn(
+            "const force = account.has_access_token && !account.access_token_invalid",
+            self.html,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
