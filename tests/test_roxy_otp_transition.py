@@ -90,6 +90,19 @@ class RoxyOtpTransitionTests(unittest.TestCase):
         self.assertEqual(result, {"ok": False, "advanced": True})
         self.assertEqual(profile_page.call_count, 2)
 
+    def test_session_wait_runs_abort_checker(self):
+        driver = Mock()
+        abort = Mock(side_effect=RuntimeError("stopped"))
+
+        with self.assertRaisesRegex(RuntimeError, "stopped"):
+            registration._fetch_chatgpt_session(
+                driver,
+                timeout=1,
+                abort_checker=abort,
+            )
+
+        abort.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()

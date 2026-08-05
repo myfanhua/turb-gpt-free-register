@@ -106,6 +106,34 @@ class RoxyEmailSubmitTests(unittest.TestCase):
         self.assertEqual(type_email.call_count, 1)
         fallback.assert_called_once_with(driver, "one@icloud.com")
 
+    @patch("core.roxy_registration.time.sleep")
+    @patch("core.roxy_registration.human_delay")
+    @patch("core.roxy_registration._wait_email_submit_next_state", return_value="login_password")
+    @patch("core.roxy_registration._submit_email_step")
+    @patch("core.roxy_registration._email_input_value_state")
+    @patch("core.roxy_registration._type_email_address")
+    def test_recovery_mode_returns_login_password_state(
+        self,
+        _type_email,
+        email_state,
+        _submit,
+        _wait,
+        _human_delay,
+        _sleep,
+    ):
+        email_state.return_value = {
+            "url": "https://chatgpt.com/auth/login",
+            "inputs": [{"value": "saved@example.com"}],
+        }
+
+        state = registration._submit_email_and_wait_next(
+            _Driver(),
+            "saved@example.com",
+            allow_login_password=True,
+        )
+
+        self.assertEqual(state, "login_password")
+
 
 if __name__ == "__main__":
     unittest.main()

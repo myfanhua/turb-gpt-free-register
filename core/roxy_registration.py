@@ -474,7 +474,18 @@ def _is_email_login_page_still_present(driver) -> bool:
     return bool(state.get("inputs"))
 
 
-def _wait_email_submit_next_state(driver, email: str, timeout: int = 18) -> str:
+def _run_abort_checker(abort_checker) -> None:
+    if abort_checker is not None:
+        abort_checker()
+
+
+def _wait_email_submit_next_state(
+    driver,
+    email: str,
+    timeout: int = 18,
+    *,
+    abort_checker=None,
+) -> str:
     """邮箱提交后等待进入 password / otp / logged_in；仍停留邮箱页则返回 email_page。
 
     Cloak/Playwright 路径里，点击 submit 后页面经常先发生一次 SPA 导航：
@@ -490,6 +501,7 @@ def _wait_email_submit_next_state(driver, email: str, timeout: int = 18) -> str:
     cleared_last_log_at = 0.0
     expected_email = str(email or "").strip().lower()
     while time.time() < end:
+        _run_abort_checker(abort_checker)
         if _has_access_token(driver):
             return "logged_in"
         if _is_login_password_page(driver):
@@ -587,11 +599,19 @@ def _navigate_auth_via_nextauth(driver, email: str) -> bool:
         return False
 
 
-def _submit_email_and_wait_next(driver, email: str, attempts: int = 3) -> str:
+def _submit_email_and_wait_next(
+    driver,
+    email: str,
+    attempts: int = 3,
+    *,
+    allow_login_password: bool = False,
+    abort_checker=None,
+) -> str:
     """填写并提交邮箱，必须确认进入 password/otp/logged_in 才返回。"""
     last_state = None
     nextauth_fallback_used = False
     for attempt in range(1, attempts + 1):
+        _run_abort_checker(abort_checker)
         _type_email_address(driver, email, timeout=20)
         state = _email_input_value_state(driver)
         last_state = state
@@ -604,8 +624,15 @@ def _submit_email_and_wait_next(driver, email: str, attempts: int = 3) -> str:
         human_delay("form")
         _submit_email_step(driver)
         logger.info("%s 已提交邮箱，等待进入密码页或验证码页（%s/%s）", _log_prefix(driver), attempt, attempts)
-        state_name = _wait_email_submit_next_state(driver, email, timeout=12)
+        state_name = _wait_email_submit_next_state(
+            driver,
+            email,
+            timeout=12,
+            abort_checker=abort_checker,
+        )
         if state_name == "login_password":
+            if allow_login_password:
+                return state_name
             raise RuntimeError(f"邮箱提交后进入登录密码页，按已注册/不可用邮箱处理并停用: url={getattr(driver, 'current_url', '') or 'https://auth.openai.com/log-in/password'}")
         if state_name in ("password", "otp", "logged_in"):
             logger.info("%s 邮箱提交后已进入下一步：%s", _log_prefix(driver), state_name)
@@ -613,8 +640,15 @@ def _submit_email_and_wait_next(driver, email: str, attempts: int = 3) -> str:
         if not nextauth_fallback_used and state_name in ("email_page", "unknown"):
             nextauth_fallback_used = True
             if _navigate_auth_via_nextauth(driver, email):
-                state_name = _wait_email_submit_next_state(driver, email, timeout=30)
+                state_name = _wait_email_submit_next_state(
+                    driver,
+                    email,
+                    timeout=30,
+                    abort_checker=abort_checker,
+                )
                 if state_name == "login_password":
+                    if allow_login_password:
+                        return state_name
                     raise RuntimeError(f"邮箱提交后进入登录密码页，按已注册/不可用邮箱处理并停用: url={getattr(driver, 'current_url', '') or 'https://auth.openai.com/log-in/password'}")
                 if state_name in ("password", "otp", "logged_in"):
                     logger.info("%s NextAuth 兜底后已进入下一步：%s", _log_prefix(driver), state_name)
@@ -711,11 +745,12 @@ def _clear_otp_inputs(driver) -> None:
         pass
 
 
-def _click_resend_email_otp(driver, timeout: int = 20) -> dict:
+def _click_resend_email_otp(driver, timeout: int = 20, *, abort_checker=None) -> dict:
     """点击重新发送邮箱验证码。优先按 DOM 属性识别，文本仅兜底。"""
     end = time.time() + timeout
     last = None
     while time.time() < end:
+        _run_abort_checker(abort_checker)
         if _is_profile_page(driver):
             logger.info("%s[OTP] 页面已进入资料页，停止重新发送验证码", _log_prefix(driver))
             return {"ok": False, "advanced": True}
@@ -756,11 +791,12 @@ def _click_resend_email_otp(driver, timeout: int = 20) -> dict:
     raise RuntimeError(f"找不到可点击的重新发送验证码按钮: last={last}, state={_email_otp_page_state(driver)}")
 
 
-def _wait_after_email_otp_submit(driver, timeout: int = 30) -> str:
+def _wait_after_email_otp_submit(driver, timeout: int = 30, *, abort_checker=None) -> str:
     """提交 OTP 后等待页面离开验证码页；仍在验证码页且有错误/输入框则认为验证码无效。"""
     end = time.time() + timeout
     last = {}
     while time.time() < end:
+        _run_abort_checker(abort_checker)
         if _is_profile_page(driver):
             return 'accepted'
         time.sleep(0.5)
@@ -1539,7 +1575,13 @@ def _switch_to_chatgpt_window_if_any(driver) -> bool:
     return False
 
 
-def _fetch_chatgpt_session(driver, timeout: int = 90, auto_jump_wait: int = 15) -> dict:
+def _fetch_chatgpt_session(
+    driver,
+    timeout: int = 90,
+    auto_jump_wait: int = 15,
+    *,
+    abort_checker=None,
+) -> dict:
     """等待页面完成跳转并从 ChatGPT 页面内读取登录 session/accessToken。
 
     旧逻辑会在 auth.openai.com 上一直等到总超时，Cloak/部分 Chromium 场景下
@@ -1552,6 +1594,7 @@ def _fetch_chatgpt_session(driver, timeout: int = 90, auto_jump_wait: int = 15) 
     forced_chatgpt_open = False
 
     while time.time() < end:
+        _run_abort_checker(abort_checker)
         try:
             current = str(driver.current_url or '')
         except Exception:
@@ -1598,10 +1641,13 @@ def _open_roxy_registration_browser(
     client: RoxyBrowserClient,
     *,
     device_id: str | None = None,
+    proxy: str | None = None,
+    stop_checker=None,
 ) -> tuple[RoxyOpenResult, object]:
     """串行创建 Roxy 环境并完成首次登录页加载。"""
     account_device_id = str(device_id or "").strip() or str(uuid.uuid4())
-    _check_manual_stop()
+    check_stop = stop_checker or _check_manual_stop
+    check_stop()
     logger.info("[Roxy] 等待启动门控：创建环境、打开窗口并加载登录页")
     with _ROXY_STARTUP_LOCK:
         max_attempts = max(1, int(getattr(_cfg, "ROXY_STARTUP_MAX_ATTEMPTS", 2) or 2))
@@ -1610,9 +1656,9 @@ def _open_roxy_registration_browser(
             opened = None
             driver = None
             try:
-                _check_manual_stop()
+                check_stop()
                 logger.info("[Roxy] 已进入启动门控（%s/%s）", attempt, max_attempts)
-                opened = client.open_profile()
+                opened = client.open_profile(proxy_url=proxy)
                 driver = _build_driver(opened)
                 _center_browser_window(driver)
                 driver.set_page_load_timeout(int(_cfg.ROXY_SELENIUM_TIMEOUT))
@@ -1650,7 +1696,7 @@ def _open_roxy_registration_browser(
                 )
                 if retry_delay:
                     time.sleep(retry_delay)
-                _check_manual_stop()
+                check_stop()
 
         raise RuntimeError("Roxy 启动重试已耗尽")
 

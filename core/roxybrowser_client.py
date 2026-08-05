@@ -454,8 +454,15 @@ class RoxyBrowserClient:
 
         return {"ok": False, "items": [], "errors": errors}
 
-    def create_profile(self, payload: dict | None = None) -> tuple[str, str | None]:
+    def create_profile(
+        self,
+        payload: dict | None = None,
+        *,
+        proxy_url: str | None = None,
+    ) -> tuple[str, str | None]:
         body = dict(getattr(_cfg, "ROXY_PROFILE_CREATE_PAYLOAD", {}) or {})
+        if payload:
+            body.update(payload)
         registration_proxy = None
         default_os = str(getattr(_cfg, "ROXY_DEFAULT_OS", "macOS") or "macOS").strip()
         if default_os:
@@ -471,7 +478,20 @@ class RoxyBrowserClient:
         project_id = _project_id_value()
         if project_id:
             body.setdefault("projectId", project_id)
-        if bool(getattr(_cfg, "ROXY_CREATE_USE_PROXY_POOL", False)) and not body.get("proxyInfo"):
+        explicit_proxy = str(proxy_url or "").strip()
+        if explicit_proxy:
+            prepared_proxy = prepare_proxy_for_roxy(explicit_proxy)
+            registration_proxy = prepared_proxy
+            proxy_info = _proxy_url_to_roxy_info(prepared_proxy)
+            body["proxyInfo"] = proxy_info
+            logger.info(
+                "[Roxy] 创建环境使用显式代理：proxy=%s type=%s host=%s port=%s",
+                _mask_proxy(prepared_proxy),
+                proxy_info.get("protocol") or proxy_info.get("proxyCategory"),
+                proxy_info.get("host"),
+                proxy_info.get("port"),
+            )
+        elif bool(getattr(_cfg, "ROXY_CREATE_USE_PROXY_POOL", False)) and not body.get("proxyInfo"):
             from config import proxy as _proxy_cfg
 
             proxy_url = _proxy_cfg.pick_proxy()
@@ -489,8 +509,6 @@ class RoxyBrowserClient:
                 )
             else:
                 logger.warning("[Roxy] 已启用 ROXY_CREATE_USE_PROXY_POOL，但 PROXY_POOL 为空，本次创建环境不设置代理")
-        if payload:
-            body.update(payload)
         if not body.get("workspaceId"):
             raise RuntimeError(
                 "Roxy 创建环境需要 workspaceId。请在 config/roxybrowser.py 或 WebUI 的 RoxyBrowser 配置中填写 ROXY_WORKSPACE_ID，"
@@ -515,7 +533,12 @@ class RoxyBrowserClient:
             return ""
         return text
 
-    def open_profile(self, profile_id: str | None = None) -> RoxyOpenResult:
+    def open_profile(
+        self,
+        profile_id: str | None = None,
+        *,
+        proxy_url: str | None = None,
+    ) -> RoxyOpenResult:
         one_profile = bool(getattr(_cfg, "ROXY_ONE_PROFILE_PER_ACCOUNT", True))
         configured_pid = self._normalize_profile_id(profile_id if profile_id is not None else getattr(_cfg, "ROXY_PROFILE_ID", ""))
         if one_profile and configured_pid:
@@ -523,12 +546,14 @@ class RoxyBrowserClient:
                 "已启用 ROXY_ONE_PROFILE_PER_ACCOUNT=True（一号一环境），"
                 "不能配置/传入固定 ROXY_PROFILE_ID；请留空以便每个账号创建新环境。"
             )
+        if configured_pid and str(proxy_url or "").strip():
+            raise RuntimeError("显式代理只支持新建 Roxy 环境，不能修改已存在环境的代理")
 
         pid = configured_pid
         created_by_run = False
         registration_proxy = None
         if not pid:
-            pid, registration_proxy = self.create_profile()
+            pid, registration_proxy = self.create_profile(proxy_url=proxy_url)
             created_by_run = True
             logger.info("[Roxy] 已创建临时环境：%s", pid)
 

@@ -12,8 +12,8 @@ class _FakeClient:
         self.name = name
         self.events = events
 
-    def open_profile(self):
-        self.events.append(f"open-{self.name}")
+    def open_profile(self, *, proxy_url=None):
+        self.events.append(f"open-{self.name}-{proxy_url or '-'}")
         return RoxyOpenResult(profile_id=self.name, raw={})
 
     def cleanup_profile(self, opened):
@@ -125,7 +125,7 @@ class RoxyStartupGateTests(unittest.TestCase):
             self.assertTrue(second_startup_attempted.wait(timeout=1))
             time.sleep(0.05)
 
-            self.assertNotIn("open-second", events)
+            self.assertNotIn("open-second--", events)
 
             release_first.set()
             first.join(timeout=2)
@@ -133,8 +133,8 @@ class RoxyStartupGateTests(unittest.TestCase):
 
         self.assertFalse(first.is_alive())
         self.assertFalse(second.is_alive())
-        self.assertLess(events.index("email-ready-first"), events.index("open-second"))
-        self.assertLess(events.index("get-end-first"), events.index("open-second"))
+        self.assertLess(events.index("email-ready-first"), events.index("open-second--"))
+        self.assertLess(events.index("get-end-first"), events.index("open-second--"))
         self.assertEqual(results["first"][0].profile_id, "first")
         self.assertEqual(results["second"][0].profile_id, "second")
 
@@ -170,9 +170,9 @@ class RoxyStartupGateTests(unittest.TestCase):
         opened_profiles = iter(("first", "second"))
 
         class SequenceClient:
-            def open_profile(self):
+            def open_profile(self, *, proxy_url=None):
                 profile_id = next(opened_profiles)
-                events.append(f"open-{profile_id}")
+                events.append(f"open-{profile_id}-{proxy_url or '-'}")
                 return RoxyOpenResult(profile_id=profile_id, raw={})
 
             def cleanup_profile(self, opened):
@@ -215,11 +215,31 @@ class RoxyStartupGateTests(unittest.TestCase):
 
         self.assertEqual(opened.profile_id, "second")
         self.assertEqual(driver.profile_id, "second")
-        self.assertEqual(events.count("open-first"), 1)
-        self.assertEqual(events.count("open-second"), 1)
+        self.assertEqual(events.count("open-first--"), 1)
+        self.assertEqual(events.count("open-second--"), 1)
         self.assertEqual(events.count("quit-first"), 1)
         self.assertEqual(events.count("cleanup-first"), 1)
         self.assertNotIn("cleanup-second", events)
+
+    def test_startup_passes_explicit_proxy_and_custom_stop_checker(self):
+        events = []
+        client = _FakeClient("proxy", events)
+        driver = _FakeDriver("proxy", events, threading.Event(), threading.Event())
+        checks = []
+
+        with patch.object(roxy_registration, "_build_driver", return_value=driver), \
+             patch.object(roxy_registration, "_center_browser_window"), \
+             patch.object(roxy_registration, "human_delay"), \
+             patch.object(roxy_registration, "_maybe_accept"), \
+             patch.object(roxy_registration, "_wait_for_email_input_ready", return_value=object()):
+            roxy_registration._open_roxy_registration_browser(
+                client,
+                proxy="http://saved-proxy",
+                stop_checker=lambda: checks.append("checked"),
+            )
+
+        self.assertIn("open-proxy-http://saved-proxy", events)
+        self.assertGreaterEqual(len(checks), 2)
 
 
 if __name__ == "__main__":
