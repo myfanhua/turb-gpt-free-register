@@ -17,6 +17,7 @@ from core import db
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_OUTPUT_DIR = _PROJECT_ROOT / "codex_agent_accounts"
 
 
 def _join_sub2_url(base: str, path: str) -> str:
@@ -116,6 +117,8 @@ def _run_generate(*, account_id: int, email: str, access_token: str, trigger: st
     try:
         if not db.mark_account_codex_agent_running(account_id):
             return {"ok": False, "error": "账号已删除或 Codex Agent 状态已被重置"}
+        _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = _OUTPUT_DIR / f"codex-agent-{_safe_email_filename(email)}.json"
         from core.codex_agent import create_codex_agent_identity
         from core.chatgpt_plan import resolve_plan_check_route
         from core.session import BrowserSession
@@ -145,7 +148,7 @@ def _run_generate(*, account_id: int, email: str, access_token: str, trigger: st
                 )
                 auth_json = create_codex_agent_identity(
                     access_token=access_token,
-                    output_path=None,
+                    output_path=str(output_path),
                     verify_task=verify_task,
                     env=env,
                     timeout=timeout_seconds,
@@ -243,7 +246,7 @@ def _run_generate(*, account_id: int, email: str, access_token: str, trigger: st
             "checked_at": datetime.now().isoformat(timespec="seconds"),
             "message": "Codex Agent Token 已生成" + ("，已同步 sub2api" if sub2api_result else ""),
             "agent_runtime_id": (identity or {}).get("agent_runtime_id"),
-            "auth_path": None,
+            "auth_path": str(output_path),
             "auth_json": auth_json,
             "sub2api_path": (sub2api_result or {}).get("path"),
             "sub2api_url": (sub2api_result or {}).get("url"),

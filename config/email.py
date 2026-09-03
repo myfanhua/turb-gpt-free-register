@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-邮箱服务配置。
+Outlook 邮箱账号池配置。
 
-Outlook 注册邮箱与 OTP 的默认池行为：
-    1. 首次启动会把旧的 `用于注册的邮箱.txt` 迁移到 SQLite
-    2. 运行期间通过 WebUI「邮箱库」导入和管理邮箱
-    3. 注册时直接从 SQLite 邮箱库领取可用邮箱
+注册邮箱与 OTP 均只走 Outlook 账号池：
+    1. 把邮箱素材写入项目根目录 `用于注册的邮箱.txt`
+    2. 每行格式：email====password====clientId====refreshToken
+    3. 运行注册时会自动导入新增邮箱
 """
 from config.env_loader import env_str, apply_env_overrides
 
@@ -14,7 +14,7 @@ from config.env_loader import env_str, apply_env_overrides
 # False: 走人工输入邮箱 + 人工填 OTP 的流程
 USE_EMAIL_SERVICE = False
 
-# 可选值（也可以用英文逗号配置多个，按顺序兜底，例如 "outlook,generic_api,mailnest,remail"）：
+# 可选值（也可以用英文逗号配置多个，按顺序兜底，例如 "outlook,generic_api,mailnest"）：
 #   "outlook"           — 外购 Outlook 账号池 + mail.chatai.codes 远端取信
 #   "cloudflare_domain" — Cloudflare 域名邮箱（转发到 QQ 邮箱），通过 IMAP 取信
 #   "cloudflare" — Cloudflare Worker 临时邮箱（cloudflare_temp_email），API 创建并取码
@@ -22,7 +22,6 @@ USE_EMAIL_SERVICE = False
 #   "gptmail"           — GPTMail 临时邮箱 API（运行时随机生成邮箱并自动收码）
 #   "mailnest"          — MailNest/迈巢临时邮箱 API（运行时购买邮箱并自动收码）
 #   "cloudmail"         — CloudMail/Cloud Mail API（自动从平台获取域名并随机生成邮箱）
-#   "remail"            — Remail 开放 API（按项目下单并自动收取验证码）
 EMAIL_SOURCE = "outlook,generic_api,mailnest"
 
 
@@ -148,34 +147,5 @@ CLOUDMAIL_AUTO_ADD_USER = True
 # 随机邮箱 local-part 长度。
 CLOUDMAIL_RANDOM_LOCAL_LENGTH = 12
 
-
-# ============================================================
-# Remail 开放 API：https://remail.aishop6.com/docs
-# ============================================================
-
-# API 根地址；也兼容填写 https://remail.aishop6.com/docs，客户端会自动规范化。
-REMAIL_API_BASE = "https://remail.aishop6.com"
-
-# Remail 控制台生成的 rk- 开头 API Key。
-REMAIL_API_KEY = env_str("REMAIL_API_KEY", "")
-
-# 在 Remail 项目列表中选择用于 ChatGPT/OpenAI 验证码的项目 ID，默认使用项目 2。
-REMAIL_PROJECT_ID = 2
-
-# 项目下单的邮箱后缀；outlook.com 为微软邮箱商品的常用选择。
-REMAIL_EMAIL_SUFFIX = "outlook.com"
-
-# code 为短效接码；purchase 为可重复收件的长效购买，默认使用 purchase。
-REMAIL_SERVICE_MODE = "purchase"
-
-# private_first 优先使用自己的库存；public_only 只使用公开库存，默认使用 public_only。
-REMAIL_SUPPLY_POLICY = "public_only"
-
-# 下单响应未立即返回 service token 时，等待订单详情补齐凭证的最长秒数。
-REMAIL_ORDER_WAIT_SECONDS = 30
-
-# Remail HTTP 请求超时。
-REMAIL_REQUEST_TIMEOUT = 20
-
 # ---- .env overrides for WebUI editable fields ----
-apply_env_overrides(globals(), {'USE_EMAIL_SERVICE': 'bool', 'OTP_MAX_WAIT': 'int', 'OTP_POLL_INTERVAL': 'int', 'EMAIL_SOURCE': 'str', 'EMAIL_DOMAIN': 'str', 'QQ_EMAIL': 'str', 'QQ_IMAP_PASSWORD': 'str', 'GPTMAIL_API_KEY': 'str', 'OUTLOOK_FETCH_MODE': 'str', 'MAIL_NEST_API_KEY': 'str', 'MAIL_NEST_PROJECT_CODE': 'str', 'CLOUDFLARE_API_BASE': 'str', 'CLOUDFLARE_API_KEY': 'str', 'CLOUDFLARE_AUTH_MODE': 'str', 'CLOUDFLARE_CUSTOM_AUTH': 'str', 'CLOUDFLARE_PATH_DOMAINS': 'str', 'CLOUDFLARE_PATH_ACCOUNTS': 'str', 'CLOUDFLARE_PATH_TOKEN': 'str', 'CLOUDFLARE_PATH_MESSAGES': 'str', 'CLOUDFLARE_DEFAULT_DOMAINS': 'list_str_multiline', 'CLOUDFLARE_REQUEST_TIMEOUT': 'int', 'CLOUDFLARE_NAME_LENGTH': 'int', 'CLOUDMAIL_API_BASE': 'str', 'CLOUDMAIL_ADMIN_EMAIL': 'str', 'CLOUDMAIL_PASSWORD': 'str', 'CLOUDMAIL_TOKEN_PATH': 'str', 'CLOUDMAIL_AUTH_TOKEN': 'str', 'CLOUDMAIL_DOMAINS': 'list_str_multiline', 'CLOUDMAIL_AUTO_ADD_USER': 'bool', 'CLOUDMAIL_RANDOM_LOCAL_LENGTH': 'int', 'REMAIL_API_BASE': 'str', 'REMAIL_API_KEY': 'str', 'REMAIL_PROJECT_ID': 'int', 'REMAIL_EMAIL_SUFFIX': 'str', 'REMAIL_SERVICE_MODE': 'str', 'REMAIL_SUPPLY_POLICY': 'str', 'REMAIL_ORDER_WAIT_SECONDS': 'int', 'REMAIL_REQUEST_TIMEOUT': 'int'})
+apply_env_overrides(globals(), {'USE_EMAIL_SERVICE': 'bool', 'OTP_MAX_WAIT': 'int', 'OTP_POLL_INTERVAL': 'int', 'EMAIL_SOURCE': 'str', 'EMAIL_DOMAIN': 'str', 'QQ_EMAIL': 'str', 'QQ_IMAP_PASSWORD': 'str', 'GPTMAIL_API_KEY': 'str', 'OUTLOOK_FETCH_MODE': 'str', 'MAIL_NEST_API_KEY': 'str', 'MAIL_NEST_PROJECT_CODE': 'str', 'CLOUDFLARE_API_BASE': 'str', 'CLOUDFLARE_API_KEY': 'str', 'CLOUDFLARE_AUTH_MODE': 'str', 'CLOUDFLARE_CUSTOM_AUTH': 'str', 'CLOUDFLARE_PATH_DOMAINS': 'str', 'CLOUDFLARE_PATH_ACCOUNTS': 'str', 'CLOUDFLARE_PATH_TOKEN': 'str', 'CLOUDFLARE_PATH_MESSAGES': 'str', 'CLOUDFLARE_DEFAULT_DOMAINS': 'list_str_multiline', 'CLOUDFLARE_REQUEST_TIMEOUT': 'int', 'CLOUDFLARE_NAME_LENGTH': 'int', 'CLOUDMAIL_API_BASE': 'str', 'CLOUDMAIL_ADMIN_EMAIL': 'str', 'CLOUDMAIL_PASSWORD': 'str', 'CLOUDMAIL_TOKEN_PATH': 'str', 'CLOUDMAIL_AUTH_TOKEN': 'str', 'CLOUDMAIL_DOMAINS': 'list_str_multiline', 'CLOUDMAIL_AUTO_ADD_USER': 'bool', 'CLOUDMAIL_RANDOM_LOCAL_LENGTH': 'int'})

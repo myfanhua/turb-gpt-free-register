@@ -3,7 +3,7 @@
 注册后处理模块：
     1. 拉取 /api/auth/session，从中抽取 accessToken / user 信息
     2. 设置 2FA（TOTP），返回 secret
-    3. 把账号信息（邮箱 + accessToken + TOTP secret）保存到 SQLite
+    3. 把账号信息（邮箱 + accessToken + TOTP secret）落盘成 JSON
 
 整体复用注册阶段的 BrowserSession（同一 cookie jar / 同一 IP / 同一 UA），
 避免再起新会话被风控关联或缺失登录态。
@@ -14,6 +14,7 @@ import random
 import time
 from datetime import datetime
 from pathlib import Path
+import threading
 from urllib.parse import urlencode
 
 import pyotp
@@ -22,6 +23,12 @@ from core.session import BrowserSession
 from core.humanize import delay as human_delay
 
 logger = logging.getLogger(__name__)
+
+# 输出目录（与项目根 .claude/ 工作区分离，单独放在 accounts/）
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_ACCOUNTS_DIR = _PROJECT_ROOT / "accounts"
+_BATCH_ARCHIVE_LOCK = threading.RLock()
+
 
 def _post_register_dwell_seconds() -> float:
     try:
@@ -106,9 +113,26 @@ def _account_copy_line(
     return "----".join(parts)
 
 
-def create_batch_archive_dir(count: int, workers: int = 1) -> None:
-    """兼容旧调用方；批次数据现在直接保存到 SQLite，不创建归档目录。"""
-    return None
+def create_batch_archive_dir(count: int, workers: int = 1) -> Path:
+    """为一次运行创建批次归档目录，例如 accounts/20260509-10个-3线程。"""
+    day = datetime.now().strftime("%Y%m%d")
+    base_name = f"{day}-{count}个" if workers <= 1 else f"{day}-{count}个-{workers}线程"
+    folder = _ACCOUNTS_DIR / base_name
+    suffix = 2
+    while folder.exists():
+        folder = _ACCOUNTS_DIR / f"{base_name}-{suffix}"
+        suffix += 1
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "注册成功的邮箱.txt").write_text("", encoding="utf-8")
+    (folder / "注册成功的token.txt").write_text("", encoding="utf-8")
+    (folder / "注册成功整行.txt").write_text("", encoding="utf-8")
+    (folder / "注册成功账号.json").write_text("[]\n", encoding="utf-8")
+    return folder
+
+
+def _append_line(path: Path, line: str) -> None:
+    with path.open("a", encoding="utf-8", newline="\n") as f:
+        f.write(line + "\n")
 
 
 def _append_batch_archive(
@@ -121,12 +145,50 @@ def _append_batch_archive(
     proxy_used: str | None,
     extra: dict,
     batch_dir: Path | None,
-) -> None:
-    """兼容旧调用方；注册账号已经由 db.insert_account 保存到 SQLite。"""
+) -> Path:
+    """把注册成功账号追加到本次批次目录的 TXT/JSON 文件中。"""
     from core import db
-    # 参数保留是为了兼容注册驱动；不再读取 batch_dir 或写入任何归档文件。
-    _ = (db, row_id, email, access_token, totp_secret, email_source, proxy_used, extra, batch_dir)
-    return None
+
+    folder = batch_dir or create_batch_archive_dir(count=1)
+    row = db.get_account(row_id) or {}
+    folder.mkdir(parents=True, exist_ok=True)
+    material_line = _account_material_line(email, row)
+    try:
+        extra_raw = row.get("extra_json")
+        extra = json.loads(extra_raw) if isinstance(extra_raw, str) and extra_raw.strip() else (extra_raw if isinstance(extra_raw, dict) else {})
+        gpt_password = str((extra or {}).get("registration_password") or row.get("registration_password") or "").strip() or "未设置"
+    except Exception:
+        gpt_password = str(row.get("registration_password") or "").strip() or "未设置"
+    copy_line = _account_copy_line(material_line, access_token, gpt_password, totp_secret)
+    archive = {
+        "id": row_id,
+        "email": email,
+        "email_source": email_source,
+        "proxy_used": proxy_used,
+        "access_token": access_token,
+        "totp_secret": totp_secret,
+        "material_line": material_line,
+        "copy_line": copy_line,
+        "saved_at": datetime.now().isoformat(timespec="seconds"),
+        "row": row,
+        "extra": extra,
+    }
+
+    with _BATCH_ARCHIVE_LOCK:
+        _append_line(folder / "注册成功的邮箱.txt", material_line)
+        _append_line(folder / "注册成功的token.txt", access_token)
+        _append_line(folder / "注册成功整行.txt", copy_line)
+
+        json_path = folder / "注册成功账号.json"
+        try:
+            rows = json.loads(json_path.read_text(encoding="utf-8")) if json_path.exists() else []
+        except Exception:
+            rows = []
+        if not isinstance(rows, list):
+            rows = []
+        rows.append(archive)
+        json_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return folder
 
 
 def follow_oauth_callback(session: BrowserSession, continue_url: str, referer: str = "https://auth.openai.com/about-you") -> str:
@@ -234,7 +296,7 @@ def _trigger_reauth(session: BrowserSession, email: str) -> str:
     return auth_url
 
 
-def _follow_reauth(session: BrowserSession, auth_url: str) -> str:
+def _follow_reauth(session: BrowserSession, auth_url: str) -> None:
     """
     步骤3: 跟随 authorize URL 触发邮箱 OTP 发送。
     auth.openai.com 会重定向到 /email-verification 页面，期间发送 OTP 邮件。
@@ -242,9 +304,7 @@ def _follow_reauth(session: BrowserSession, auth_url: str) -> str:
     headers = session.get_auth_navigate_headers(referer="https://chatgpt.com/")
     logger.info("[2FA] 跟随 authorize URL，触发 OTP 发送...")
     resp = session.get(auth_url, headers=headers, allow_redirects=True)
-    resp.raise_for_status()
     logger.info(f"[2FA] 落点 URL: {resp.url}")
-    return str(getattr(resp, "url", "") or "")
 
 
 def _validate_reauth_otp(session: BrowserSession, code: str) -> str:
@@ -458,32 +518,11 @@ def save_account_data(
     auto_plan_check: bool | None = None,
 ) -> int:
     """
-    将账号信息保存到 SQLite；output_path 仅为兼容旧调用方保留。
+    将账号信息保存到本地 JSON/TXT 文件存储。
     返回新插入/更新的 row id。
     """
     from core.db import insert_account
-    extra = dict(extra or {})
-    # Remail 的 service token 只存在进程内上下文中。注册成功后把订单上下文
-    # 一并保存到账号 extra_json，服务重启时查活即可恢复，不再依赖“同一进程
-    # 中先领取邮箱”。普通账号列表不会返回 extra_json。
-    if str(email_source or "").strip().lower() == "remail":
-        try:
-            from core.remail_client import get_account_context_metadata
-
-            remail_metadata = get_account_context_metadata(email)
-            if remail_metadata:
-                existing_service = extra.get("email_service")
-                merged_service = dict(existing_service) if isinstance(existing_service, dict) else {}
-                merged_service.update(remail_metadata)
-                extra["email_service"] = merged_service
-        except Exception as exc:
-            # 订单上下文保存失败不应让已经完成的注册失败；后续查活仍会
-            # 尝试用 API Key 按邮箱搜索 Remail 订单恢复凭证。
-            logger.warning(
-                "[Save] 保存 Remail 订单上下文失败，后续将尝试按邮箱恢复：%s: %s",
-                type(exc).__name__,
-                str(exc)[:180],
-            )
+    extra = extra or {}
     user = extra.get("user") or {}
     account = extra.get("account") or {}
     # 从 extra.codex 抽出顶层 codex 状态/错误，方便 WebUI 直接读账号字段
@@ -517,7 +556,8 @@ def save_account_data(
         extra=extra,
         batch_dir=batch_dir,
     )
-    logger.info("[Save] 账号及凭证已保存到 SQLite, id=%s, email=%s", row_id, email)
+    logger.info(f"[Save] 账号已写入 DB, id={row_id}, email={email}")
+    logger.info(f"[Save] 批次归档目录: {batch_folder}")
 
     auto_twofa = False
     try:

@@ -1,16 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-SQLite 持久化层（JSON/TXT 仅用于首次迁移）。
+本地文件持久化层。
 
-运行时数据全部存储在根目录 `turb.sqlite3`；旧 JSON/TXT/Codex 文件仅用于一次性迁移。
+根目录文件分工：
+    - 用于注册的邮箱.txt      仅保留可继续注册的邮箱素材
+    - 注册成功的邮箱.txt      仅保存注册成功的邮箱素材，不追加 token
+    - 注册成功的token.txt     每行只保存一个 access token
+    - 用于注册的邮箱.json     Outlook 账号池完整状态
+    - 注册成功的邮箱.json     注册成功账号完整状态
 """
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 import uuid
-from contextlib import closing
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +26,10 @@ _LEGACY_DATA_DIR = _PROJECT_ROOT / "data"
 _LOG_DIR = _PROJECT_ROOT / "注册日志"
 _PLAN_CHECK_STALE_SECONDS = 120
 _PLAN_CHECK_QUEUE_STALE_SECONDS = 1800
+_TRIAL_PAYMENT_PROBE_STALE_SECONDS = 180
+_TRIAL_PAYMENT_PROBE_QUEUE_STALE_SECONDS = 1800
+_REBIND_STALE_SECONDS = 900
+_REBIND_QUEUE_STALE_SECONDS = 1800
 
 _OUTLOOK_JSON = _PROJECT_ROOT / "用于注册的邮箱.json"
 _OUTLOOK_TXT = _PROJECT_ROOT / "用于注册的邮箱.txt"
@@ -29,37 +39,64 @@ _ACCOUNTS_JSON = _PROJECT_ROOT / "注册成功的邮箱.json"
 _ACCOUNTS_TXT = _PROJECT_ROOT / "注册成功的邮箱.txt"
 _TOKENS_TXT = _PROJECT_ROOT / "注册成功的token.txt"
 _JOBS_JSON = _PROJECT_ROOT / "注册任务.json"
-# 兼容旧测试/外部调用方；静态查看器已停用，不会再写入此路径。
 _VIEWER_HTML = _PROJECT_ROOT / "accounts_viewer.html"
 _CODEX_DIR = _PROJECT_ROOT / "codex_accounts"
-_CODEX_AGENT_DIR = _PROJECT_ROOT / "codex_agent_accounts"
-# 仅供一次性迁移旧导出状态，运行期间不再读取该文件。
-_LEGACY_CODEX_EXPORT_STATE = _PROJECT_ROOT / "codex_导出状态.json"
-# SQLite 是运行时唯一业务数据主存储；旧 JSON/TXT 仅用于一次性迁移。
-_SQLITE_PATH = _PROJECT_ROOT / "turb.sqlite3"
-_SQLITE_LOCK = threading.RLock()
-_SQLITE_READY = False
-_TABLES = {
-    "accounts": "accounts",
-    "outlook": "email_pool",
-    "generic_api": "email_pool",
-    "jobs": "registration_jobs",
-    "domain": "email_pool",
-    "codex": "codex_accounts",
-}
-_EMAIL_SOURCES = {"outlook": "outlook", "generic_api": "generic_api", "domain": "cloudflare_domain"}
-_LEGACY_TABLES = {"outlook": "outlook_pool", "generic_api": "generic_api_pool", "domain": "domain_email_pool"}
+# 导出状态单独存：{ "codex-邮箱-plan.json": {"exported_at": "...", "exported_count": N} }
+# 不污染 CPA 兼容的原文件
+_CODEX_EXPORT_STATE = _PROJECT_ROOT / "codex_导出状态.json"
 
 _LEGACY_SQLITE = _LEGACY_DATA_DIR / "registrations.db"
 _LEGACY_OUTLOOK_JSON = _LEGACY_DATA_DIR / "outlook_accounts.json"
 _LEGACY_ACCOUNTS_JSON = _LEGACY_DATA_DIR / "registered_accounts.json"
 _LEGACY_JOBS_JSON = _LEGACY_DATA_DIR / "registration_jobs.json"
 _LOCK = threading.RLock()
-_DEFAULT_SQLITE_PATH = _SQLITE_PATH
-_DEFAULT_ACCOUNTS_JSON = _ACCOUNTS_JSON
-_DEFAULT_OUTLOOK_JSON = _OUTLOOK_JSON
-_DEFAULT_JOBS_JSON = _JOBS_JSON
-_SQLITE_READY_PATH: Path | None = None
+_VIEWER_DEBOUNCE_SECONDS = 3.0
+_VIEWER_REFRESH_LOCK = threading.Lock()
+_VIEWER_REFRESH_TIMER: threading.Timer | None = None
+_VIEWER_REFRESH_REASON = ""
+_EMAIL_ADDRESS_RE = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+)
+
+# 账号分类由本地查活/套餐结果自动推导，避免手工备注和实际状态脱节。
+ACCOUNT_CATEGORY_LABELS = {
+    "deactivated": "已废",
+    "trial_eligible": "有试用资格",
+    "plus": "已开通Plus",
+    "free": "普通Free",
+    "unverified": "待确认",
+}
+
+
+def account_category(row: dict | None) -> str:
+    """返回账号的单一主分类；状态异常优先于套餐资格。"""
+    row = row or {}
+    live_status = str(row.get("live_check_status") or "").strip().lower()
+    codex_status = str(row.get("codex_status") or "").strip().lower()
+    if live_status == "deactivated" or codex_status == "deactivated":
+        return "deactivated"
+
+    plan = str(row.get("current_plan_type") or row.get("plan_type") or "").strip().lower()
+    trial_value = row.get("plus_trial_eligible")
+    trial_eligible = trial_value is True or trial_value == 1 or str(trial_value).strip().lower() in {"true", "1", "yes"}
+    if plan == "free" and trial_eligible:
+        return "trial_eligible"
+    if "free" not in plan and any(value in plan for value in ("plus", "pro", "team", "go")):
+        return "plus"
+    if plan == "free":
+        return "free"
+    return "unverified"
+
+
+def account_category_label(row_or_category: dict | str | None) -> str:
+    """返回账号分类的中文显示名；接受账号行或分类键。"""
+    if isinstance(row_or_category, dict):
+        category = account_category(row_or_category)
+    else:
+        category = str(row_or_category or "").strip().lower()
+    return ACCOUNT_CATEGORY_LABELS.get(category, ACCOUNT_CATEGORY_LABELS["unverified"])
 
 
 def _now() -> str:
@@ -71,461 +108,6 @@ def _ensure_storage() -> None:
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _sqlite_conn() -> sqlite3.Connection:
-    """创建短生命周期连接；WAL 允许 WebUI 读与注册线程写并行。"""
-    _ensure_storage()
-    conn = sqlite3.connect(str(_active_sqlite_path()), timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    return conn
-
-
-def _active_sqlite_path() -> Path:
-    """测试替换旧 JSON 路径时使用同目录数据库，避免污染正式库。"""
-    if (
-        _ACCOUNTS_JSON != _DEFAULT_ACCOUNTS_JSON
-        or _OUTLOOK_JSON != _DEFAULT_OUTLOOK_JSON
-        or _JOBS_JSON != _DEFAULT_JOBS_JSON
-    ):
-        return _ACCOUNTS_JSON.parent / "turb.sqlite3"
-    return _DEFAULT_SQLITE_PATH
-
-
-def _read_legacy_sqlite_collection(collection: str) -> list[dict] | None:
-    """读取旧 data/registrations.db 的数据，仅在一次性迁移阶段调用。"""
-    if not _LEGACY_SQLITE.exists():
-        return None
-    try:
-        with closing(sqlite3.connect(str(_LEGACY_SQLITE))) as legacy_conn:
-            legacy_conn.row_factory = sqlite3.Row
-            table = "registered_accounts" if collection == "accounts" else "outlook_pool" if collection == "outlook" else ""
-            if not table or not _table_exists(legacy_conn, table):
-                return None
-            return [dict(row) for row in legacy_conn.execute(f"SELECT * FROM {table}").fetchall()]
-    except Exception:
-        return None
-
-
-def _ensure_sqlite() -> None:
-    """首次运行将现有 JSON 一次性导入 SQLite，之后 SQLite 为唯一读写源。"""
-    global _SQLITE_READY, _SQLITE_READY_PATH
-    active_path = _active_sqlite_path()
-    if _SQLITE_READY and _SQLITE_READY_PATH == active_path:
-        return
-    with _SQLITE_LOCK:
-        active_path = _active_sqlite_path()
-        if _SQLITE_READY and _SQLITE_READY_PATH == active_path:
-            return
-        conn = _sqlite_conn()
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                id INTEGER NOT NULL,
-                email TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT '',
-                archived INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT '',
-                payload TEXT NOT NULL,
-                PRIMARY KEY (id)
-            );
-            CREATE TABLE IF NOT EXISTS email_pool (
-                id INTEGER PRIMARY KEY,
-                email TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '',
-                status TEXT NOT NULL DEFAULT '', archived INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '',
-                payload TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS registration_jobs AS SELECT * FROM accounts WHERE 0;
-            CREATE TABLE IF NOT EXISTS codex_accounts (
-                id INTEGER PRIMARY KEY,
-                filename TEXT NOT NULL UNIQUE, email TEXT NOT NULL DEFAULT '',
-                archived INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT '',
-                updated_at TEXT NOT NULL DEFAULT '', payload TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS codex_agent_accounts (
-                account_id INTEGER PRIMARY KEY,
-                email TEXT NOT NULL DEFAULT '', filename TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '',
-                payload TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS storage_meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );
-        """)
-        for table in {"accounts", "email_pool", "registration_jobs"}:
-            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_status ON {table}(status, id DESC)")
-            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_archived ON {table}(archived, id DESC)")
-            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_email ON {table}(email COLLATE NOCASE)")
-            conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_created ON {table}(created_at DESC)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_email_pool_source_status ON email_pool(source, status, id DESC)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_accounts_archived ON codex_accounts(archived, id DESC)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_accounts_email ON codex_accounts(email COLLATE NOCASE)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_accounts_created ON codex_accounts(created_at DESC)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_agent_accounts_email ON codex_agent_accounts(email COLLATE NOCASE)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_agent_accounts_updated ON codex_agent_accounts(updated_at DESC)")
-        migration_done = conn.execute(
-            "SELECT 1 FROM storage_meta WHERE key='legacy_import_completed' LIMIT 1"
-        ).fetchone()
-        # 迁移标记写入 SQLite，而不是依赖“表是否为空”。这样用户删除全部数据后，
-        # 重启也不会再次从旧 JSON 恢复已删除的数据。
-        if not migration_done:
-            sources = {
-                "accounts": (_ACCOUNTS_JSON, _LEGACY_ACCOUNTS_JSON),
-                "outlook": (_OUTLOOK_JSON, _LEGACY_OUTLOOK_JSON),
-                "generic_api": (_GENERIC_API_EMAIL_JSON,),
-                "jobs": (_JOBS_JSON, _LEGACY_JOBS_JSON),
-                "domain": (_DOMAIN_EMAIL_JSON,),
-            }
-            for collection, paths in sources.items():
-                table = _TABLES[collection]
-                exists = conn.execute(
-                    f"SELECT 1 FROM {table}" + (" WHERE source=?" if table == "email_pool" else " LIMIT 1"),
-                    ((_EMAIL_SOURCES[collection],) if table == "email_pool" else ()),
-                ).fetchone()
-                if exists:
-                    continue
-                rows = None
-            # 兼容上一版“records 单表 + collection”实现。
-                if _table_exists(conn, "records"):
-                    legacy = conn.execute("SELECT payload FROM records WHERE collection=? ORDER BY id", (collection,)).fetchall()
-                    if legacy:
-                        rows = [json.loads(item["payload"]) for item in legacy]
-            # 兼容上一版按邮箱来源拆分的三张表。
-                if collection in _EMAIL_SOURCES and rows is None:
-                    old_table = _LEGACY_TABLES[collection]
-                    if _table_exists(conn, old_table):
-                        legacy = conn.execute(f"SELECT payload FROM {old_table} ORDER BY id").fetchall()
-                        if legacy:
-                            rows = [json.loads(item["payload"]) for item in legacy]
-                for path in paths:
-                    if rows is None and path.exists():
-                        candidate = _read_json(path, None)
-                        if isinstance(candidate, list):
-                            rows = candidate
-                            break
-                if rows is None:
-                    rows = _read_legacy_sqlite_collection(collection)
-                if not rows:
-                    continue
-                next_email_id = int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM email_pool").fetchone()[0]) + 1 if table == "email_pool" else 0
-                for pos, row in enumerate(rows, 1):
-                    row = dict(row)
-                    rid = next_email_id if table == "email_pool" else int(row.get("id") or pos)
-                    if table == "email_pool":
-                        next_email_id += 1
-                    row["id"] = rid
-                    conn.execute(
-                        f"INSERT OR REPLACE INTO {table}(id,email,source,status,archived,created_at,updated_at,payload) VALUES(?,?,?,?,?,?,?,?)" if table == "email_pool" else
-                        f"INSERT OR REPLACE INTO {table}(id,email,status,archived,created_at,updated_at,payload) VALUES(?,?,?,?,?,?,?)",
-                        ((rid, str(row.get("email") or ""), _EMAIL_SOURCES[collection], str(row.get("status") or ""),
-                          int(bool(row.get("archived"))), str(row.get("created_at") or row.get("imported_at") or ""),
-                          str(row.get("updated_at") or ""), json.dumps(row, ensure_ascii=False)) if table == "email_pool" else
-                         (rid, str(row.get("email") or ""), str(row.get("status") or ""),
-                          int(bool(row.get("archived"))), str(row.get("created_at") or row.get("imported_at") or ""),
-                          str(row.get("updated_at") or ""), json.dumps(row, ensure_ascii=False))),
-                    )
-        # 兼容早期 SQLite 版本的保存逻辑：当时写入 email_pool 时漏掉了
-        # source 列，导致通用 API 邮箱在“全部邮箱池”中没有类型，按来源筛选
-        # 也查不到。根据素材字段只修复可明确识别的历史行，避免误分类域名邮箱。
-        conn.execute(
-            "UPDATE email_pool SET source=? "
-            "WHERE (source IS NULL OR trim(source)='') AND ("
-            "json_extract(payload, '$.code_url') IS NOT NULL OR "
-            "json_extract(payload, '$.url') IS NOT NULL OR "
-            "json_extract(payload, '$.source') IN ('generic_api', 'generic-api') OR "
-            "json_extract(payload, '$.email_source') IN ('generic_api', 'generic-api')"
-            ")",
-            (_EMAIL_SOURCES["generic_api"],),
-        )
-        conn.execute(
-            "UPDATE email_pool SET source=? "
-            "WHERE (source IS NULL OR trim(source)='') AND ("
-            "json_extract(payload, '$.client_id') IS NOT NULL OR "
-            "json_extract(payload, '$.clientId') IS NOT NULL OR "
-            "json_extract(payload, '$.refresh_token') IS NOT NULL OR "
-            "json_extract(payload, '$.refreshToken') IS NOT NULL OR "
-            "json_extract(payload, '$.source') IN ('outlook', 'outlook_pool') OR "
-            "json_extract(payload, '$.email_source') = 'outlook'"
-            ")",
-            (_EMAIL_SOURCES["outlook"],),
-        )
-        # 域名邮箱的历史 payload 没有 client_id/code_url 等特征，剩余的空来源
-        # 记录只能归入域名邮箱池。否则它们会在“全部邮箱池”中显示为未知来源，
-        # 前端又会按 Outlook 处理，导致列表里能看到但删除/改状态找不到。
-        conn.execute(
-            "UPDATE email_pool SET source=? "
-            "WHERE (source IS NULL OR trim(source)='') AND COALESCE(("
-            "json_extract(payload, '$.code_url') IS NOT NULL OR "
-            "json_extract(payload, '$.url') IS NOT NULL OR "
-            "json_extract(payload, '$.source') IN ('generic_api', 'generic-api', 'outlook', 'outlook_pool') OR "
-            "json_extract(payload, '$.email_source') IN ('generic_api', 'generic-api', 'outlook') OR "
-            "json_extract(payload, '$.client_id') IS NOT NULL OR "
-            "json_extract(payload, '$.clientId') IS NOT NULL OR "
-            "json_extract(payload, '$.refresh_token') IS NOT NULL OR "
-            "json_extract(payload, '$.refreshToken') IS NOT NULL"
-            "), 0)=0",
-            (_EMAIL_SOURCES["domain"],),
-        )
-        # CPA Codex 凭证首次导入数据库；后续列表查询不再扫描 codex_accounts/ 文件。
-        if not migration_done and not conn.execute("SELECT 1 FROM codex_accounts LIMIT 1").fetchone() and _CODEX_DIR.exists():
-            state = _read_json(_LEGACY_CODEX_EXPORT_STATE, {})
-            state = state if isinstance(state, dict) else {}
-            for pos, path in enumerate(sorted(_CODEX_DIR.glob("codex-*.json")), 1):
-                try:
-                    content = json.loads(path.read_text(encoding="utf-8"))
-                    stat = path.stat()
-                except Exception:
-                    continue
-                filename = path.name
-                meta = dict(content)
-                meta["_filename"] = filename
-                meta["_size"] = stat.st_size
-                meta["_mtime"] = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
-                es = state.get(filename) or {}
-                meta["_exported_at"] = es.get("exported_at")
-                meta["_exported_count"] = es.get("exported_count", 0)
-                meta["_archived"] = bool(es.get("archived"))
-                conn.execute(
-                    "INSERT OR IGNORE INTO codex_accounts(id,filename,email,archived,created_at,updated_at,payload) VALUES(?,?,?,?,?,?,?)",
-                    (pos, filename, str(content.get("email") or ""), int(meta["_archived"]), meta["_mtime"], meta["_mtime"], json.dumps(meta, ensure_ascii=False)),
-                )
-        # Agent 凭证也只在首次迁移时读取；运行期间完整内容保存在 SQLite。
-        if not migration_done and not conn.execute("SELECT 1 FROM codex_agent_accounts LIMIT 1").fetchone() and _CODEX_AGENT_DIR.exists():
-            for path in sorted(_CODEX_AGENT_DIR.glob("codex-agent-*.json")):
-                try:
-                    content = json.loads(path.read_text(encoding="utf-8"))
-                    stat = path.stat()
-                except Exception:
-                    continue
-                identity = content.get("agent_identity") if isinstance(content.get("agent_identity"), dict) else {}
-                email = str(content.get("email") or identity.get("email") or "").strip()
-                account = conn.execute("SELECT id, payload FROM accounts WHERE lower(email)=lower(?) LIMIT 1", (email,)).fetchone() if email else None
-                if not account:
-                    continue
-                account_id = int(account["id"])
-                stamp = datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds")
-                conn.execute(
-                    "INSERT OR IGNORE INTO codex_agent_accounts(account_id,email,filename,created_at,updated_at,payload) VALUES(?,?,?,?,?,?)",
-                    (account_id, email or str(json.loads(account["payload"]).get("email") or ""), path.name, stamp, stamp, json.dumps(content, ensure_ascii=False)),
-                )
-                account_payload = json.loads(account["payload"])
-                account_payload.setdefault("codex_agent_token", json.dumps(content, ensure_ascii=False))
-                account_payload.pop("codex_agent_auth_path", None)
-                conn.execute("UPDATE accounts SET payload=?, updated_at=? WHERE id=?", (json.dumps(account_payload, ensure_ascii=False), stamp, account_id))
-        conn.commit()
-        # 迁移完成后删除旧的通用表，避免运行时继续依赖它。
-        for old_table in (*_LEGACY_TABLES.values(), "records"):
-            if _table_exists(conn, old_table) and old_table not in _TABLES.values():
-                conn.execute(f"DROP TABLE {old_table}")
-        if not migration_done:
-            conn.execute("INSERT OR REPLACE INTO storage_meta(key, value) VALUES('legacy_import_completed', ?)", (_now(),))
-        conn.commit()
-        conn.close()
-        _SQLITE_READY = True
-        _SQLITE_READY_PATH = active_path
-
-
-def _load_collection(collection: str) -> list[dict]:
-    _ensure_sqlite()
-    table = _TABLES[collection]
-    with closing(_sqlite_conn()) as conn:
-        with conn:
-            sql = f"SELECT payload FROM {table}"
-            params: tuple[str, ...] = ()
-            if table == "email_pool":
-                sql += " WHERE source=?"; params = (_EMAIL_SOURCES[collection],)
-            sql += " ORDER BY id"
-            return [json.loads(row["payload"]) for row in conn.execute(sql, params)]
-
-
-def _save_collection(collection: str, rows: list[dict]) -> None:
-    _ensure_sqlite()
-    table = _TABLES[collection]
-    source = _EMAIL_SOURCES[collection] if table == "email_pool" else None
-    with closing(_sqlite_conn()) as conn:
-        with conn:
-            if table == "email_pool":
-                conn.execute("DELETE FROM email_pool WHERE source=?", (source,))
-            else:
-                conn.execute(f"DELETE FROM {table}")
-            for pos, raw in enumerate(rows, 1):
-                row = dict(raw)
-                rid = int(row.get("id") or pos)
-                row["id"] = rid
-                if table == "email_pool" and conn.execute("SELECT 1 FROM email_pool WHERE id=?", (rid,)).fetchone():
-                    rid = int(conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM email_pool").fetchone()[0])
-                    row["id"] = rid
-                if table == "email_pool":
-                    conn.execute(
-                        "INSERT INTO email_pool(id,email,source,status,archived,created_at,updated_at,payload) "
-                        "VALUES(?,?,?,?,?,?,?,?)",
-                        (rid, str(row.get("email") or ""), source, str(row.get("status") or ""),
-                         int(bool(row.get("archived"))), str(row.get("created_at") or row.get("imported_at") or ""),
-                         str(row.get("updated_at") or ""), json.dumps(row, ensure_ascii=False)),
-                    )
-                else:
-                    conn.execute(
-                        f"INSERT INTO {table}(id,email,status,archived,created_at,updated_at,payload) VALUES(?,?,?,?,?,?,?)",
-                        (rid, str(row.get("email") or ""), str(row.get("status") or ""),
-                         int(bool(row.get("archived"))), str(row.get("created_at") or row.get("imported_at") or ""),
-                         str(row.get("updated_at") or ""), json.dumps(row, ensure_ascii=False)),
-                    )
-
-
-def _query_collection(collection: str, *, status: str | None = None, archived: str | bool | None = None,
-                       q: str | None = None, date_from: str | None = None, date_to: str | None = None,
-                       limit: int | None = None, offset: int = 0) -> list[dict]:
-    """利用索引分页读取，避免 WebUI 为一个页面加载整个 JSON 文件。"""
-    _ensure_sqlite()
-    table = _TABLES[collection]
-    where = ["1=1"]
-    params: list[Any] = []
-    if table == "email_pool":
-        where.append("source=?"); params.append(_EMAIL_SOURCES[collection])
-    if status:
-        where.append("status=?"); params.append(status)
-    if archived not in (None, "all", "include"):
-        where.append("archived=?"); params.append(int(archived in (True, "1", "true", "yes", "only")))
-    if q and str(q).strip():
-        where.append("lower(payload) LIKE ?"); params.append("%" + str(q).strip().lower() + "%")
-    if date_from:
-        where.append("created_at >= ?"); params.append(str(date_from) + ("T00:00:00" if len(str(date_from)) == 10 else ""))
-    if date_to:
-        value = str(date_to)
-        where.append("created_at <= ?"); params.append(value + ("T23:59:59.999999" if len(value) == 10 else ""))
-    sql = f"SELECT payload FROM {table} WHERE " + " AND ".join(where) + " ORDER BY id DESC"
-    if limit is not None:
-        sql += " LIMIT ? OFFSET ?"; params.extend([max(0, int(limit)), max(0, int(offset))])
-    with closing(_sqlite_conn()) as conn:
-        return [json.loads(row["payload"]) for row in conn.execute(sql, params)]
-
-
-def _query_collection_page(collection: str, *, status: str | None = None,
-                           archived: str | bool | None = None, q: str | None = None,
-                           date_from: str | None = None, date_to: str | None = None,
-                           extra_where: list[str] | None = None,
-                           extra_params: list[Any] | None = None,
-                           limit: int = 50, offset: int = 0) -> tuple[list[dict], int, str]:
-    """执行真正的 SQL COUNT/LIMIT/OFFSET 分页，并返回最新更新时间。"""
-    _ensure_sqlite()
-    table = _TABLES[collection]
-    where = ["1=1"]
-    params: list[Any] = []
-    if table == "email_pool":
-        where.append("source=?"); params.append(_EMAIL_SOURCES[collection])
-    if status:
-        where.append("status=?"); params.append(status)
-    if archived not in (None, "all", "include"):
-        where.append("archived=?"); params.append(int(archived in (True, "1", "true", "yes", "only")))
-    if q and str(q).strip():
-        where.append("lower(payload) LIKE ?"); params.append("%" + str(q).strip().lower() + "%")
-    if date_from:
-        value = str(date_from)
-        where.append("created_at >= ?"); params.append(value + ("T00:00:00" if len(value) == 10 else ""))
-    if date_to:
-        value = str(date_to)
-        where.append("created_at <= ?"); params.append(value + ("T23:59:59.999999" if len(value) == 10 else ""))
-    if extra_where:
-        where.extend(extra_where)
-        params.extend(extra_params or [])
-    clause = " AND ".join(where)
-    with closing(_sqlite_conn()) as conn:
-        total = int(conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {clause}", params).fetchone()[0])
-        latest = str(conn.execute(f"SELECT COALESCE(MAX(updated_at), '') FROM {table} WHERE {clause}", params).fetchone()[0] or "")
-        rows = [json.loads(row["payload"]) for row in conn.execute(
-            f"SELECT payload FROM {table} WHERE {clause} ORDER BY id DESC LIMIT ? OFFSET ?",
-            [*params, max(1, int(limit)), max(0, int(offset))],
-        )]
-    return rows, total, latest
-
-
-def _account_filter_sql(
-    plan_filter: str | None = None,
-    codex_filter: str | None = None,
-    totp_filter: str | None = None,
-) -> tuple[list[str], list[Any]]:
-    """把账号列表的套餐、Codex、2FA 过滤条件下推到 SQLite。
-
-    套餐、Codex、2FA 状态仍保存在账号 payload 中，因此这里使用 SQLite JSON1
-    直接过滤，而不是先把整张 accounts 表反序列化到 Python 再切页。
-    """
-    where: list[str] = []
-    params: list[Any] = []
-    plan = str(plan_filter or "").strip().lower()
-    codex = str(codex_filter or "").strip().lower()
-    totp = str(totp_filter or "").strip().lower()
-
-    plan_expr = (
-        "lower(COALESCE(NULLIF(CAST(json_extract(payload, '$.current_plan_type') AS TEXT), ''), "
-        "CAST(json_extract(payload, '$.plan_type') AS TEXT), ''))"
-    )
-    if plan and plan not in {"all", "any"}:
-        if plan == "plus":
-            # 与 _account_matches_plan_filter 保持一致：free(可试用)不算已开通 Plus。
-            where.extend([f"{plan_expr} LIKE ?", f"{plan_expr} NOT LIKE ?"])
-            params.extend(["%plus%", "%free%"])
-        elif plan in {"plus_trial", "plus_trial_eligible", "trial", "trial_eligible"}:
-            # 只有当前套餐为 free 且套餐查询明确返回可试用资格时才命中。
-            trial_expr = "lower(COALESCE(CAST(json_extract(payload, '$.plus_trial_eligible') AS TEXT), ''))"
-            where.append(f"{plan_expr} = ?")
-            where.append(f"{trial_expr} IN (?, ?, ?, ?)")
-            params.extend(["free", "1", "true", "yes", "on"])
-        elif plan == "free":
-            where.append(f"{plan_expr} = ?")
-            params.append("free")
-        else:
-            where.append(f"{plan_expr} = ?")
-            params.append(plan)
-
-    status_expr = "lower(COALESCE(CAST(json_extract(payload, '$.codex_status') AS TEXT), ''))"
-    live_status_expr = "lower(COALESCE(CAST(json_extract(payload, '$.live_check_status') AS TEXT), ''))"
-    if codex and codex not in {"all", "*"}:
-        if codex == "deactivated":
-            where.append(f"{live_status_expr} = ?")
-        else:
-            where.append(f"{status_expr} = ?")
-        params.append(codex)
-
-    totp_secret_expr = "lower(COALESCE(CAST(json_extract(payload, '$.totp_secret') AS TEXT), ''))"
-    totp_setup_expr = "lower(COALESCE(CAST(json_extract(payload, '$.totp_setup_status') AS TEXT), ''))"
-    if totp and totp not in {"all", "*"}:
-        if totp in {"enabled", "on", "active"}:
-            where.append(f"length(trim({totp_secret_expr})) > 0")
-        elif totp in {"disabled", "off", "not_enabled", "unset"}:
-            where.append(f"length(trim({totp_secret_expr})) = 0")
-        elif totp in {"pending", "setup", "setting", "queued", "running"}:
-            where.append(f"{totp_setup_expr} IN (?, ?)")
-            params.extend(["queued", "running"])
-        elif totp == "failed":
-            where.append(f"{totp_setup_expr} = ?")
-            params.append("failed")
-        elif totp == "stopped":
-            where.append(f"{totp_setup_expr} = ?")
-            params.append("stopped")
-        else:
-            where.append(f"{totp_setup_expr} = ?")
-            params.append(totp)
-    return where, params
-
-
-def _pool_summary_sql(collection: str) -> dict:
-    _ensure_sqlite()
-    table = _TABLES[collection]
-    with closing(_sqlite_conn()) as conn:
-        where = " WHERE source=?" if table == "email_pool" else ""
-        params = (_EMAIL_SOURCES[collection],) if table == "email_pool" else ()
-        counts = {str(r["status"] or "available"): int(r["n"]) for r in conn.execute(
-            f"SELECT status, COUNT(*) AS n FROM {table}{where} GROUP BY status", params
-        )}
-    out = {"available": counts.get("available", 0), "used": counts.get("used", 0), "failed": counts.get("failed", 0)}
-    out.update({k: v for k, v in counts.items() if k not in out})
-    out["total"] = sum(v for k, v in out.items() if k != "total")
-    return out
-
-
 def _read_json(path: Path, default: Any) -> Any:
     _ensure_storage()
     if not path.exists():
@@ -534,6 +116,16 @@ def _read_json(path: Path, default: Any) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
+
+
+def _write_json(path: Path, data: Any) -> None:
+    _ensure_storage()
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
 
 
 def _next_id(items: list[dict]) -> int:
@@ -557,6 +149,11 @@ def _generic_api_email_line(row: dict) -> str:
     ])
 
 
+def is_valid_email_address(value: object) -> bool:
+    """Return whether value is a syntactically usable mailbox address."""
+    return bool(_EMAIL_ADDRESS_RE.fullmatch(str(value or "").strip()))
+
+
 def _extract_registration_password(row: dict) -> str:
     extra_raw = row.get("extra_json")
     if isinstance(extra_raw, str) and extra_raw.strip():
@@ -569,6 +166,45 @@ def _extract_registration_password(row: dict) -> str:
     else:
         extra = {}
     return str(extra.get("registration_password") or row.get("registration_password") or "").strip()
+
+
+def _extract_account_api_address(row: dict) -> str:
+    """返回账号绑定邮箱的 API 地址，不把其他邮箱素材字段误当成 API。"""
+    for key in ("api_address", "api_url", "code_url", "mail_api_url", "mail_api"):
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+
+    if str(row.get("email_source") or "").strip().lower() == "generic_api":
+        for key in ("original_email_line", "rebind_previous_email_line"):
+            parts = str(row.get(key) or "").split("----", 1)
+            if len(parts) == 2 and parts[1].strip():
+                return parts[1].strip()
+
+        account_id = int(row.get("id") or 0)
+        email = str(row.get("email") or "").strip().lower()
+        for material in _load_generic_api_emails():
+            try:
+                id_matches = account_id > 0 and int(material.get("registered_account_id") or 0) == account_id
+            except (TypeError, ValueError):
+                id_matches = False
+            email_matches = bool(email) and str(material.get("email") or "").strip().lower() == email
+            if id_matches or email_matches:
+                value = str(material.get("code_url") or "").strip()
+                if value:
+                    return value
+    return ""
+
+
+def _account_download_txt_line(row: dict) -> str:
+    """下载 TXT 固定四字段：账号、注册密码、2FA、邮箱 API 地址。"""
+    fields = (
+        row.get("email") or "",
+        _extract_registration_password(row),
+        row.get("totp_secret") or "",
+        _extract_account_api_address(row),
+    )
+    return "----".join(str(value).replace("\r", " ").replace("\n", " ").strip() for value in fields)
 
 
 def _looks_like_email_material_segment(segment: str) -> bool:
@@ -622,40 +258,443 @@ def _registered_email_line(row: dict) -> str:
     return row.get("original_email_line") or row.get("email") or ""
 
 
+def _sync_outlook_txt(rows: list[dict]) -> None:
+    available_rows = [r for r in rows if r.get("status") == "available"]
+    lines = [_outlook_line(r) for r in sorted(available_rows, key=lambda x: int(x.get("id") or 0))]
+    _OUTLOOK_TXT.write_text(("\n".join(lines) + ("\n" if lines else "")), encoding="utf-8")
+
+
+def _sync_generic_api_email_txt(rows: list[dict]) -> None:
+    available_rows = [r for r in rows if r.get("status") == "available"]
+    lines = [_generic_api_email_line(r) for r in sorted(available_rows, key=lambda x: int(x.get("id") or 0))]
+    _GENERIC_API_EMAIL_TXT.write_text(("\n".join(lines) + ("\n" if lines else "")), encoding="utf-8")
+
+
+def _sync_accounts_txt(rows: list[dict]) -> None:
+    lines = [_registered_email_line(r) for r in sorted(rows, key=lambda x: int(x.get("id") or 0))]
+    _ACCOUNTS_TXT.write_text(("\n".join(lines) + ("\n" if lines else "")), encoding="utf-8")
+
+
+def _sync_tokens_txt(rows: list[dict]) -> None:
+    tokens = [
+        r.get("access_token") or ""
+        for r in sorted(rows, key=lambda x: int(x.get("id") or 0))
+        if r.get("access_token")
+    ]
+    _TOKENS_TXT.write_text(("\n".join(tokens) + ("\n" if tokens else "")), encoding="utf-8")
+
+
+def _viewer_snapshot(outlook_rows: list[dict], account_rows: list[dict]) -> dict:
+    account_by_email = {
+        (a.get("email") or "").lower(): a
+        for a in account_rows
+    }
+    return {
+        "generated_at": _now(),
+        "accounts": [
+            _decorate_account(r)
+            for r in sorted(account_rows, key=lambda x: int(x.get("id") or 0), reverse=True)
+        ],
+        "outlook": [
+            _decorate_outlook(r, account_by_email)
+            for r in sorted(outlook_rows, key=lambda x: int(x.get("id") or 0), reverse=True)
+        ],
+        "summary": {
+            "accounts": len(account_rows),
+            "outlook_total": len(outlook_rows),
+            "outlook_available": sum(1 for r in outlook_rows if r.get("status") == "available"),
+            "outlook_used": sum(1 for r in outlook_rows if r.get("status") == "used"),
+            "outlook_failed": sum(1 for r in outlook_rows if r.get("status") == "failed"),
+        },
+    }
+
+
+def _render_static_viewer(outlook_rows: list[dict] | None = None, account_rows: list[dict] | None = None) -> Path:
+    """生成可直接双击打开的静态账号查看页。"""
+    outlook_rows = _load_outlook() if outlook_rows is None else outlook_rows
+    account_rows = _load_accounts() if account_rows is None else account_rows
+    snapshot = _viewer_snapshot(outlook_rows, account_rows)
+    data_json = json.dumps(snapshot, ensure_ascii=False).replace("</", "<\\/")
+    title = escape(f"账号查看器 - {snapshot['generated_at']}")
+    html_text = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{title}</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    :root {{
+      --bg: #eef3f8;
+      --surface: #ffffff;
+      --soft: #f7f9fc;
+      --text: #172033;
+      --muted: #667085;
+      --line: #d9e2ec;
+      --blue: #2563eb;
+      --green: #16803c;
+      --red: #c2413a;
+      --amber: #b7791f;
+    }}
+    body {{
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    header {{
+      padding: 22px 28px;
+      background: #101827;
+      color: #fff;
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: center;
+      flex-wrap: wrap;
+    }}
+    h1, h2, p {{ margin: 0; }}
+    h1 {{ font-size: 28px; }}
+    .meta {{ margin-top: 6px; color: #b8c7d9; font-size: 13px; }}
+    .stats {{ display: flex; gap: 10px; flex-wrap: wrap; }}
+    .stat {{
+      min-width: 116px;
+      padding: 10px 12px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 8px;
+      background: rgba(255,255,255,.08);
+    }}
+    .stat span {{ display: block; color: #b8c7d9; font-size: 12px; }}
+    .stat strong {{ display: block; margin-top: 4px; font-size: 18px; }}
+    main {{ width: min(1500px, calc(100vw - 32px)); margin: 16px auto 30px; display: grid; gap: 16px; }}
+    .toolbar, section {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: 0 8px 22px rgba(15,23,42,.06);
+    }}
+    .toolbar {{ padding: 14px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }}
+    .search {{ min-width: min(520px, 100%); flex: 1; }}
+    input {{
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 12px;
+      font: inherit;
+    }}
+    .buttons {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+    button {{
+      min-height: 32px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      padding: 0 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }}
+    button:hover {{ background: var(--soft); }}
+    button.primary {{ border-color: var(--blue); background: var(--blue); color: #fff; }}
+    button.good {{ border-color: #2f855a; background: #edf8f1; color: #166534; }}
+    button:disabled {{ color: #98a2b3; cursor: not-allowed; background: #f2f4f7; }}
+    .head {{ padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--soft); }}
+    .head p {{ margin-top: 4px; color: var(--muted); font-size: 12px; }}
+    .table-wrap {{ overflow: auto; }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+    th, td {{ padding: 10px 12px; border-bottom: 1px solid #edf1f5; text-align: left; white-space: nowrap; vertical-align: middle; }}
+    th {{ position: sticky; top: 0; background: #fbfcfe; color: #475467; z-index: 1; font-size: 12px; }}
+    tr:hover td {{ background: #fbfdff; }}
+    .main-cell {{ font-weight: 700; }}
+    .sub-cell {{ margin-top: 3px; color: var(--muted); font-size: 12px; }}
+    .mono {{ font-family: ui-monospace, "JetBrains Mono", Consolas, monospace; font-size: 12px; }}
+    .muted {{ color: var(--muted); }}
+    .pill {{ display: inline-flex; min-width: 48px; justify-content: center; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }}
+    .status-available {{ color: var(--blue); background: #eef4ff; }}
+    .status-used {{ color: #475467; background: #f2f4f7; }}
+    .status-failed {{ color: var(--red); background: #fff0ef; }}
+    .actions {{ display: flex; gap: 8px; flex-wrap: wrap; }}
+    #toast {{
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: #101827;
+      color: #fff;
+      box-shadow: 0 14px 30px rgba(15,23,42,.24);
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }}
+    #toast.show {{ opacity: 1; transform: translateY(0); }}
+    @media (max-width: 820px) {{
+      header {{ align-items: flex-start; }}
+      .stats {{ width: 100%; }}
+      .stat {{ flex: 1; }}
+    }}
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>账号查看器</h1>
+    <p class="meta">静态快照，无需启动 Web Server。生成时间：<span id="generated"></span></p>
+  </div>
+  <div class="stats">
+    <div class="stat"><span>已完成</span><strong id="statAccounts">0</strong></div>
+    <div class="stat"><span>邮箱总数</span><strong id="statOutlook">0</strong></div>
+    <div class="stat"><span>可用邮箱</span><strong id="statAvailable">0</strong></div>
+  </div>
+</header>
+<main>
+  <div class="toolbar">
+    <div class="search"><input id="q" placeholder="搜索邮箱、token、clientId、状态"></div>
+    <div class="buttons">
+      <button class="primary" id="copyAllTokens">复制全部 Token</button>
+      <button class="good" id="copyAllLines">复制全部整行</button>
+      <button id="copyAllEmails">复制全部邮箱素材</button>
+    </div>
+  </div>
+  <section>
+    <div class="head">
+      <h2>已完成账号</h2>
+      <p>整行格式：邮箱----密码----clientId----邮箱刷新令牌----accessToken----totpSecret（如有）</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>邮箱</th><th>来源</th><th>Token</th><th>备注</th><th>2FA</th><th>创建时间</th><th>操作</th></tr></thead>
+        <tbody id="accountsBody"></tbody>
+      </table>
+    </div>
+  </section>
+  <section>
+    <div class="head">
+      <h2>邮箱素材库</h2>
+      <p>原始格式：邮箱----密码----clientId----邮箱刷新令牌；注册完成后可直接复制对应 Token 或整行。</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>邮箱</th><th>状态</th><th>Token</th><th>导入时间</th><th>已用时间</th><th>操作</th></tr></thead>
+        <tbody id="outlookBody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+<script id="snapshot" type="application/json">{data_json}</script>
+<script>
+const SNAPSHOT = JSON.parse(document.getElementById('snapshot').textContent);
+const $ = (s) => document.querySelector(s);
+let copySeq = 0;
+const copyStore = new Map();
+
+function fmt(v) {{ return v == null || v === '' ? '-' : String(v); }}
+function esc(v) {{
+  return fmt(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}}
+function short(v, n = 34) {{
+  const s = v || '';
+  return s.length > n ? `${{s.slice(0, n)}}...` : s;
+}}
+function copyId(v) {{
+  if (!v) return '';
+  const id = `c${{++copySeq}}`;
+  copyStore.set(id, v);
+  return id;
+}}
+function btn(label, value, cls = '') {{
+  const id = copyId(value);
+  return `<button class="${{cls}}" data-copy-id="${{id}}" ${{id ? '' : 'disabled'}}>${{label}}</button>`;
+}}
+function pill(status) {{
+  const map = {{ available: '可用', used: '已用', failed: '失败' }};
+  const label = map[status] || status || '-';
+  return `<span class="pill status-${{esc(status)}}">${{esc(label)}}</span>`;
+}}
+function showToast(text) {{
+  const toast = $('#toast');
+  toast.textContent = text;
+  toast.classList.add('show');
+  clearTimeout(showToast.timer);
+  showToast.timer = setTimeout(() => toast.classList.remove('show'), 1400);
+}}
+async function copyText(text) {{
+  if (!text) return;
+  if (navigator.clipboard && window.isSecureContext) {{
+    await navigator.clipboard.writeText(text);
+  }} else {{
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+  }}
+  showToast('已复制');
+}}
+function haystack(row) {{
+  return Object.values(row).join('\\n').toLowerCase();
+}}
+function render() {{
+  copyStore.clear();
+  copySeq = 0;
+  const q = $('#q').value.trim().toLowerCase();
+  const accounts = SNAPSHOT.accounts.filter((r) => !q || haystack(r).includes(q));
+  const outlook = SNAPSHOT.outlook.filter((r) => !q || haystack(r).includes(q));
+  $('#generated').textContent = SNAPSHOT.generated_at;
+  $('#statAccounts').textContent = SNAPSHOT.summary.accounts;
+  $('#statOutlook').textContent = SNAPSHOT.summary.outlook_total;
+  $('#statAvailable').textContent = SNAPSHOT.summary.outlook_available;
+  $('#accountsBody').innerHTML = accounts.map((r) => `
+    <tr>
+      <td class="muted">#${{esc(r.id)}}</td>
+      <td><div class="main-cell">${{esc(r.email)}}</div><div class="sub-cell">${{esc(r.user_name || '-')}}</div></td>
+      <td>${{esc(r.email_source || '-')}}</td>
+      <td><span class="mono">${{esc(short(r.access_token || '', 42))}}</span></td>
+      <td title="${{esc(r.note || '')}}">${{r.note ? esc(short(r.note, 60)) : '<span class="muted">-</span>'}}</td>
+      <td>${{r.totp_secret ? '已启用' : '<span class="muted">未启用</span>'}}</td>
+      <td class="muted">${{esc(r.created_at || '-')}}</td>
+      <td class="actions">${{btn('复制Token', r.access_token, 'primary')}} ${{btn('复制整行', r.copy_line, 'good')}}</td>
+    </tr>`).join('');
+  $('#outlookBody').innerHTML = outlook.map((r) => `
+    <tr>
+      <td><div class="main-cell">${{esc(r.email)}}</div><div class="sub-cell mono">${{esc(short(r.copy_line, 76))}}</div></td>
+      <td>${{pill(r.status)}}</td>
+      <td><span class="mono">${{esc(short(r.access_token || '', 36) || '未生成')}}</span></td>
+      <td class="muted">${{esc(r.imported_at || r.created_at || '-')}}</td>
+      <td class="muted">${{esc(r.used_at || '-')}}</td>
+      <td class="actions">${{btn('复制邮箱', r.copy_line)}} ${{btn('复制Token', r.access_token, 'primary')}} ${{btn('复制整行', r.account_copy_line, 'good')}}</td>
+    </tr>`).join('');
+}}
+document.addEventListener('click', (e) => {{
+  const target = e.target.closest('[data-copy-id]');
+  if (!target) return;
+  copyText(copyStore.get(target.dataset.copyId));
+}});
+$('#q').addEventListener('input', render);
+$('#copyAllTokens').addEventListener('click', () => copyText(SNAPSHOT.accounts.map((r) => r.access_token).filter(Boolean).join('\\n')));
+$('#copyAllLines').addEventListener('click', () => copyText(SNAPSHOT.accounts.map((r) => r.copy_line).filter(Boolean).join('\\n')));
+$('#copyAllEmails').addEventListener('click', () => copyText(SNAPSHOT.outlook.map((r) => r.copy_line).filter(Boolean).join('\\n')));
+render();
+</script>
+</body>
+</html>
+"""
+    tmp = _VIEWER_HTML.with_suffix(".html.tmp")
+    tmp.write_text(html_text, encoding="utf-8")
+    try:
+        tmp.replace(_VIEWER_HTML)
+        return _VIEWER_HTML
+    except PermissionError:
+        # Windows 下如果目标 HTML 正被浏览器或编辑器短暂占用，原子替换可能失败。
+        # 先尝试直接覆盖；仍失败时写一个时间戳快照，避免注册流程被查看页刷新阻断。
+        try:
+            _VIEWER_HTML.write_text(html_text, encoding="utf-8")
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return _VIEWER_HTML
+        except PermissionError:
+            fallback = _DATA_DIR / f"accounts_viewer_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            fallback.write_text(html_text, encoding="utf-8")
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            return fallback
+
+
+def _run_debounced_static_viewer_refresh() -> None:
+    """后台刷新静态账号查看页。
+
+    WebUI 的实时列表不依赖 accounts_viewer.html；把它从保存路径上移走，
+    避免注册/查活/Codex/套餐状态高频写入时，反复生成大 HTML 并阻塞查询 API。
+    """
+    global _VIEWER_REFRESH_TIMER, _VIEWER_REFRESH_REASON
+    with _VIEWER_REFRESH_LOCK:
+        _VIEWER_REFRESH_TIMER = None
+        reason = _VIEWER_REFRESH_REASON
+        _VIEWER_REFRESH_REASON = ""
+    try:
+        with _LOCK:
+            outlook_rows = _load_outlook()
+            account_rows = _load_accounts()
+            _render_static_viewer(outlook_rows=outlook_rows, account_rows=account_rows)
+    except Exception:
+        # 静态查看页只是旁路产物，失败不应影响主流程。
+        try:
+            import logging
+            logging.getLogger(__name__).exception("后台刷新 accounts_viewer.html 失败: %s", reason or "-")
+        except Exception:
+            pass
+
+
+def _schedule_static_viewer_refresh(reason: str = "") -> None:
+    """防抖刷新静态查看页：短时间内多次保存只生成一次 HTML。"""
+    global _VIEWER_REFRESH_TIMER, _VIEWER_REFRESH_REASON
+    with _VIEWER_REFRESH_LOCK:
+        _VIEWER_REFRESH_REASON = reason or _VIEWER_REFRESH_REASON
+        if _VIEWER_REFRESH_TIMER is not None:
+            _VIEWER_REFRESH_TIMER.cancel()
+        timer = threading.Timer(_VIEWER_DEBOUNCE_SECONDS, _run_debounced_static_viewer_refresh)
+        timer.daemon = True
+        _VIEWER_REFRESH_TIMER = timer
+        timer.start()
+
+
 def _load_outlook() -> list[dict]:
-    return _load_collection("outlook")
+    rows = _read_json(_OUTLOOK_JSON, None)
+    if not isinstance(rows, list):
+        rows = _read_json(_LEGACY_OUTLOOK_JSON, [])
+    return rows if isinstance(rows, list) else []
 
 
 def _save_outlook(rows: list[dict]) -> None:
-    _save_collection("outlook", rows)
+    _write_json(_OUTLOOK_JSON, rows)
+    _sync_outlook_txt(rows)
+    _schedule_static_viewer_refresh("save_outlook")
 
 
 def _load_generic_api_emails() -> list[dict]:
-    return _load_collection("generic_api")
+    rows = _read_json(_GENERIC_API_EMAIL_JSON, [])
+    return rows if isinstance(rows, list) else []
 
 
 def _save_generic_api_emails(rows: list[dict]) -> None:
     for row in rows:
         row["copy_line"] = _generic_api_email_line(row)
-    _save_collection("generic_api", rows)
+    _write_json(_GENERIC_API_EMAIL_JSON, rows)
+    _sync_generic_api_email_txt(rows)
 
 
 def _load_accounts() -> list[dict]:
-    return _load_collection("accounts")
+    rows = _read_json(_ACCOUNTS_JSON, None)
+    if not isinstance(rows, list):
+        rows = _read_json(_LEGACY_ACCOUNTS_JSON, [])
+    return rows if isinstance(rows, list) else []
 
 
 def _save_accounts(rows: list[dict]) -> None:
     for row in rows:
         row["copy_line"] = _account_line(row)
-    _save_collection("accounts", rows)
+    _write_json(_ACCOUNTS_JSON, rows)
+    _sync_accounts_txt(rows)
+    _sync_tokens_txt(rows)
+    _schedule_static_viewer_refresh("save_accounts")
 
 
 def _load_jobs() -> list[dict]:
-    return _load_collection("jobs")
+    rows = _read_json(_JOBS_JSON, None)
+    if not isinstance(rows, list):
+        rows = _read_json(_LEGACY_JOBS_JSON, [])
+    return rows if isinstance(rows, list) else []
 
 
 def _save_jobs(rows: list[dict]) -> None:
-    _save_collection("jobs", rows)
+    _write_json(_JOBS_JSON, rows)
 
 
 def _find_by_email(rows: list[dict], email: str) -> dict | None:
@@ -667,6 +706,8 @@ def _decorate_account(row: dict) -> dict:
     out = dict(row)
     out["note"] = out.get("note") or ""
     out["note_updated_at"] = out.get("note_updated_at") or ""
+    out["account_category"] = account_category(out)
+    out["account_category_label"] = account_category_label(out)
     plan_status = out.get("plan_check_status")
     if plan_status in {"queued", "running"}:
         try:
@@ -681,12 +722,42 @@ def _decorate_account(row: dict) -> dict:
             out["plan_check_status"] = "failed"
             out["plan_check_error"] = "上次套餐查询状态异常，可重新查询"
             out["plan_check_stale"] = True
+    rebind_status = out.get("rebind_status")
+    if rebind_status in {"queued", "running"}:
+        try:
+            stamp_key = "rebind_queued_at" if rebind_status == "queued" else "rebind_started_at"
+            stale_after = _REBIND_QUEUE_STALE_SECONDS if rebind_status == "queued" else _REBIND_STALE_SECONDS
+            started_at = datetime.fromisoformat(str(out.get(stamp_key) or ""))
+            if (datetime.now() - started_at).total_seconds() >= stale_after:
+                out["rebind_status"] = "failed"
+                out["rebind_error"] = "上次换绑任务已超时，可重新执行"
+                out["rebind_stale"] = True
+        except (TypeError, ValueError):
+            out["rebind_status"] = "failed"
+            out["rebind_error"] = "上次换绑任务状态异常，可重新执行"
+            out["rebind_stale"] = True
+    trial_probe_status = out.get("trial_payment_probe_status")
+    if trial_probe_status in {"queued", "running"}:
+        try:
+            stamp_key = "trial_payment_probe_queued_at" if trial_probe_status == "queued" else "trial_payment_probe_started_at"
+            stale_after = _TRIAL_PAYMENT_PROBE_QUEUE_STALE_SECONDS if trial_probe_status == "queued" else _TRIAL_PAYMENT_PROBE_STALE_SECONDS
+            started_at = datetime.fromisoformat(str(out.get(stamp_key) or ""))
+            if (datetime.now() - started_at).total_seconds() >= stale_after:
+                out["trial_payment_probe_status"] = "failed"
+                out["trial_payment_probe_ok"] = False
+                out["trial_payment_probe_error"] = "上次试用支付方式探测已超时，可重新查询"
+                out["trial_payment_probe_stale"] = True
+        except (TypeError, ValueError):
+            out["trial_payment_probe_status"] = "failed"
+            out["trial_payment_probe_ok"] = False
+            out["trial_payment_probe_error"] = "上次试用支付方式探测状态异常，可重新查询"
+            out["trial_payment_probe_stale"] = True
     out["copy_line"] = _account_line(out)
     return out
 
 
 def _account_matches_plan_filter(row: dict, plan_filter: str | None = None) -> bool:
-    """账号套餐过滤。plus 表示已开通 Plus，plus_trial 表示 free 可试用 Plus。"""
+    """账号套餐过滤。plus 表示已开通 Plus（兼容 plus/chatgpt_plus/plus_trial 等标记）。"""
     f = str(plan_filter or "").strip().lower()
     if not f or f in {"all", "any"}:
         return True
@@ -695,14 +766,17 @@ def _account_matches_plan_filter(row: dict, plan_filter: str | None = None) -> b
         # “free(可Plus试用)”/plus_trial_eligible 只是可试用，不算已开通 Plus。
         # 只有套餐字段本身是 Plus/ChatGPT Plus/plus_* 且不含 free 时才命中。
         return "plus" in plan and "free" not in plan
-    if f in {"plus_trial", "plus_trial_eligible", "trial", "trial_eligible"}:
-        trial = row.get("plus_trial_eligible")
-        if isinstance(trial, str):
-            trial = trial.strip().lower() in {"1", "true", "yes", "on"}
-        return plan == "free" and bool(trial)
     if f == "free":
         return plan == "free"
     return plan == f
+
+
+def _account_matches_category_filter(row: dict, category_filter: str | None = None) -> bool:
+    """账号主分类过滤；空值/all/any 表示不限制。"""
+    value = str(category_filter or "").strip().lower()
+    if not value or value in {"all", "any", "*"}:
+        return True
+    return account_category(row) == value
 
 
 def _decorate_outlook(row: dict, account_by_email: dict[str, dict] | None = None) -> dict:
@@ -746,96 +820,10 @@ def _decorate_generic_api_email(row: dict, account_by_email: dict[str, dict] | N
     return out
 
 
-def list_email_pool_page(
-    source: str = "all",
-    status: str | None = None,
-    q: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> dict:
-    """从统一邮箱库直接执行 COUNT + LIMIT/OFFSET。
-
-    ``email_pool`` 是三个邮箱来源共用的表。source 为具体来源时按 id 倒序，
-    source=all 时按入库时间合并倒序；两种情况都只从 SQLite 取当前页，
-    不再先加载全部邮箱再由 WebUI 切片。
-    """
-    _ensure_sqlite()
-    source = str(source or "outlook").strip().lower()
-    if source not in {"all", "outlook", "generic_api", "cloudflare_domain"}:
-        source = "outlook"
-    collection = "domain" if source == "cloudflare_domain" else source
-    db_source = None if source == "all" else _EMAIL_SOURCES[collection]
-    limit = max(1, int(limit))
-    offset = max(0, int(offset or 0))
-    where = ["1=1"]
-    params: list[Any] = []
-    if db_source is not None:
-        where.append("ep.source=?")
-        params.append(db_source)
-    if status:
-        where.append("ep.status=?")
-        params.append(status)
-    if q and str(q).strip():
-        like = "%" + str(q).strip().lower() + "%"
-        # payload 覆盖邮箱池自身字段；source 和关联账号 payload 保持旧 WebUI
-        # 的搜索能力（例如搜索 generic_api 或已注册账号 token）。
-        where.append(
-            "(lower(ep.payload) LIKE ? OR lower(ep.source) LIKE ? OR EXISTS ("
-            "SELECT 1 FROM accounts AS a "
-            "WHERE a.email = ep.email COLLATE NOCASE AND lower(a.payload) LIKE ?))"
-        )
-        params.extend([like, like, like])
-    clause = " AND ".join(where)
-    order_by = "ep.created_at DESC, ep.id DESC" if source == "all" else "ep.id DESC"
-    with _LOCK, closing(_sqlite_conn()) as conn:
-        total = int(conn.execute(f"SELECT COUNT(*) FROM email_pool AS ep WHERE {clause}", params).fetchone()[0])
-        latest = str(conn.execute(
-            f"SELECT COALESCE(MAX(ep.updated_at), '') FROM email_pool AS ep WHERE {clause}",
-            params,
-        ).fetchone()[0] or "")
-        rows = conn.execute(
-            f"SELECT ep.payload, ep.source, "
-            f"(SELECT a.payload FROM accounts AS a "
-            f" WHERE a.email = ep.email COLLATE NOCASE ORDER BY a.id DESC LIMIT 1) AS account_payload "
-            f"FROM email_pool AS ep WHERE {clause} "
-            f"ORDER BY {order_by} LIMIT ? OFFSET ?",
-            [*params, limit, offset],
-        ).fetchall()
-
-    # ``domain`` 是内部 collection 名，API 对外统一使用 cloudflare_domain；
-    # 直接反转 _EMAIL_SOURCES 会把域名邮箱错误地返回成 source=domain。
-    source_names = {
-        _EMAIL_SOURCES["outlook"]: "outlook",
-        _EMAIL_SOURCES["generic_api"]: "generic_api",
-        _EMAIL_SOURCES["domain"]: "cloudflare_domain",
-    }
-    items: list[dict] = []
-    for row in rows:
-        item = json.loads(row["payload"])
-        account_payload = row["account_payload"]
-        account = None
-        if account_payload:
-            try:
-                account = json.loads(account_payload)
-            except (TypeError, ValueError):
-                account = None
-        item_source = source_names.get(str(row["source"]), str(row["source"]))
-        if item_source == "outlook":
-            item = _decorate_outlook(item, {str(item.get("email") or "").lower(): account} if account else {})
-        elif item_source == "generic_api":
-            item = _decorate_generic_api_email(item, {str(item.get("email") or "").lower(): account} if account else {})
-        else:
-            item = dict(item)
-        item["source"] = item_source
-        if not item.get("copy_line"):
-            item["copy_line"] = item.get("email") or ""
-        items.append(item)
-    return {"items": items, "total": total, "offset": offset, "limit": limit, "latest": latest}
-
-
-def _get_conn() -> sqlite3.Connection:
-    """兼容旧入口：返回 SQLite 连接。"""
-    return _sqlite_conn()
+def _get_conn() -> None:
+    """兼容旧入口：初始化文件存储目录。"""
+    _ensure_storage()
+    return None
 
 
 def _row_to_dict(row: dict | None) -> dict | None:
@@ -1009,19 +997,7 @@ def update_account_codex_agent(acc_id: int, result: dict | None = None) -> bool:
         if result.get("auth_path") is not None:
             row["codex_agent_auth_path"] = result.get("auth_path")
         if isinstance(result.get("auth_json"), dict):
-            auth_json = result.get("auth_json")
-            row["codex_agent_token"] = json.dumps(auth_json, ensure_ascii=False)
-            agent_filename = f"codex-agent-{str(row.get('email') or acc_id)}.json"
-            stamp = _now()
-            _ensure_sqlite()
-            with closing(_sqlite_conn()) as conn:
-                conn.execute(
-                    "INSERT INTO codex_agent_accounts(account_id,email,filename,created_at,updated_at,payload) VALUES(?,?,?,?,?,?) "
-                    "ON CONFLICT(account_id) DO UPDATE SET email=excluded.email, filename=excluded.filename, updated_at=excluded.updated_at, payload=excluded.payload",
-                    (int(acc_id), str(row.get("email") or ""), agent_filename, stamp, stamp, json.dumps(auth_json, ensure_ascii=False)),
-                )
-                conn.commit()
-            row.pop("codex_agent_auth_path", None)
+            row["codex_agent_token"] = json.dumps(result.get("auth_json"), ensure_ascii=False)
         for _k in (
             "codex_agent_network_route",
             "codex_agent_proxy_mode",
@@ -1041,16 +1017,6 @@ def update_account_codex_agent(acc_id: int, result: dict | None = None) -> bool:
         row["updated_at"] = _now()
         _save_accounts(accounts)
         return True
-
-
-def get_codex_agent_credential(acc_id: int) -> tuple[str, str] | None:
-    """从 SQLite 获取 Agent 凭证，返回 JSON 文本和下载文件名。"""
-    _ensure_sqlite()
-    with closing(_sqlite_conn()) as conn:
-        row = conn.execute("SELECT filename, payload FROM codex_agent_accounts WHERE account_id=?", (int(acc_id),)).fetchone()
-    if not row:
-        return None
-    return json.dumps(json.loads(row["payload"]), ensure_ascii=False, indent=2) + "\n", row["filename"]
 
 
 def recover_interrupted_codex_agents() -> int:
@@ -1210,9 +1176,11 @@ def update_account_plan_check(acc_id: int | None = None, email: str | None = Non
             row["plus_trial_eligible"] = bool(result.get("plus_trial_eligible"))
             row["plus_trial_campaign_id"] = result.get("plus_trial_campaign_id")
             row["plus_trial_title"] = result.get("plus_trial_title")
+            row["plus_trial_summary"] = result.get("plus_trial_summary")
             row["plus_trial_discount_percentage"] = result.get("plus_trial_discount_percentage")
             row["plus_trial_duration_num_periods"] = result.get("plus_trial_duration_num_periods")
             row["plus_trial_duration_period"] = result.get("plus_trial_duration_period")
+            row["plus_trial_promotion_type_label"] = result.get("plus_trial_promotion_type_label")
             row["eligible_offer_ids"] = result.get("eligible_offer_ids") or []
             row["plan_last_success_at"] = result.get("checked_at") or _now()
             row["plan_last_success_result_json"] = json.dumps(result, ensure_ascii=False)
@@ -1220,10 +1188,131 @@ def update_account_plan_check(acc_id: int | None = None, email: str | None = Non
         row["plan_check_network_route"] = result.get("network_route")
         row["plan_check_proxy_used"] = result.get("proxy_used")
         row["plan_check_proxy_fallback_reason"] = result.get("proxy_fallback_reason")
+        row["plan_check_proxy_provider"] = result.get("plan_check_proxy_provider")
+        row["plan_check_proxy_country"] = result.get("plan_check_proxy_country")
+        row["plan_check_proxy_context"] = result.get("plan_check_proxy_context")
         row["token_expired"] = result.get("token_expired")
         row["token_expires_at"] = result.get("token_expires_at")
         row["plan_check_result_json"] = json.dumps(result, ensure_ascii=False)
         row["updated_at"] = _now()
+        _save_accounts(accounts)
+        return True
+
+
+def claim_account_trial_payment_probe(acc_id: int | None = None, email: str | None = None) -> bool:
+    """原子占用账号的试用支付方式探测。"""
+    with _LOCK:
+        accounts = _load_accounts()
+        target_email = (email or "").lower()
+        row = next((r for r in accounts if (acc_id is not None and int(r.get("id") or 0) == int(acc_id)) or (target_email and (r.get("email") or "").lower() == target_email)), None)
+        if row is None:
+            return False
+        status = row.get("trial_payment_probe_status")
+        if status in {"queued", "running"}:
+            try:
+                stamp = "trial_payment_probe_queued_at" if status == "queued" else "trial_payment_probe_started_at"
+                stale_after = _TRIAL_PAYMENT_PROBE_QUEUE_STALE_SECONDS if status == "queued" else _TRIAL_PAYMENT_PROBE_STALE_SECONDS
+                if (datetime.now() - datetime.fromisoformat(str(row.get(stamp) or ""))).total_seconds() < stale_after:
+                    return False
+            except (TypeError, ValueError):
+                pass
+        now = _now()
+        row.update({
+            "trial_payment_probe_status": "queued",
+            "trial_payment_probe_ok": None,
+            "trial_payment_probe_error": None,
+            "trial_payment_probe_queued_at": now,
+            "trial_payment_probe_started_at": None,
+            "trial_payment_probe_completed_at": None,
+            "updated_at": now,
+        })
+        _save_accounts(accounts)
+        return True
+
+
+def mark_account_trial_payment_probe_running(acc_id: int) -> bool:
+    with _LOCK:
+        accounts = _load_accounts()
+        row = next((r for r in accounts if int(r.get("id") or 0) == int(acc_id)), None)
+        if row is None or row.get("trial_payment_probe_status") not in {"queued", "running"}:
+            return False
+        now = _now()
+        row.update({
+            "trial_payment_probe_status": "running",
+            "trial_payment_probe_started_at": now,
+            "trial_payment_probe_error": None,
+            "updated_at": now,
+        })
+        _save_accounts(accounts)
+        return True
+
+
+def recover_interrupted_trial_payment_probes() -> int:
+    """服务重启时将内存队列中的支付方式探测恢复为可重试失败。"""
+    with _LOCK:
+        accounts = _load_accounts()
+        now = _now()
+        recovered = 0
+        for row in accounts:
+            if row.get("trial_payment_probe_status") not in {"queued", "running"}:
+                continue
+            row.update({
+                "trial_payment_probe_status": "failed",
+                "trial_payment_probe_ok": False,
+                "trial_payment_probe_error": "WebUI 重启导致试用支付方式探测中断，请重新查询",
+                "trial_payment_probe_completed_at": now,
+                "updated_at": now,
+            })
+            recovered += 1
+        if recovered:
+            _save_accounts(accounts)
+        return recovered
+
+
+def update_account_trial_payment_probe(acc_id: int | None = None, email: str | None = None, result: dict | None = None) -> bool:
+    """写回支付方式摘要，严格过滤为可展示的方式字段。"""
+    if isinstance(email, dict) and result is None:
+        result = email
+        email = None
+    result = result or {}
+    with _LOCK:
+        accounts = _load_accounts()
+        target_email = (email or "").lower()
+        row = next((r for r in accounts if (acc_id is not None and int(r.get("id") or 0) == int(acc_id)) or (target_email and (r.get("email") or "").lower() == target_email)), None)
+        if row is None:
+            return False
+        ok = bool(result.get("ok"))
+        safe_methods = []
+        for item in result.get("methods") or []:
+            if not isinstance(item, dict):
+                continue
+            method_id = str(item.get("id") or "").strip().lower()
+            status = str(item.get("status") or "unknown").strip().lower()
+            if not method_id or status not in {"supported", "unsupported", "unknown"}:
+                continue
+            safe = {"id": method_id, "label": str(item.get("label") or method_id)[:80], "status": status}
+            if item.get("detail"):
+                safe["detail"] = str(item.get("detail"))[:160]
+            safe_methods.append(safe)
+        available = []
+        for value in result.get("available_method_types") or []:
+            method_id = str(value or "").strip().lower()
+            if method_id and method_id not in available and len(method_id) <= 80:
+                available.append(method_id)
+        now = _now()
+        row.update({
+            "trial_payment_probe_status": "success" if ok else "failed",
+            "trial_payment_probe_ok": ok,
+            "trial_payment_probe_error": None if ok else str(result.get("error") or "支付方式探测失败")[:240],
+            "trial_payment_probe_checked_at": result.get("checked_at") or now,
+            "trial_payment_probe_completed_at": now,
+            "trial_payment_probe_country": str(result.get("country") or "").strip().upper()[:2],
+            "trial_payment_probe_campaign_id": str(result.get("campaign_id") or "")[:120],
+            "trial_payment_checkout_session_created": bool(result.get("checkout_session_created")),
+            "trial_payment_methods": safe_methods,
+            "trial_payment_available_types": available,
+            "updated_at": now,
+        })
         _save_accounts(accounts)
         return True
 
@@ -1379,25 +1468,6 @@ def _matches_codex_status_filter(row: dict, codex_filter: str | None) -> bool:
     return status == codex_filter
 
 
-def _matches_totp_status_filter(row: dict, totp_filter: str | None) -> bool:
-    """按 2FA/TOTP 是否已配置及设置任务状态筛选账号。"""
-    totp_filter = str(totp_filter or "").strip().lower()
-    if not totp_filter or totp_filter in {"all", "*"}:
-        return True
-
-    enabled = bool(str(row.get("totp_secret") or "").strip())
-    setup_status = str(row.get("totp_setup_status") or "").strip().lower()
-    if totp_filter in {"enabled", "on", "active"}:
-        return enabled
-    if totp_filter in {"disabled", "off", "not_enabled", "unset"}:
-        return not enabled
-    if totp_filter in {"pending", "setup", "setting", "queued", "running"}:
-        return setup_status in {"queued", "running"}
-    if totp_filter in {"failed", "stopped"}:
-        return setup_status == totp_filter
-    return setup_status == totp_filter
-
-
 def _filtered_decorated_accounts(
     archived: str | bool | None = False,
     plan_filter: str | None = None,
@@ -1405,7 +1475,7 @@ def _filtered_decorated_accounts(
     q: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
-    totp_filter: str | None = None,
+    category_filter: str | None = None,
 ) -> list[dict]:
     rows = _load_accounts()
     if archived in (True, "1", "true", "yes", "only"):
@@ -1416,8 +1486,8 @@ def _filtered_decorated_accounts(
         rows = [r for r in rows if not bool(r.get("archived"))]
     decorated = [_decorate_account(r) for r in rows]
     decorated = [r for r in decorated if _account_matches_plan_filter(r, plan_filter)]
+    decorated = [r for r in decorated if _account_matches_category_filter(r, category_filter)]
     decorated = [r for r in decorated if _matches_codex_status_filter(r, codex_filter)]
-    decorated = [r for r in decorated if _matches_totp_status_filter(r, totp_filter)]
     decorated = [r for r in decorated if _account_matches_query(r, q)]
     # 按创建时间筛选（date_from/date_to 为 ISO 字符串或 YYYY-MM-DD）
     if date_from or date_to:
@@ -1445,18 +1515,24 @@ def list_account_plan_check_statuses(
     plan_filter: str | None = None,
     codex_filter: str | None = None,
     q: str | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-    totp_filter: str | None = None,
+    category_filter: str | None = None,
 ) -> dict:
     """返回不含 Token/邮箱密码的套餐查询轻量状态快照。"""
     fields = (
         "id", "email", "archived",
         "plan_type", "current_plan_type", "plus_trial_eligible",
+        "plus_trial_campaign_id", "plus_trial_title", "plus_trial_summary",
+        "plus_trial_promotion_type_label", "plus_trial_duration_num_periods",
+        "plus_trial_duration_period", "plus_trial_discount_percentage", "eligible_offer_ids",
         "plan_check_status", "plan_check_ok", "plan_check_error",
         "plan_check_trigger", "plan_check_queued_at", "plan_check_started_at",
         "plan_check_completed_at", "plan_checked_at", "plan_last_success_at",
         "plan_check_network_route", "plan_check_proxy_used", "plan_check_proxy_fallback_reason",
+        "plan_check_proxy_provider", "plan_check_proxy_country", "plan_check_proxy_context",
+        "trial_payment_probe_status", "trial_payment_probe_ok", "trial_payment_probe_error",
+        "trial_payment_probe_checked_at", "trial_payment_probe_queued_at", "trial_payment_probe_started_at",
+        "trial_payment_probe_completed_at", "trial_payment_probe_country", "trial_payment_probe_campaign_id",
+        "trial_payment_checkout_session_created", "trial_payment_methods", "trial_payment_available_types",
         "live_check_proxy_used", "live_check_fingerprint_text",
         "expires_at", "plan_expires_at", "plan_renews_at", "renews_at",
         "billing_period", "billing_currency", "discount_amount", "discount_type",
@@ -1473,27 +1549,17 @@ def list_account_plan_check_statuses(
         "totp_setup_status", "totp_setup_ok", "totp_setup_error",
         "totp_setup_message", "totp_setup_trigger", "totp_setup_queued_at",
         "totp_setup_started_at", "totp_setup_completed_at", "totp_setup_checked_at",
+        "rebind_status", "rebind_ok", "rebind_error", "rebind_message",
+        "rebind_code", "rebind_trigger", "rebind_queued_at", "rebind_started_at",
+        "rebind_completed_at", "rebind_checked_at", "rebind_old_email", "rebind_new_email",
+        "rebind_bundle_path", "rebind_last_success_at",
     )
     with _LOCK:
+        all_rows = _filtered_decorated_accounts(archived=archived, plan_filter=plan_filter, category_filter=category_filter, codex_filter=codex_filter, q=q)
+        total = len(all_rows)
         limit = max(1, int(limit))
         offset = max(0, int(offset or 0))
-        extra_where, extra_params = _account_filter_sql(
-            plan_filter=plan_filter,
-            codex_filter=codex_filter,
-            totp_filter=totp_filter,
-        )
-        candidates, total, latest = _query_collection_page(
-            "accounts",
-            archived=archived,
-            q=q,
-            date_from=date_from,
-            date_to=date_to,
-            extra_where=extra_where,
-            extra_params=extra_params,
-            limit=limit,
-            offset=offset,
-        )
-        rows = [_decorate_account(row) for row in candidates]
+        rows = all_rows[offset: offset + limit]
         items = []
         for row in rows:
             item = {"id": row.get("id"), "email": row.get("email")}
@@ -1504,6 +1570,8 @@ def list_account_plan_check_statuses(
                 if value is not None and value != "":
                     item[key] = value
             item["totp_enabled"] = bool(str(row.get("totp_secret") or "").strip())
+            item["account_category"] = account_category(row)
+            item["account_category_label"] = account_category_label(row)
             plan = str(row.get("current_plan_type") or row.get("plan_type") or "").lower()
             if not any(x in plan for x in ("plus", "pro", "team", "go")):
                 for expire_key in ("expires_at", "plan_expires_at", "plan_renews_at", "renews_at"):
@@ -1511,6 +1579,7 @@ def list_account_plan_check_statuses(
             item["codex_agent_has_token"] = bool(str(row.get("codex_agent_token") or "").strip())
             item["has_access_token"] = bool(str(row.get("access_token") or "").strip())
             items.append(item)
+        latest = max((str(row.get("updated_at") or "") for row in all_rows), default="")
         # updated_at 目前只有秒级精度；一次快速查询可能在同一秒内完成
         # queued -> running -> success/failed，导致 revision 不变，前端跳过合并状态，
         # 页面就会一直停在“查询中”。把轻量状态本身纳入签名，保证状态变化可被轮询发现。
@@ -1525,6 +1594,17 @@ def list_account_plan_check_statuses(
                     "current_plan_type": row.get("current_plan_type"),
                     "plan_type": row.get("plan_type"),
                     "plus_trial_eligible": row.get("plus_trial_eligible"),
+                    "plus_trial_title": row.get("plus_trial_title"),
+                    "plus_trial_summary": row.get("plus_trial_summary"),
+                    "plus_trial_promotion_type_label": row.get("plus_trial_promotion_type_label"),
+                    "eligible_offer_ids": row.get("eligible_offer_ids"),
+                    "trial_payment_probe_status": row.get("trial_payment_probe_status"),
+                    "trial_payment_probe_ok": row.get("trial_payment_probe_ok"),
+                    "trial_payment_probe_error": row.get("trial_payment_probe_error"),
+                    "trial_payment_probe_checked_at": row.get("trial_payment_probe_checked_at"),
+                    "trial_payment_methods": row.get("trial_payment_methods"),
+                    "trial_payment_available_types": row.get("trial_payment_available_types"),
+                    "account_category": account_category(row),
                     "extract_link_status": row.get("extract_link_status"),
                     "codex_status": row.get("codex_status"),
                     "codex_agent_status": row.get("codex_agent_status"),
@@ -1536,8 +1616,15 @@ def list_account_plan_check_statuses(
                     "totp_setup_started_at": row.get("totp_setup_started_at"),
                     "totp_setup_completed_at": row.get("totp_setup_completed_at"),
                     "totp_enabled": bool(str(row.get("totp_secret") or "").strip()),
+                    "rebind_status": row.get("rebind_status"),
+                    "rebind_ok": row.get("rebind_ok"),
+                    "rebind_error": row.get("rebind_error"),
+                    "rebind_message": row.get("rebind_message"),
+                    "rebind_queued_at": row.get("rebind_queued_at"),
+                    "rebind_started_at": row.get("rebind_started_at"),
+                    "rebind_completed_at": row.get("rebind_completed_at"),
                 }
-                for row in rows
+                for row in all_rows
             ],
             ensure_ascii=False,
             sort_keys=True,
@@ -1545,6 +1632,179 @@ def list_account_plan_check_statuses(
         )
         revision_sig = hashlib.sha1(revision_payload.encode("utf-8")).hexdigest()[:12]
         return {"items": items, "total": total, "offset": offset, "limit": limit, "revision": f"{total}:{latest}:{revision_sig}"}
+
+
+def claim_account_rebind(
+    account_id: int,
+    *,
+    new_email: str | None = None,
+    trigger: str = "manual",
+) -> bool:
+    """原子占用账号邮箱换绑任务；已有未超时任务时返回 False。"""
+    with _LOCK:
+        rows = _load_accounts()
+        row = next((r for r in rows if int(r.get("id") or 0) == int(account_id)), None)
+        if row is None:
+            return False
+
+        current_status = str(row.get("rebind_status") or "")
+        if current_status in {"queued", "running"}:
+            try:
+                stamp_key = "rebind_queued_at" if current_status == "queued" else "rebind_started_at"
+                stale_after = _REBIND_QUEUE_STALE_SECONDS if current_status == "queued" else _REBIND_STALE_SECONDS
+                started_at = datetime.fromisoformat(str(row.get(stamp_key) or ""))
+                if (datetime.now() - started_at).total_seconds() < stale_after:
+                    return False
+            except (TypeError, ValueError):
+                # 时间戳损坏时允许重新占用，避免状态永久卡死。
+                pass
+
+        now = _now()
+        row["rebind_status"] = "queued"
+        row["rebind_ok"] = False
+        row["rebind_trigger"] = str(trigger or "manual")
+        row["rebind_queued_at"] = now
+        row["rebind_started_at"] = None
+        row["rebind_completed_at"] = None
+        row["rebind_checked_at"] = None
+        row["rebind_error"] = None
+        row["rebind_message"] = "已入队"
+        row["rebind_code"] = None
+        row["rebind_old_email"] = row.get("email") or ""
+        row["rebind_new_email"] = str(new_email or "").strip() or None
+        row["rebind_bundle_path"] = None
+        row["updated_at"] = now
+        _save_accounts(rows)
+        return True
+
+
+def mark_account_rebind_running(account_id: int) -> bool:
+    """把已排队的邮箱换绑任务标记为运行中。"""
+    with _LOCK:
+        rows = _load_accounts()
+        row = next((r for r in rows if int(r.get("id") or 0) == int(account_id)), None)
+        if row is None or row.get("rebind_status") not in {"queued", "running"}:
+            return False
+        now = _now()
+        row["rebind_status"] = "running"
+        row["rebind_started_at"] = now
+        row["rebind_error"] = None
+        row["rebind_message"] = "正在执行邮箱换绑"
+        row["updated_at"] = now
+        _save_accounts(rows)
+        return True
+
+
+def update_account_rebind(account_id: int, result: dict | None = None) -> bool:
+    """写回邮箱换绑状态；成功时原子替换账号当前邮箱和 access_token。"""
+    result = result or {}
+    with _LOCK:
+        rows = _load_accounts()
+        row = next((r for r in rows if int(r.get("id") or 0) == int(account_id)), None)
+        if row is None:
+            return False
+
+        now = _now()
+        requested_status = str(result.get("status") or ("success" if result.get("ok") else "failed")).strip().lower()
+        new_email = str(result.get("new_email") or "").strip()
+        new_token = str(result.get("access_token") or "").strip()
+        ok = bool(result.get("ok")) and requested_status == "success" and bool(new_email) and bool(new_token)
+        status = "success" if ok else (requested_status if requested_status in {"failed", "stopped"} else "failed")
+
+        if ok:
+            previous_email = str(row.get("email") or "").strip()
+            previous_line = str(row.get("original_email_line") or "").strip()
+            row["rebind_previous_email"] = previous_email
+            row["rebind_previous_email_line"] = previous_line
+            row["rebind_old_email"] = previous_email
+            row["rebind_new_email"] = new_email
+            row["email"] = new_email
+            # 换绑后的当前账号行必须以新邮箱开头；旧邮箱素材保存在 rebind_previous_email_line。
+            row["original_email_line"] = new_email
+            row["access_token"] = new_token
+            for key in ("user_id", "user_name", "account_id", "expires_at", "device_id"):
+                if result.get(key) is not None and result.get(key) != "":
+                    row[key] = result.get(key)
+            row["rebind_bundle_path"] = result.get("bundle_path") or row.get("rebind_bundle_path")
+            row["rebind_last_success_at"] = now
+            row["rebind_error"] = None
+        else:
+            if new_email:
+                row["rebind_new_email"] = new_email
+            row["rebind_error"] = str(result.get("error") or result.get("message") or "邮箱换绑失败")[:1000]
+
+        row["rebind_status"] = status
+        row["rebind_ok"] = ok
+        row["rebind_code"] = result.get("code")
+        row["rebind_message"] = result.get("message") or ("邮箱换绑完成" if ok else row.get("rebind_error"))
+        row["rebind_checked_at"] = result.get("checked_at") or now
+        if status in {"success", "failed", "stopped"}:
+            row["rebind_completed_at"] = now
+        row["updated_at"] = now
+        row["copy_line"] = _account_line(row)
+        _save_accounts(rows)
+        return True
+
+
+def recover_interrupted_rebinds() -> int:
+    """服务启动时把上次进程遗留的邮箱换绑队列状态恢复为失败。"""
+    with _LOCK:
+        rows = _load_accounts()
+        recovered = 0
+        now = _now()
+        for row in rows:
+            if row.get("rebind_status") not in {"queued", "running"}:
+                continue
+            row["rebind_status"] = "failed"
+            row["rebind_ok"] = False
+            row["rebind_error"] = "WebUI 重启导致邮箱换绑中断，请重新执行"
+            row["rebind_message"] = row["rebind_error"]
+            row["rebind_completed_at"] = now
+            row["rebind_checked_at"] = now
+            row["updated_at"] = now
+            recovered += 1
+        if recovered:
+            _save_accounts(rows)
+        return recovered
+
+
+def list_rebind_completed(
+    limit: int = 5000,
+    offset: int = 0,
+    archived: str | bool | None = False,
+) -> dict:
+    """返回已成功完成换绑的账号摘要和单独的新邮箱输出，不包含凭据。"""
+    with _LOCK:
+        rows = _load_accounts()
+        if archived in (True, "1", "true", "yes", "only"):
+            rows = [row for row in rows if bool(row.get("archived"))]
+        elif archived in ("all", "include"):
+            pass
+        else:
+            rows = [row for row in rows if not bool(row.get("archived"))]
+        completed = []
+        for row in rows:
+            status = str(row.get("rebind_status") or "").strip().lower()
+            if status != "success" or row.get("rebind_ok") is False:
+                continue
+            new_email = str(row.get("rebind_new_email") or row.get("email") or "").strip()
+            if not new_email:
+                continue
+            completed.append({
+                "id": row.get("id"),
+                "old_email": str(row.get("rebind_old_email") or row.get("rebind_previous_email") or "").strip(),
+                "new_email": new_email,
+                "completed_at": row.get("rebind_completed_at") or row.get("rebind_last_success_at") or row.get("rebind_checked_at") or "",
+                "rebind_status": "success",
+                "rebind_code": row.get("rebind_code") or "OK",
+            })
+        completed.sort(key=lambda item: (str(item.get("completed_at") or ""), int(item.get("id") or 0)), reverse=True)
+        total = len(completed)
+        limit = max(1, int(limit))
+        offset = max(0, int(offset or 0))
+        items = completed[offset:offset + limit]
+        lines = [str(item.get("new_email") or "").strip() for item in items if str(item.get("new_email") or "").strip()]
+        return {"items": items, "total": total, "offset": offset, "limit": limit, "lines": lines, "text": "\n".join(lines)}
 
 
 def list_accounts(
@@ -1556,21 +1816,11 @@ def list_accounts(
     q: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
-    totp_filter: str | None = None,
+    category_filter: str | None = None,
 ) -> list[dict]:
-    # 非分页兼容接口也走同一条 SQL 分页路径，避免 limit=500 时先读取整张表。
-    result = list_accounts_page(
-        limit=limit,
-        offset=offset,
-        archived=archived,
-        plan_filter=plan_filter,
-        codex_filter=codex_filter,
-        q=q,
-        date_from=date_from,
-        date_to=date_to,
-        totp_filter=totp_filter,
-    )
-    return result["items"]
+    with _LOCK:
+        rows = _filtered_decorated_accounts(archived=archived, plan_filter=plan_filter, category_filter=category_filter, codex_filter=codex_filter, q=q, date_from=date_from, date_to=date_to)
+        return rows[max(0, int(offset or 0)): max(0, int(offset or 0)) + max(1, int(limit))]
 
 
 def list_accounts_page(
@@ -1582,28 +1832,15 @@ def list_accounts_page(
     q: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
-    totp_filter: str | None = None,
+    category_filter: str | None = None,
 ) -> dict:
     with _LOCK:
+        rows = _filtered_decorated_accounts(archived=archived, plan_filter=plan_filter, category_filter=category_filter, codex_filter=codex_filter, q=q, date_from=date_from, date_to=date_to)
+        total = len(rows)
         limit = max(1, int(limit))
         offset = max(0, int(offset or 0))
-        extra_where, extra_params = _account_filter_sql(
-            plan_filter=plan_filter,
-            codex_filter=codex_filter,
-            totp_filter=totp_filter,
-        )
-        candidates, total, latest = _query_collection_page(
-            "accounts",
-            archived=archived,
-            q=q,
-            date_from=date_from,
-            date_to=date_to,
-            extra_where=extra_where,
-            extra_params=extra_params,
-            limit=limit,
-            offset=offset,
-        )
-        items = [_decorate_account(row) for row in candidates]
+        items = rows[offset: offset + limit]
+        latest = max((str(row.get("updated_at") or "") for row in rows), default="")
         return {"items": items, "total": total, "offset": offset, "limit": limit, "revision": f"{total}:{latest}"}
 
 
@@ -1907,35 +2144,26 @@ def archive_accounts(account_ids: list[int] | None, archived: bool = True) -> tu
 
 def count_accounts() -> int:
     with _LOCK:
-        _ensure_sqlite()
-        with closing(_sqlite_conn()) as conn:
-            return int(conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0])
+        return len(_load_accounts())
 
 
 def delete_account(acc_id: int | None = None, email: str | None = None) -> bool:
-    """从 SQLite 删除一个已注册账号记录，并清理关联的 Agent 凭证。"""
+    """删除一个已注册账号记录，并同步刷新 注册成功的邮箱.txt / token.txt / 静态查看页。"""
     with _LOCK:
         rows = _load_accounts()
         target_email = (email or "").lower()
         new_rows = []
-        deleted_ids = []
         deleted = False
         for row in rows:
             match_id = acc_id is not None and int(row.get("id") or 0) == int(acc_id)
             match_email = bool(target_email) and (row.get("email") or "").lower() == target_email
             if match_id or match_email:
                 deleted = True
-                deleted_ids.append(int(row.get("id") or 0))
                 continue
             new_rows.append(row)
         if not deleted:
             return False
         _save_accounts(new_rows)
-        if deleted_ids:
-            _ensure_sqlite()
-            with closing(_sqlite_conn()) as conn:
-                conn.executemany("DELETE FROM codex_agent_accounts WHERE account_id=?", [(x,) for x in deleted_ids])
-                conn.commit()
         return True
 
 
@@ -1968,10 +2196,6 @@ def delete_accounts(account_ids: list[int] | None = None, emails: list[str] | No
             skipped.append({"email": item, "reason": "账号不存在"})
         if deleted:
             _save_accounts(new_rows)
-            _ensure_sqlite()
-            with closing(_sqlite_conn()) as conn:
-                conn.executemany("DELETE FROM codex_agent_accounts WHERE account_id=?", [(x["id"],) for x in deleted])
-                conn.commit()
     return deleted, skipped
 
 
@@ -2193,57 +2417,37 @@ def release_unconsumed_outlook(email: str, note: str | None = None) -> bool:
         return True
 
 
-def delete_email_pool(email: str, source: str = "all") -> bool:
-    """按邮箱及来源从统一邮箱池删除记录。
-
-    ``source=all`` 必须真正查询三个来源，而不能退化成 Outlook；旧版 WebUI
-    在“全部邮箱池”中删除通用 API/域名邮箱时就是因此一直返回未找到。直接
-    删除 SQLite 行也避免了逐条批量删除时反复加载并重写整个邮箱池。
-    """
-    target = str(email or "").strip()
-    source = str(source or "all").strip().lower()
-    if not target:
-        return False
-    if source not in {"all", "outlook", "generic_api", "cloudflare_domain"}:
-        raise ValueError(f"非法邮箱来源: {source}")
-
-    with _LOCK:
-        _ensure_sqlite()
-        with closing(_sqlite_conn()) as conn:
-            if source == "all":
-                cur = conn.execute(
-                    "DELETE FROM email_pool WHERE email = ? COLLATE NOCASE",
-                    (target,),
-                )
-            else:
-                db_source = (
-                    _EMAIL_SOURCES["domain"]
-                    if source == "cloudflare_domain"
-                    else _EMAIL_SOURCES[source]
-                )
-                cur = conn.execute(
-                    "DELETE FROM email_pool "
-                    "WHERE email = ? COLLATE NOCASE AND source = ?",
-                    (target, db_source),
-                )
-            conn.commit()
-            return cur.rowcount > 0
-
-
 def delete_outlook(email: str) -> bool:
     """从邮箱池彻底删除一个邮箱（按 email 匹配）。返回是否删到。"""
-    return delete_email_pool(email, source="outlook")
+    with _LOCK:
+        rows = _load_outlook()
+        target = (email or "").lower()
+        new_rows = [r for r in rows if (r.get("email") or "").lower() != target]
+        if len(new_rows) == len(rows):
+            return False
+        _save_outlook(new_rows)
+        return True
 
 
 def list_outlook_pool(status: str | None = None, limit: int = 500) -> list[dict]:
-    return list_email_pool_page(
-        source="outlook", status=status, limit=limit, offset=0
-    )["items"]
+    with _LOCK:
+        account_by_email = {
+            (a.get("email") or "").lower(): a
+            for a in _load_accounts()
+        }
+        rows = _load_outlook()
+        if status:
+            rows = [r for r in rows if r.get("status") == status]
+        rows = sorted(rows, key=lambda x: int(x.get("id") or 0), reverse=True)
+        return [_decorate_outlook(r, account_by_email) for r in rows[:limit]]
 
 
 def outlook_pool_summary() -> dict:
     with _LOCK:
-        out = _pool_summary_sql("outlook")
+        out = {"available": 0, "used": 0, "failed": 0}
+        for row in _load_outlook():
+            status = row.get("status") or "available"
+            out[status] = out.get(status, 0) + 1
         out["total"] = sum(v for k, v in out.items() if k != "total")
         return out
 
@@ -2258,6 +2462,20 @@ def get_outlook_by_email(email: str) -> dict | None:
 # generic_api email pool
 # ============================================================
 
+def _quarantine_invalid_generic_api_rows(rows: list[dict]) -> int:
+    """Disable malformed available rows so they cannot be claimed repeatedly."""
+    invalid = 0
+    for row in rows:
+        if is_valid_email_address(row.get("email")):
+            continue
+        invalid += 1
+        if row.get("status") == "available":
+            row["status"] = "disabled"
+            row["used_at"] = row.get("used_at") or _now()
+            row["note"] = "邮箱格式无效，已自动停用"
+    return invalid
+
+
 def import_generic_api_emails(records: list[dict]) -> tuple[int, int]:
     """
     批量导入通用 API 取码邮箱。
@@ -2270,7 +2488,7 @@ def import_generic_api_emails(records: list[dict]) -> tuple[int, int]:
         for raw in records:
             email = (raw.get("email") or "").strip()
             code_url = (raw.get("code_url") or raw.get("url") or "").strip()
-            if not email or not code_url:
+            if not is_valid_email_address(email) or not code_url:
                 skipped += 1
                 continue
             if _find_by_email(rows, email):
@@ -2296,8 +2514,41 @@ def claim_next_generic_api_email() -> dict | None:
     """原子领取一个可用通用 API 邮箱并标记为 used。"""
     with _LOCK:
         rows = sorted(_load_generic_api_emails(), key=lambda x: int(x.get("id") or 0))
-        row = next((r for r in rows if r.get("status") == "available"), None)
+        invalid = _quarantine_invalid_generic_api_rows(rows)
+        accounts_by_email = {
+            str(account.get("email") or "").strip().lower(): account
+            for account in _load_accounts()
+            if str(account.get("email") or "").strip()
+        }
+        reconciled = 0
+        for pool_row in rows:
+            email_key = str(pool_row.get("email") or "").strip().lower()
+            account = accounts_by_email.get(email_key)
+            registered_account_id = pool_row.get("registered_account_id")
+            if account is None and not registered_account_id:
+                continue
+            if account is not None:
+                pool_row["registered_account_id"] = account.get("id")
+            if pool_row.get("status") == "available":
+                pool_row["status"] = "used"
+                pool_row["used_at"] = (
+                    pool_row.get("used_at")
+                    or (account or {}).get("updated_at")
+                    or (account or {}).get("created_at")
+                    or _now()
+                )
+                pool_row["note"] = "已存在注册账号，领取时自动校正为 used"
+                reconciled += 1
+        row = next((
+            r for r in rows
+            if r.get("status") == "available"
+            and not r.get("registered_account_id")
+            and str(r.get("email") or "").strip().lower() not in accounts_by_email
+            and is_valid_email_address(r.get("email"))
+        ), None)
         if row is None:
+            if invalid or reconciled:
+                _save_generic_api_emails(rows)
             return None
         row["status"] = "used"
         row["used_at"] = _now()
@@ -2313,6 +2564,9 @@ def release_generic_api_email(email: str, status: str = "available", note: str |
         row = _find_by_email(rows, email)
         if row is None:
             return
+        if status == "available" and not is_valid_email_address(row.get("email")):
+            status = "disabled"
+            note = note or "邮箱格式无效，已自动停用"
         row["status"] = status
         if status == "available":
             row["used_at"] = None
@@ -2332,28 +2586,54 @@ def release_unconsumed_generic_api_email(email: str, note: str | None = None) ->
         row = _find_by_email(rows, email)
         if row is None or row.get("status") != "used":
             return False
-        row["status"] = "available"
-        row["used_at"] = None
+        valid = is_valid_email_address(row.get("email"))
+        row["status"] = "available" if valid else "disabled"
+        row["used_at"] = None if valid else (row.get("used_at") or _now())
         if note is not None:
             row["note"] = note
+        elif not valid:
+            row["note"] = "邮箱格式无效，已自动停用"
         _save_generic_api_emails(rows)
         return True
 
 
 def delete_generic_api_email(email: str) -> bool:
     """从通用 API 邮箱池彻底删除一个邮箱。"""
-    return delete_email_pool(email, source="generic_api")
+    with _LOCK:
+        rows = _load_generic_api_emails()
+        target = (email or "").lower()
+        new_rows = [r for r in rows if (r.get("email") or "").lower() != target]
+        if len(new_rows) == len(rows):
+            return False
+        _save_generic_api_emails(new_rows)
+        return True
 
 
 def list_generic_api_email_pool(status: str | None = None, limit: int = 500) -> list[dict]:
-    return list_email_pool_page(
-        source="generic_api", status=status, limit=limit, offset=0
-    )["items"]
+    with _LOCK:
+        account_by_email = {
+            (a.get("email") or "").lower(): a
+            for a in _load_accounts()
+        }
+        rows = _load_generic_api_emails()
+        if status:
+            rows = [r for r in rows if r.get("status") == status]
+        rows = sorted(rows, key=lambda x: int(x.get("id") or 0), reverse=True)
+        return [_decorate_generic_api_email(r, account_by_email) for r in rows[:limit]]
 
 
 def generic_api_email_pool_summary() -> dict:
     with _LOCK:
-        return _pool_summary_sql("generic_api")
+        rows = _load_generic_api_emails()
+        invalid = _quarantine_invalid_generic_api_rows(rows)
+        if invalid:
+            _save_generic_api_emails(rows)
+        out = {"available": 0, "used": 0, "failed": 0, "disabled": 0, "invalid": invalid}
+        for row in rows:
+            status = row.get("status") or "available"
+            out[status] = out.get(status, 0) + 1
+        out["total"] = len(rows)
+        return out
 
 
 def get_generic_api_email_by_email(email: str) -> dict | None:
@@ -2363,155 +2643,110 @@ def get_generic_api_email_by_email(email: str) -> dict | None:
 
 
 # ============================================================
-# Codex 授权账号（SQLite codex_accounts 表）
+# Codex 授权账号（来自 codex_accounts/codex-邮箱-plan.json）
 # ============================================================
 
-def _codex_filter_sql(
-    archived: str | bool | None = "0",
-    date_from: str | None = None,
-    date_to: str | None = None,
-    q: str | None = None,
-) -> tuple[list[str], list[Any]]:
-    where: list[str] = []
-    params: list[Any] = []
-    if archived in (True, "1", "true", "yes", "only"):
-        where.append("archived=1")
-    elif archived not in ("all", "include"):
-        where.append("archived=0")
-    if date_from:
-        value = str(date_from)
-        where.append("created_at >= ?")
-        params.append(value + ("T00:00:00" if len(value) == 10 else ""))
-    if date_to:
-        value = str(date_to)
-        where.append("created_at <= ?")
-        params.append(value + ("T23:59:59.999999" if len(value) == 10 else ""))
-    if q and str(q).strip():
-        where.append("lower(payload) LIKE ?")
-        params.append("%" + str(q).strip().lower() + "%")
-    return where, params
+def _load_codex_export_state() -> dict:
+    """读导出状态映射 {filename: {exported_at, exported_count}}。不存在返回 {}。"""
+    data = _read_json(_CODEX_EXPORT_STATE, {})
+    return data if isinstance(data, dict) else {}
 
 
-def _codex_content_to_record(content: dict) -> dict:
-    """把 SQLite 中的 Codex payload 转成列表展示对象。"""
-    fname = content.get("_filename", "")
-    without_prefix = fname[5:-5] if fname.startswith("codex-") and fname.endswith(".json") else fname
-    email = content.get("email") or without_prefix
-    plan = ""
-    if "-" in without_prefix and without_prefix.rsplit("-", 1)[-1].lower() in ("free", "plus", "team", "pro", "enterprise"):
-        plan = without_prefix.rsplit("-", 1)[-1].lower()
-        if not content.get("email"):
-            email = without_prefix.rsplit("-", 1)[0]
-    return {
-        "filename": fname, "path": f"sqlite://codex_accounts/{fname}", "email": email, "plan": plan,
-        "account_id": content.get("account_id", ""), "type": content.get("type", "codex"),
-        "last_refresh": content.get("last_refresh", ""), "expired": content.get("expired", ""),
-        "access_token_preview": (content.get("access_token", "") or "")[:32],
-        "size": content.get("_size", 0), "mtime": content.get("_mtime", ""),
-        "exported_at": content.get("_exported_at"), "exported_count": content.get("_exported_count", 0),
-        "archived": bool(content.get("_archived")), "archived_at": content.get("_archived_at"),
-    }
+def _save_codex_export_state(state: dict) -> None:
+    _write_json(_CODEX_EXPORT_STATE, state)
 
 
-def list_codex_accounts_page(
-    archived: str | bool | None = "0",
-    date_from: str | None = None,
-    date_to: str | None = None,
-    q: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> dict:
-    """直接在 codex_accounts 表执行分页查询，不读取 codex_accounts/ 文件。"""
-    _ensure_sqlite()
-    limit = max(1, int(limit))
-    offset = max(0, int(offset or 0))
-    where, params = _codex_filter_sql(archived, date_from, date_to, q)
-    clause = " AND ".join(where) if where else "1=1"
-    with closing(_sqlite_conn()) as conn:
-        total = int(conn.execute(f"SELECT COUNT(*) FROM codex_accounts WHERE {clause}", params).fetchone()[0])
-        latest = str(conn.execute(
-            f"SELECT COALESCE(MAX(updated_at), '') FROM codex_accounts WHERE {clause}", params
-        ).fetchone()[0] or "")
-        rows = conn.execute(
-            f"SELECT payload FROM codex_accounts WHERE {clause} "
-            "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-            [*params, limit, offset],
-        ).fetchall()
-    items = [_codex_content_to_record(json.loads(row["payload"])) for row in rows]
-    return {
-        "items": items,
-        "total": total,
-        "offset": offset,
-        "limit": limit,
-        "revision": f"{total}:{latest}",
-    }
+def list_codex_accounts(archived: str | bool | None = "0", date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+    """
+    扫 codex_accounts/ 目录，每个 codex-*.json 是一条 CPA 兼容凭证。
+    返回带元信息的列表（含导出状态、文件大小、token 预览等）。
+    archived: '0'=仅未归档（默认）/ 'only'=仅归档 / 'all'=全部；
+    date_from/date_to 按文件修改时间（mtime）筛选（ISO 或 YYYY-MM-DD）。
+    """
+    with _LOCK:
+        out = []
+        if not _CODEX_DIR.exists():
+            return out
+        export_state = _load_codex_export_state()
+        d_from = _parse_iso_dt(date_from)
+        d_to = _parse_iso_dt(date_to, end_of_day=True)
+        for path in sorted(_CODEX_DIR.glob("codex-*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                content = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            fname = path.name
+            es = export_state.get(fname) or {}
+            rec_archived = bool(es.get("archived"))
+            if archived in (True, "1", "true", "yes", "only"):
+                if not rec_archived:
+                    continue
+            elif archived in ("all", "include"):
+                pass
+            else:
+                if rec_archived:
+                    continue
+            mtime_dt = datetime.fromtimestamp(path.stat().st_mtime)
+            if d_from and mtime_dt < d_from:
+                continue
+            if d_to and mtime_dt > d_to:
+                continue
+            # 从文件名抽 email 和 plan：codex-{email}.json 或 codex-{email}-{plan}.json
+            stem = path.stem  # codex-邮箱-plan
+            without_prefix = stem[len("codex-"):] if stem.startswith("codex-") else stem
+            # plan 可能为空。简单做法：直接读 JSON 里的 email（更准），文件名只做 fallback
+            email = content.get("email") or ""
+            if not email:
+                # JSON 里 email 为空（旧 bug 产物），从文件名兜底
+                # 文件名格式 codex-{email}-{plan}.json，email 里可能有 - 但是常见邮箱不会有
+                # 简单做法：去掉末尾 -plan（如 -free / -plus / -team），剩下的当 email
+                parts = without_prefix.rsplit("-", 1)
+                if len(parts) == 2 and parts[1].lower() in ("free", "plus", "team", "pro", "enterprise"):
+                    email = parts[0]
+                else:
+                    email = without_prefix
+            # 推断 plan
+            plan = ""
+            if "-" in without_prefix:
+                tail = without_prefix.rsplit("-", 1)[-1].lower()
+                if tail in ("free", "plus", "team", "pro", "enterprise"):
+                    plan = tail
+            out.append({
+                "filename": fname,
+                "path": str(path),
+                "email": email,
+                "plan": plan,
+                "account_id": content.get("account_id", ""),
+                "type": content.get("type", "codex"),
+                "last_refresh": content.get("last_refresh", ""),
+                "expired": content.get("expired", ""),
+                "access_token_preview": (content.get("access_token", "") or "")[:32],
+                "size": path.stat().st_size,
+                "mtime": mtime_dt.isoformat(timespec="seconds"),
+                "exported_at": es.get("exported_at"),
+                "exported_count": es.get("exported_count", 0),
+                "archived": rec_archived,
+                "archived_at": es.get("archived_at"),
+            })
+        return out
 
-
-def list_codex_accounts(
-    archived: str | bool | None = "0",
-    date_from: str | None = None,
-    date_to: str | None = None,
-    q: str | None = None,
-) -> list[dict]:
-    """从 SQLite 读取 Codex 凭证元数据，不扫描 codex_accounts/ 文件。"""
-    _ensure_sqlite()
-    where, params = _codex_filter_sql(archived, date_from, date_to, q)
-    clause = " AND ".join(where) if where else "1=1"
-    with closing(_sqlite_conn()) as conn:
-        rows = [json.loads(row["payload"]) for row in conn.execute(
-            f"SELECT payload FROM codex_accounts WHERE {clause} ORDER BY created_at DESC, id DESC", params
-        )]
-    return [_codex_content_to_record(content) for content in rows]
-
-
-def upsert_codex_credential(content: dict, filename: str) -> str:
-    """把 Codex 凭证写入 SQLite，返回逻辑文件名（不创建本地文件）。"""
-    if not isinstance(content, dict) or not filename:
-        raise ValueError("Codex 凭证或文件名无效")
-    _ensure_sqlite()
-    now = _now()
-    with _LOCK, closing(_sqlite_conn()) as conn:
-        old = conn.execute("SELECT payload, created_at FROM codex_accounts WHERE filename=?", (filename,)).fetchone()
-        meta = dict(content)
-        if old:
-            previous = json.loads(old["payload"])
-            for key in ("_exported_at", "_exported_count", "_archived", "_archived_at"):
-                if key not in meta:
-                    meta[key] = previous.get(key)
-            created_at = old["created_at"] or now
-            account_id = conn.execute("SELECT id FROM codex_accounts WHERE filename=?", (filename,)).fetchone()[0]
-        else:
-            account_id = int(conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM codex_accounts").fetchone()[0])
-            created_at = now
-        meta.update({"_filename": filename, "_size": len(json.dumps(content, ensure_ascii=False).encode("utf-8")), "_mtime": now})
-        conn.execute(
-            "INSERT INTO codex_accounts(id,filename,email,archived,created_at,updated_at,payload) VALUES(?,?,?,?,?,?,?) "
-            "ON CONFLICT(filename) DO UPDATE SET email=excluded.email, archived=excluded.archived, updated_at=excluded.updated_at, payload=excluded.payload",
-            (account_id, filename, str(content.get("email") or ""), int(bool(meta.get("_archived"))), created_at, now, json.dumps(meta, ensure_ascii=False)),
-        )
-        conn.commit()
-    return filename
 
 def archive_codex(filename: str, archived: bool = True) -> dict | None:
-    """归档/取消归档一条 Codex 授权凭证。"""
+    """归档/取消归档一条 Codex 授权凭证（状态记录在导出状态文件）。不存在返回 None。"""
     with _LOCK:
         if not filename.startswith("codex-") or not filename.endswith(".json"):
             raise ValueError(f"非法文件名: {filename}")
         if "/" in filename or "\\" in filename or ".." in filename:
             raise ValueError(f"非法文件名: {filename}")
-        _ensure_sqlite()
-        with closing(_sqlite_conn()) as conn:
-            row = conn.execute("SELECT payload FROM codex_accounts WHERE filename=?", (filename,)).fetchone()
-            if not row:
-                return None
-            content = json.loads(row["payload"])
-            rec = {"exported_at": content.get("_exported_at"), "exported_count": content.get("_exported_count", 0)}
+        path = _CODEX_DIR / filename
+        if not path.exists() or not path.is_file():
+            return None
+        state = _load_codex_export_state()
+        rec = state.get(filename) or {}
         rec["archived"] = bool(archived)
         rec["archived_at"] = _now() if archived else None
-        content.update({"_archived": rec["archived"], "_archived_at": rec["archived_at"]})
-        with closing(_sqlite_conn()) as conn:
-            conn.execute("UPDATE codex_accounts SET archived=?, updated_at=?, payload=? WHERE filename=?", (int(archived), _now(), json.dumps(content, ensure_ascii=False), filename))
-            conn.commit()
+        state[filename] = rec
+        _save_codex_export_state(state)
         return rec
 
 
@@ -2527,14 +2762,10 @@ def read_codex_credential(filename: str) -> tuple[str, str]:
             raise ValueError(f"非法文件名: {filename}")
         if "/" in filename or "\\" in filename or ".." in filename:
             raise ValueError(f"非法文件名: {filename}")
-        _ensure_sqlite()
-        with closing(_sqlite_conn()) as conn:
-            row = conn.execute("SELECT payload FROM codex_accounts WHERE filename=?", (filename,)).fetchone()
-        if not row:
+        path = _CODEX_DIR / filename
+        if not path.exists() or not path.is_file():
             raise ValueError(f"文件不存在: {filename}")
-        content = json.loads(row["payload"])
-        content = {k: v for k, v in content.items() if not k.startswith("_")}
-        return json.dumps(content, ensure_ascii=False, indent=2), filename
+        return path.read_text(encoding="utf-8"), filename
 
 
 def mark_codex_exported(filename: str) -> dict:
@@ -2543,63 +2774,48 @@ def mark_codex_exported(filename: str) -> dict:
     Returns: 该 filename 当前的导出状态记录。
     """
     with _LOCK:
-        _ensure_sqlite()
-        with closing(_sqlite_conn()) as conn:
-            row = conn.execute("SELECT payload FROM codex_accounts WHERE filename=?", (filename,)).fetchone()
-            if not row:
-                return {"exported_count": 0}
-            content = json.loads(row["payload"])
-        rec = {"exported_count": int(content.get("_exported_count", 0) or 0)}
+        state = _load_codex_export_state()
+        rec = state.get(filename) or {"exported_count": 0}
         rec["exported_count"] = int(rec.get("exported_count", 0)) + 1
         rec["exported_at"] = _now()
-        content.update({"_exported_count": rec["exported_count"], "_exported_at": rec["exported_at"]})
-        with closing(_sqlite_conn()) as conn:
-            conn.execute("UPDATE codex_accounts SET updated_at=?, payload=? WHERE filename=?", (_now(), json.dumps(content, ensure_ascii=False), filename))
-            conn.commit()
+        state[filename] = rec
+        _save_codex_export_state(state)
         return rec
 
 
 def reset_codex_exported(filename: str) -> None:
     """清掉某个 codex 凭证的导出状态（用户想重置时用）。"""
     with _LOCK:
-        _ensure_sqlite()
-        with closing(_sqlite_conn()) as conn:
-            row = conn.execute("SELECT payload FROM codex_accounts WHERE filename=?", (filename,)).fetchone()
-            if not row:
-                return
-            content = json.loads(row["payload"])
-            content.update({"_exported_count": 0, "_exported_at": None})
-            conn.execute("UPDATE codex_accounts SET updated_at=?, payload=? WHERE filename=?", (_now(), json.dumps(content, ensure_ascii=False), filename))
-            conn.commit()
+        state = _load_codex_export_state()
+        if filename in state:
+            del state[filename]
+            _save_codex_export_state(state)
 
 
 def delete_codex_credential(filename: str) -> bool:
-    """从 SQLite 删除一个 Codex 凭证。"""
+    """删除一个本地 codex-*.json 凭证文件，并清理导出状态。"""
     with _LOCK:
         if not filename.startswith("codex-") or not filename.endswith(".json"):
             raise ValueError(f"非法文件名: {filename}")
         if "/" in filename or "\\" in filename or ".." in filename:
             raise ValueError(f"非法文件名: {filename}")
-        _ensure_sqlite()
-        with closing(_sqlite_conn()) as conn:
-            cur = conn.execute("DELETE FROM codex_accounts WHERE filename=?", (filename,))
-            conn.commit()
-            return cur.rowcount > 0
+        path = _CODEX_DIR / filename
+        if not path.exists() or not path.is_file():
+            return False
+        path.unlink()
+        state = _load_codex_export_state()
+        if filename in state:
+            del state[filename]
+            _save_codex_export_state(state)
+        return True
 
 
 def codex_accounts_summary() -> dict:
     """codex 账号汇总：总数 / 已导出 / 未导出。"""
     with _LOCK:
-        _ensure_sqlite()
-        with closing(_sqlite_conn()) as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) AS total, "
-                "SUM(CASE WHEN COALESCE(CAST(json_extract(payload, '$._exported_count') AS INTEGER), 0) > 0 "
-                "THEN 1 ELSE 0 END) AS exported "
-                "FROM codex_accounts WHERE archived=0"
-            ).fetchone()
-        total = int(row["total"] or 0)
-        exported = int(row["exported"] or 0)
+        rows = list_codex_accounts()
+        total = len(rows)
+        exported = sum(1 for r in rows if r.get("exported_count", 0) > 0)
         return {
             "total": total,
             "exported": exported,
@@ -2622,6 +2838,8 @@ def _new_job_row(
     retry_action: str | None = None,
     email: str | None = None,
     account_id: int | None = None,
+    proxy_provider: str | None = None,
+    proxy_country: str | None = None,
 ) -> dict:
     job_uuid = str(uuid.uuid4())
     log_file = str(_LOG_DIR / f"{job_uuid}.log")
@@ -2635,6 +2853,8 @@ def _new_job_row(
         "retry_attempt": int(retry_attempt or 0),
         "retry_action": retry_action,
         "email_source": email_source,
+        "proxy_provider": proxy_provider,
+        "proxy_country": proxy_country,
         "email": email,
         "status": "pending",
         "error_message": None,
@@ -2642,16 +2862,25 @@ def _new_job_row(
         "started_at": None,
         "completed_at": None,
         "account_id": account_id,
-        "network_traffic": None,
         "created_at": _now(),
     }
 
 
-def create_job(email_source: str) -> dict:
+def create_job(
+    email_source: str,
+    *,
+    proxy_provider: str | None = None,
+    proxy_country: str | None = None,
+) -> dict:
     """创建一个首次执行的 pending 注册任务。"""
     with _LOCK:
         rows = _load_jobs()
-        row = _new_job_row(rows, email_source=email_source)
+        row = _new_job_row(
+            rows,
+            email_source=email_source,
+            proxy_provider=proxy_provider,
+            proxy_country=proxy_country,
+        )
         rows.append(row)
         _save_jobs(rows)
         return dict(row)
@@ -2664,6 +2893,8 @@ def create_retry_job(
     email_source: str,
     email: str | None = None,
     account_id: int | None = None,
+    proxy_provider: str | None = None,
+    proxy_country: str | None = None,
 ) -> tuple[dict, bool]:
     """原子创建重试子任务；同一任务链已有活跃任务时直接复用。"""
     with _LOCK:
@@ -2702,6 +2933,8 @@ def create_retry_job(
             retry_action=("codex" if job_type == "codex_retry" else "registration"),
             email=email,
             account_id=account_id,
+            proxy_provider=proxy_provider,
+            proxy_country=proxy_country,
         )
         rows.append(row)
         _save_jobs(rows)
@@ -2717,7 +2950,6 @@ def update_job(
     started_at: str | None = None,
     completed_at: str | None = None,
     account_id: int | None = None,
-    network_traffic: dict | None = None,
 ) -> None:
     with _LOCK:
         rows = _load_jobs()
@@ -2736,51 +2968,75 @@ def update_job(
             row["completed_at"] = completed_at
         if account_id is not None:
             row["account_id"] = account_id
-        if network_traffic is not None:
-            row["network_traffic"] = dict(network_traffic)
         _save_jobs(rows)
 
 
 def list_jobs(limit: int = 100) -> list[dict]:
     with _LOCK:
-        return [dict(r) for r in _query_collection("jobs", limit=limit)]
-
-
-def list_jobs_page(limit: int = 50, offset: int = 0) -> dict:
-    """直接使用 registration_jobs 的 SQL LIMIT/OFFSET 返回任务页。"""
-    with _LOCK:
-        limit = max(1, int(limit))
-        offset = max(0, int(offset or 0))
-        rows, total, latest = _query_collection_page(
-            "jobs", limit=limit, offset=offset
-        )
-        return {
-            "items": rows,
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "revision": f"{total}:{latest}",
-        }
-
-
-def job_status_counts() -> dict:
-    """在 SQLite 中聚合任务状态，避免为统计目的加载全部任务 payload。"""
-    _ensure_sqlite()
-    with closing(_sqlite_conn()) as conn:
-        counts = {
-            str(row["status"] or "unknown"): int(row["n"])
-            for row in conn.execute(
-                "SELECT status, COUNT(*) AS n FROM registration_jobs GROUP BY status"
-            )
-        }
-    counts["active"] = sum(int(counts.get(status, 0) or 0) for status in ("pending", "running", "stopping"))
-    return counts
+        rows = sorted(_load_jobs(), key=lambda x: int(x.get("id") or 0), reverse=True)
+        return [dict(r) for r in rows[:limit]]
 
 
 def get_job(job_id: int) -> dict | None:
     with _LOCK:
         row = next((r for r in _load_jobs() if int(r.get("id") or 0) == int(job_id)), None)
         return dict(row) if row else None
+
+
+def get_account_proxy_context(
+    *,
+    account_id: int | None = None,
+    email: str | None = None,
+    include_running: bool = False,
+) -> dict:
+    """返回账号最近一次注册任务的代理平台/国家。
+
+    套餐资格和部分优惠活动按出口国家计算。注册任务已经保存了平台与国家，
+    因此后续查套餐在未显式传入代理时应复用这个上下文，而不是随机使用当前
+    全局国家配置。注册后自动查询可能与注册任务并行，因此可选地读取 running
+    任务；只返回非敏感的选择字段，不返回代理 URL 或认证信息。
+    """
+    try:
+        normalized_id = int(account_id) if account_id is not None else None
+    except (TypeError, ValueError):
+        normalized_id = None
+    target_email = str(email or "").strip().lower()
+    if normalized_id is None and not target_email:
+        return {}
+
+    with _LOCK:
+        matches = []
+        allowed_statuses = {"success"}
+        if include_running:
+            allowed_statuses.add("running")
+        for row in _load_jobs():
+            if str(row.get("status") or "").strip().lower() not in allowed_statuses:
+                continue
+            row_account_id = row.get("account_id")
+            try:
+                id_matches = normalized_id is not None and int(row_account_id or 0) == normalized_id
+            except (TypeError, ValueError):
+                id_matches = False
+            email_matches = bool(target_email) and str(row.get("email") or "").strip().lower() == target_email
+            if not (id_matches or email_matches):
+                continue
+            provider = str(row.get("proxy_provider") or "").strip().lower()
+            country = str(row.get("proxy_country") or "").strip().upper()
+            if not provider and not country:
+                continue
+            matches.append((
+                str(row.get("completed_at") or row.get("started_at") or row.get("created_at") or ""),
+                int(row.get("id") or 0),
+                {
+                    "proxy_provider": provider,
+                    "proxy_country": country,
+                    "job_id": int(row.get("id") or 0),
+                },
+            ))
+        if not matches:
+            return {}
+        matches.sort(key=lambda item: (item[0], item[1]))
+        return dict(matches[-1][2])
 
 
 def get_successful_retry_for_job(job_id: int) -> dict | None:
@@ -2890,8 +3146,8 @@ def _migrate_legacy_sqlite() -> dict:
 
 def migrate_legacy_files() -> dict:
     """
-    把历史 SQLite、accounts/*.json、旧邮箱 TXT/JSON 迁移到当前 SQLite 存储。
-    多次调用是幂等的，不会生成或更新旧 JSON/TXT 文件。
+    把历史 SQLite、accounts/*.json、outlook_accounts.txt、outlook_accounts_used.json
+    迁移到当前 JSON/TXT 文件存储。多次调用是幂等的。
     """
     summary = {
         "accounts_imported": 0,
@@ -2962,16 +3218,38 @@ def migrate_legacy_files() -> dict:
 
 
 def db_path() -> Path:
-    """返回 SQLite 主数据库路径（保留函数名兼容旧调用方）。"""
-    _ensure_sqlite()
-    return _active_sqlite_path()
+    """兼容旧名称，返回当前文件存储目录。"""
+    return _DATA_DIR
 
 
 def storage_paths() -> dict:
     return {
-        "sqlite": str(_SQLITE_PATH),
+        "outlook_json": str(_OUTLOOK_JSON),
+        "outlook_txt": str(_OUTLOOK_TXT),
+        "accounts_json": str(_ACCOUNTS_JSON),
+        "accounts_txt": str(_ACCOUNTS_TXT),
+        "tokens_txt": str(_TOKENS_TXT),
+        "viewer_html": str(_VIEWER_HTML),
+        "jobs_json": str(_JOBS_JSON),
         "logs_dir": str(_LOG_DIR),
     }
+
+
+def refresh_static_viewer() -> Path:
+    """手动刷新静态查看器，返回 HTML 路径。"""
+    global _VIEWER_REFRESH_TIMER, _VIEWER_REFRESH_REASON
+    with _VIEWER_REFRESH_LOCK:
+        if _VIEWER_REFRESH_TIMER is not None:
+            _VIEWER_REFRESH_TIMER.cancel()
+            _VIEWER_REFRESH_TIMER = None
+        _VIEWER_REFRESH_REASON = ""
+    with _LOCK:
+        outlook_rows = _load_outlook()
+        account_rows = _load_accounts()
+        _sync_outlook_txt(outlook_rows)
+        _sync_accounts_txt(account_rows)
+        _sync_tokens_txt(account_rows)
+        return _render_static_viewer(outlook_rows=outlook_rows, account_rows=account_rows)
 
 
 # ============================================================
@@ -2982,11 +3260,12 @@ _DOMAIN_EMAIL_JSON = _PROJECT_ROOT / "用于注册的域名邮箱.json"
 
 
 def _load_domain_pool() -> list[dict]:
-    return _load_collection("domain")
+    rows = _read_json(_DOMAIN_EMAIL_JSON, [])
+    return rows if isinstance(rows, list) else []
 
 
 def _save_domain_pool(rows: list[dict]) -> None:
-    _save_collection("domain", rows)
+    _write_json(_DOMAIN_EMAIL_JSON, rows)
 
 
 def _find_domain_email(rows: list[dict], email: str) -> dict | None:
@@ -3056,16 +3335,30 @@ def get_domain_email_by_email(email: str) -> dict | None:
 
 
 def list_domain_email_pool(status: str | None = None, limit: int = 500) -> list[dict]:
-    return list_email_pool_page(
-        source="cloudflare_domain", status=status, limit=limit, offset=0
-    )["items"]
+    with _LOCK:
+        rows = sorted(_load_domain_pool(), key=lambda x: int(x.get("id") or 0), reverse=True)
+        if status:
+            rows = [r for r in rows if r.get("status") == status]
+        return [dict(r) for r in rows[:limit]]
 
 
 def domain_email_pool_summary() -> dict:
     with _LOCK:
-        return _pool_summary_sql("domain")
+        out: dict[str, int] = {"available": 0, "used": 0, "failed": 0}
+        for row in _load_domain_pool():
+            s = row.get("status") or "available"
+            out[s] = out.get(s, 0) + 1
+        out["total"] = sum(v for k, v in out.items() if k != "total")
+        return out
 
 
 def delete_domain_email(email: str) -> bool:
     """从域名邮箱池删除一个邮箱。"""
-    return delete_email_pool(email, source="cloudflare_domain")
+    with _LOCK:
+        rows = _load_domain_pool()
+        target = (email or "").lower()
+        new_rows = [r for r in rows if (r.get("email") or "").lower() != target]
+        if len(new_rows) == len(rows):
+            return False
+        _save_domain_pool(new_rows)
+        return True

@@ -395,7 +395,7 @@ def _build_cloak_locale_options(proxy_url: str | None = None) -> dict:
 def build_cloak_driver(proxy: str | None = None) -> tuple[CloakSeleniumDriver, CloakOpenResult]:
     """启动 CloakBrowser 并返回 Selenium 风格 driver。
 
-    proxy=None  时按 config.proxy.PROXY_POOL 随机抽取；
+    proxy=None  时按当前内置代理平台生成；
     proxy=""    时显式禁用代理；
     proxy="..." 时使用指定代理。
     """

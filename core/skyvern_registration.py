@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
 
 from core.browser_use_registration import run_browser_use_registration
 
 
 def run_skyvern_registration(
-    email: str | None,
+    email: str,
     name: str,
     birthday: str,
     proxy: str | None = None,
     otp_code: str | None = None,
     batch_dir: Path | None = None,
-    on_email_acquired: Callable[[str], None] | None = None,
 ) -> dict:
     return run_browser_use_registration(
         email=email,
@@ -24,6 +22,5 @@ def run_skyvern_registration(
         proxy=proxy,
         otp_code=otp_code,
         batch_dir=batch_dir,
-        on_email_acquired=on_email_acquired,
         cloud_provider="skyvern",
     )

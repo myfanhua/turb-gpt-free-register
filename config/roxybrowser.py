@@ -59,6 +59,10 @@ ROXY_OPEN_EXTRA_PARAMS: dict = {}
 ROXY_SELENIUM_TIMEOUT: int = 90
 ROXY_KEEP_BROWSER_OPEN: bool = False
 
+# Roxy 套餐允许同时打开的环境数。任务线程可以更高，超出部分会排队等待，
+# 不再并发撞 /browser/create 或直接报“窗口额度不足”。当前本机套餐实测为 2。
+ROXY_MAX_CONCURRENT_PROFILES: int = 2
+
 # Roxy API transient 错误重试。create 接口默认不重试，避免超时后重复创建孤儿环境；open/close/delete 会重试。
 ROXY_API_RETRIES: int = 3
 ROXY_API_RETRY_DELAY: int = 2
@@ -80,6 +84,17 @@ ROXY_DELETE_METHOD: str = "POST"
 ROXY_RANDOM_OS_ON_CREATE: bool = True
 ROXY_RANDOM_OS_CHOICES: str = "Windows,macOS"
 
+# 创建 Roxy 环境时启用官方原生随机指纹；Roxy 会按系统、内核和默认画像生成匹配的环境参数。
+ROXY_RANDOM_FINGERPRINT_ON_CREATE: bool = True
+
+# True 时完全交给 Roxy 原生指纹引擎，不再额外注入 webdriver/chrome/permissions
+# JavaScript 覆盖，避免人工覆盖与 Roxy 生成的系统、内核和权限画像不一致。
+ROXY_NATIVE_FINGERPRINT_ONLY: bool = True
+
+# 让浏览器语言、界面语言、时区和地理位置跟随本次 Profile 的代理出口 IP。
+# 这些是 Roxy 官方 fingerInfo 的原生联动字段，不是页面 JavaScript 覆盖。
+ROXY_FINGERPRINT_FOLLOW_PROXY_IP: bool = True
+
 # 创建 Roxy 环境时随机名称；开启后会覆盖 ROXY_PROFILE_CREATE_PAYLOAD 里的固定 name。
 ROXY_RANDOM_PROFILE_NAME_ON_CREATE: bool = True
 ROXY_PROFILE_NAME_PREFIX: str = "rb"
@@ -90,10 +105,10 @@ ROXY_DEFAULT_OS: str = "macOS"
 # 留空则使用 Roxy 对应系统的默认/最大版本；如需固定可填 15.3.2、14.7 等。
 ROXY_DEFAULT_OS_VERSION: str = ""
 
-# 创建 Roxy 环境时是否使用 config/proxy.py 的 PROXY_POOL：
+# 创建 Roxy 环境时是否使用 config/proxy.py 的当前代理来源：
 #   False = 不主动给 Roxy 环境设置代理
-#   True  = 每次创建环境时从 PROXY_POOL 随机取一个代理写入 proxyInfo
-ROXY_CREATE_USE_PROXY_POOL: bool = False
+#   True  = 每次创建环境时从 PROXY_PROVIDER 选择代理并写入 proxyInfo
+ROXY_CREATE_USE_PROXY_POOL: bool = True
 
 # Roxy 代理检测通道；留空则不传 checkChannel。
 ROXY_PROXY_CHECK_CHANNEL: str = "IPRust.io"
@@ -110,4 +125,4 @@ ROXY_PROFILE_CREATE_PAYLOAD: dict = {
 ROXY_CODEX_CALLBACK_TIMEOUT: int = 180
 
 # ---- .env overrides for WebUI editable fields ----
-apply_env_overrides(globals(), {'REGISTRATION_DRIVER': 'str', 'ROXY_API_BASE': 'str', 'ROXY_API_TOKEN': 'str', 'ROXY_PROFILE_ID': 'str', 'ROXY_WORKSPACE_ID': 'str', 'ROXY_PROJECT_ID': 'str', 'ROXY_WORKSPACE_LIST_PATH': 'str', 'ROXY_OPEN_PATH': 'str', 'ROXY_OPEN_HEADLESS': 'bool', 'ROXY_CLOSE_PATH': 'str', 'ROXY_KEEP_BROWSER_OPEN': 'bool', 'ROXY_ONE_PROFILE_PER_ACCOUNT': 'bool', 'ROXY_DELETE_PROFILE_AFTER_RUN': 'bool', 'ROXY_RANDOM_OS_ON_CREATE': 'bool', 'ROXY_RANDOM_OS_CHOICES': 'str', 'ROXY_RANDOM_PROFILE_NAME_ON_CREATE': 'bool', 'ROXY_PROFILE_NAME_PREFIX': 'str', 'ROXY_CREATE_USE_PROXY_POOL': 'bool', 'ROXY_PROXY_CHECK_CHANNEL': 'str', 'ROXY_DELETE_PATH': 'str', 'ROXY_CODEX_CALLBACK_TIMEOUT': 'int'})
+apply_env_overrides(globals(), {'REGISTRATION_DRIVER': 'str', 'ROXY_API_BASE': 'str', 'ROXY_API_TOKEN': 'str', 'ROXY_PROFILE_ID': 'str', 'ROXY_WORKSPACE_ID': 'str', 'ROXY_PROJECT_ID': 'str', 'ROXY_WORKSPACE_LIST_PATH': 'str', 'ROXY_OPEN_PATH': 'str', 'ROXY_OPEN_HEADLESS': 'bool', 'ROXY_CLOSE_PATH': 'str', 'ROXY_KEEP_BROWSER_OPEN': 'bool', 'ROXY_MAX_CONCURRENT_PROFILES': 'int', 'ROXY_ONE_PROFILE_PER_ACCOUNT': 'bool', 'ROXY_DELETE_PROFILE_AFTER_RUN': 'bool', 'ROXY_RANDOM_OS_ON_CREATE': 'bool', 'ROXY_RANDOM_OS_CHOICES': 'str', 'ROXY_RANDOM_FINGERPRINT_ON_CREATE': 'bool', 'ROXY_NATIVE_FINGERPRINT_ONLY': 'bool', 'ROXY_FINGERPRINT_FOLLOW_PROXY_IP': 'bool', 'ROXY_RANDOM_PROFILE_NAME_ON_CREATE': 'bool', 'ROXY_PROFILE_NAME_PREFIX': 'str', 'ROXY_CREATE_USE_PROXY_POOL': 'bool', 'ROXY_PROXY_CHECK_CHANNEL': 'str', 'ROXY_DELETE_PATH': 'str', 'ROXY_CODEX_CALLBACK_TIMEOUT': 'int'})

@@ -25,6 +25,12 @@ codex_agent_accounts
 注册日志/
 accounts_viewer.html
 
+# ChatGPT 邮箱换绑运行产物（bundle / session cookie / access token）
+outputs/*
+!outputs/
+!outputs/**/
+!outputs/**/.gitkeep
+
 # Cloudflare 域名邮箱池（运行时数据）
 用于注册的域名邮箱.json
 
@@ -35,9 +41,6 @@ data/
 # 缓存 / 临时文件 / 诊断输出
 # ============================================================
 __pycache__/
-*.sqlite3
-*.sqlite3-wal
-*.sqlite3-shm
 .venv/
 *.py[cod]
 *$py.class

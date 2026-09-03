@@ -17,6 +17,18 @@ from core.session import BrowserSession
 logger = logging.getLogger(__name__)
 
 ACCOUNTS_CHECK_PATH = "/backend-api/accounts/check/v4-2023-04-27"
+_PROXY_TRANSPORT_ERROR_HINTS = (
+    "proxy",
+    "socks",
+    "ssl",
+    "timeout",
+    "timed out",
+    "connection",
+    "closed",
+    "reset",
+    "dns",
+    "name or service not known",
+)
 
 
 def now_iso() -> str:
@@ -109,7 +121,7 @@ def resolve_plan_check_route(explicit_proxy: Optional[str] = None) -> dict:
         selected = str(proxy_cfg.pick_proxy() or "").strip()
     if not selected:
         if mode == "proxy":
-            raise ValueError("套餐查询网络模式为 proxy，但未配置 PLAN_CHECK_PROXY 或 PROXY_POOL")
+            raise ValueError("套餐查询网络模式为 proxy，但未配置 PLAN_CHECK_PROXY 或内置代理平台")
         return {
             "proxy": "",
             "proxy_mode": mode,
@@ -296,6 +308,21 @@ def _retryable_plan_error(http_status: int | None) -> bool:
     return http_status in {408, 409, 425, 429} or http_status >= 500
 
 
+def _proxy_transport_failed(result: dict | None) -> bool:
+    """仅识别尚未收到 HTTP 响应的代理传输错误。"""
+    result = result or {}
+    if result.get("ok") or result.get("http_status") is not None:
+        return False
+    error = str(result.get("error") or "").lower()
+    return any(hint in error for hint in _PROXY_TRANSPORT_ERROR_HINTS)
+
+
+def _proxy_fallback_reason(result: dict | None) -> str:
+    error = str((result or {}).get("error") or "").strip()
+    error_type = error.split(":", 1)[0].strip() or "NetworkError"
+    return f"代理传输失败（{error_type}），已切换真实直连"
+
+
 def _retry_wait_seconds(resp: Any, base_delay: float, attempt: int) -> float:
     try:
         retry_after = (getattr(resp, "headers", {}) or {}).get("retry-after")
@@ -429,8 +456,18 @@ def check_account_plan(
             **route_meta,
             **{k: v for k, v in claims.items() if k != "payload"},
         })
-        if not last_result.get("retryable") or attempt >= attempts:
+        if not last_result.get("retryable"):
             return last_result
+        # auto 路由中的远程代理传输错误会在同一 sticky 路径上重复失败；
+        # 立即进入下方真实直连兜底，避免把完整重试预算耗在同一故障出口。
+        if (
+            str(route.get("proxy_mode") or "") == "auto"
+            and str(route.get("network_route") or "") == "proxy"
+            and _proxy_transport_failed(last_result)
+        ):
+            break
+        if attempt >= attempts:
+            break
 
         wait_seconds = _retry_wait_seconds(resp, base_delay, attempt)
         logger.warning(
@@ -442,6 +479,29 @@ def check_account_plan(
         )
         if wait_seconds > 0:
             time.sleep(wait_seconds)
+
+    if (
+        str(route.get("proxy_mode") or "") == "auto"
+        and str(route.get("network_route") or "") == "proxy"
+        and _proxy_transport_failed(last_result)
+    ):
+        logger.warning("套餐查询代理传输失败，auto 模式切换真实直连重试一次")
+        direct_result = check_account_plan(
+            token,
+            proxy="",
+            timezone_offset_min=timezone_offset_min,
+            timeout=timeout_seconds,
+            max_attempts=1,
+            retry_delay=0,
+        )
+        direct_result.update({
+            "proxy_mode": "auto",
+            "network_route": "direct_fallback",
+            "proxy_used": route_meta.get("proxy_used"),
+            "proxy_fallback_reason": _proxy_fallback_reason(last_result),
+            "proxy_attempt_count": (last_result or {}).get("attempt_count", attempts),
+        })
+        return direct_result
 
     return last_result or {
         "ok": False,

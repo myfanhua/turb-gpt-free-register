@@ -40,6 +40,21 @@ class StopRequested(RuntimeError):
     """用户手动停止注册任务。"""
 
 
+def codex_authorization_enabled() -> bool:
+    """Return whether Codex authorization is enabled for automatic and manual runs."""
+    try:
+        from config import codex as codex_cfg
+
+        value = getattr(codex_cfg, "ENABLE_CODEX_AUTO", False)
+        if isinstance(value, str):
+            return value.strip().lower() not in {"", "0", "false", "no", "off", "disabled"}
+        return bool(value)
+    except Exception:
+        # A broken/missing config must not start an OAuth flow unexpectedly.
+        logger.exception("读取 Codex 开关失败，按关闭处理")
+        return False
+
+
 def _activate_job(job_id: int) -> None:
     _THREAD_CTX.job_id = int(job_id)
     with _STOP_LOCK:
@@ -76,7 +91,7 @@ def check_stop_requested() -> None:
         raise StopRequested(f"任务 #{job_id} 已被用户手动停止")
 
 
-def _append_job_log(job_id: int, message: str) -> None:
+def _append_job_log(job_id: int, message: str, *, level: str = "WARNING", source: str = "service") -> None:
     try:
         job = db.get_job(job_id)
         log_file = job.get("log_file") if job else None
@@ -85,7 +100,7 @@ def _append_job_log(job_id: int, message: str) -> None:
         Path(log_file).parent.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%H:%M:%S")
         with Path(log_file).open("a", encoding="utf-8") as f:
-            f.write(f"{ts} [WARNING] [manual-stop] {message}\n")
+            f.write(f"{ts} [{level}] [{source}] {message}\n")
     except Exception:
         pass
 
@@ -97,10 +112,11 @@ def _random_display_name() -> str:
     return random_display_name()
 
 
-def _prepare_registration_args() -> tuple[str | None, str, str]:
+def _prepare_registration_args() -> tuple[str, str, str]:
     """复用 CLI 的默认规则，为旧 Web 任务入口补齐注册参数。"""
     # 用模块属性读，支持 WebUI 热加载
     from config import register as _r, email as _e
+    from core.email_provider import acquire_email
     from core.profile_utils import generate_random_birthday
 
     email = str(getattr(_r, "REGISTER_EMAIL", "") or "").strip()
@@ -115,16 +131,28 @@ def _prepare_registration_args() -> tuple[str | None, str, str]:
 
     birthday = generate_random_birthday()
 
-    # 自动邮箱不在准备阶段领取：浏览器驱动会等页面找到邮箱输入框后再领取，
-    # 协议驱动则在 run_registration 即将开始认证时领取。这样页面打不开/找不到
-    # 输入框时不会提前消耗邮箱订单或池中素材。
-    if not email and not _e.USE_EMAIL_SERVICE:
-        raise RuntimeError(
-            "手动模式未配置邮箱。请在 WebUI 配置页设置 REGISTER_EMAIL，"
-            "或开启 USE_EMAIL_SERVICE 并从邮箱池领取。"
-        )
+    # 邮箱领取会把池状态置为 used，因此放在所有其他准备逻辑之后。
+    if not email:
+        if _e.USE_EMAIL_SERVICE:
+            email = acquire_email()
+        else:
+            raise RuntimeError(
+                "手动模式未配置邮箱。请在 WebUI 配置页设置 REGISTER_EMAIL，"
+                "或开启 USE_EMAIL_SERVICE 并从邮箱池领取。"
+            )
 
     return email, name, birthday
+
+
+def _build_job_proxy(job: dict) -> tuple[str, str, str]:
+    """按任务保存的平台/国家生成代理；不把认证代理写入任务记录。"""
+    from config import proxy as proxy_cfg
+    from core.proxy_provider import build_proxy
+
+    provider = str(job.get("proxy_provider") or getattr(proxy_cfg, "PROXY_PROVIDER", "manual") or "manual").strip().lower()
+    country = str(job.get("proxy_country") or "").strip()
+    proxy_url = build_proxy(provider, country or None, job_id=int(job.get("id") or 0))
+    return provider, country, proxy_url
 
 
 def _release_unconsumed_job_email(email: str | None, reason: str) -> None:
@@ -299,25 +327,21 @@ def _run_one_job(job_id: int, log_file: str) -> None:
             email, name, birthday = _prepare_registration_args()
             db.update_job(job_id, email=email)
             check_stop_requested()
-            def _on_email_acquired(acquired_email: str) -> None:
-                nonlocal email
-                email = str(acquired_email or "").strip() or None
-                if email:
-                    db.update_job(job_id, email=email)
-                    log_logger.info(f"[Job {job_id}] 页面已找到邮箱输入框，已分配邮箱: {email}")
-
+            provider, country, proxy_url = _build_job_proxy(current)
+            log_logger.info(
+                f"[Job {job_id}] 代理：{provider} · 国家：{country or '自动'}（内置平台会话）"
+            )
             result = run_registration(
                 email=email,
                 name=name,
                 birthday=birthday,
-                on_email_acquired=_on_email_acquired,
+                proxy=proxy_url,
             )
             if is_stop_requested(job_id):
                 _release_unconsumed_job_email(email, "用户手动停止")
                 db.update_job(
                     job_id,
                     status="stopped",
-                    network_traffic=(result or {}).get("network_traffic") if isinstance(result, dict) else None,
                     error="用户手动停止",
                     completed_at=datetime.now().isoformat(timespec="seconds"),
                 )
@@ -329,7 +353,6 @@ def _run_one_job(job_id: int, log_file: str) -> None:
                     status="success",
                     email=result.get("email"),
                     account_id=result.get("account_id"),
-                    network_traffic=result.get("network_traffic"),
                     completed_at=datetime.now().isoformat(timespec="seconds"),
                 )
                 log_logger.info(f"[Job {job_id}] 成功: {result.get('email')}")
@@ -342,7 +365,6 @@ def _run_one_job(job_id: int, log_file: str) -> None:
                     status="failed",
                     email=result_email,
                     account_id=(result or {}).get("account_id") if isinstance(result, dict) else None,
-                    network_traffic=(result or {}).get("network_traffic") if isinstance(result, dict) else None,
                     error=str(err)[:500],
                     completed_at=datetime.now().isoformat(timespec="seconds"),
                 )
@@ -354,6 +376,7 @@ def _run_one_job(job_id: int, log_file: str) -> None:
                 log_logger.error(f"[Job {job_id}] 失败: {err}")
     except StopRequested as exc:
         _release_unconsumed_job_email(email, str(exc))
+        _append_job_log(job_id, f"[Job {job_id}] 已停止: {exc}", level="WARNING", source="job")
         log_logger.warning(f"[Job {job_id}] 已停止: {exc}")
         db.update_job(
             job_id,
@@ -368,6 +391,7 @@ def _run_one_job(job_id: int, log_file: str) -> None:
         else:
             _release_unconsumed_job_email(email, err_text)
         if is_stop_requested(job_id):
+            _append_job_log(job_id, f"[Job {job_id}] 停止中捕获异常，按停止处理: {err_text}", level="WARNING", source="job")
             log_logger.warning(f"[Job {job_id}] 停止中捕获异常，按停止处理: {type(exc).__name__}: {exc}")
             db.update_job(
                 job_id,
@@ -376,6 +400,7 @@ def _run_one_job(job_id: int, log_file: str) -> None:
                 completed_at=datetime.now().isoformat(timespec="seconds"),
             )
             return
+        _append_job_log(job_id, f"[Job {job_id}] 异常: {err_text}", level="ERROR", source="job")
         log_logger.exception(f"[Job {job_id}] 异常")
         db.update_job(
             job_id,
@@ -440,7 +465,41 @@ def _run_codex_retry_job(job_id: int, log_file: str, email: str, account_id: int
 # 公共接口
 # ============================================================
 
-def submit_registration(count: int = 1, email_source: str | None = None, workers: int | None = None) -> list[dict]:
+def recover_interrupted_registration_jobs() -> int:
+    """Stop persisted registration jobs that lost their worker during restart."""
+    interrupted = [
+        job for job in db.list_jobs(limit=10_000)
+        if job.get("job_type", "registration") == "registration"
+        and job.get("status") in {"pending", "running", "stopping"}
+    ]
+    if not interrupted:
+        return 0
+
+    completed_at = datetime.now().isoformat(timespec="seconds")
+    for job in interrupted:
+        job_id = int(job["id"])
+        message = "服务重启，任务已中断"
+        db.update_job(
+            job_id,
+            status="stopped",
+            error=message,
+            completed_at=completed_at,
+        )
+        _release_unconsumed_job_email(
+            str(job.get("email") or "").strip() or None,
+            message,
+        )
+        _append_job_log(job_id, message, level="WARNING", source="service")
+    return len(interrupted)
+
+
+def submit_registration(
+    count: int = 1,
+    email_source: str | None = None,
+    workers: int | None = None,
+    proxy_provider: str | None = None,
+    proxy_country: str | None = None,
+) -> list[dict]:
     """
     创建 N 个注册任务并提交到线程池。
     email_source 仅记录到 DB；实际邮箱来源固定为 Outlook 账号池。
@@ -452,6 +511,24 @@ def submit_registration(count: int = 1, email_source: str | None = None, workers
         from config import email as _email_cfg
         email_source = _email_cfg.EMAIL_SOURCE
 
+    from config import proxy as _proxy_cfg
+    from core.proxy_provider import build_proxy
+    selected_provider = str(proxy_provider or getattr(_proxy_cfg, "PROXY_PROVIDER", "manual") or "manual").strip().lower()
+    selected_country = str(proxy_country or "").strip()
+    # 先验证平台字段和国家码，避免创建一批任务后才发现代理参数不完整。
+    build_proxy(selected_provider, selected_country or None)
+    if selected_provider == "manual":
+        selected_country = ""
+    elif not selected_country:
+        selected_country = str(
+            getattr(
+                _proxy_cfg,
+                "CLIPROXY_PROXY_COUNTRY" if selected_provider == "cliproxy_traffic" else "IPROYAL_PROXY_COUNTRY",
+                "",
+            )
+            or ""
+        ).strip().upper()
+
     # 创建/切换线程池和提交本批任务必须整体串行化：否则另一请求在本批提交中途
     # 切换 workers 并 shutdown 旧池，会导致后续 submit 报 cannot schedule new futures after shutdown。
     with _executor_lock:
@@ -459,7 +536,11 @@ def submit_registration(count: int = 1, email_source: str | None = None, workers
         effective_workers = get_executor_workers()
         jobs = []
         for _ in range(count):
-            job = db.create_job(email_source=email_source)
+            job = db.create_job(
+                email_source=email_source,
+                proxy_provider=selected_provider,
+                proxy_country=selected_country,
+            )
             try:
                 executor.submit(_run_one_job, job["id"], job["log_file"])
             except Exception as exc:
@@ -471,7 +552,10 @@ def submit_registration(count: int = 1, email_source: str | None = None, workers
                 )
                 logger.exception("[Service] 注册任务 #%s 提交线程池失败", job["id"])
             jobs.append(db.get_job(int(job["id"])) or job)
-    logger.info(f"[Service] 已提交 {count} 个注册任务，源={email_source}，workers={effective_workers}")
+    logger.info(
+        f"[Service] 已提交 {count} 个注册任务，源={email_source}，workers={effective_workers}，"
+        f"代理={selected_provider}，国家={selected_country or '自动'}"
+    )
     return jobs
 
 
@@ -519,6 +603,9 @@ def get_retry_info(job: dict) -> dict:
         if codex_status == "success":
             info["retry_reason"] = "账号和 Codex 授权均已完成"
             return info
+        if not codex_authorization_enabled():
+            info["retry_reason"] = "Codex 授权已关闭，已跳过手动补跑"
+            return info
         info.update({
             "retryable": True,
             "retry_action": "codex",
@@ -564,6 +651,8 @@ def retry_job(job_id: int, workers: int | None = None) -> dict:
             email_source=str(source.get("email_source") or "outlook"),
             email=email if action == "codex" else None,
             account_id=account_id if action == "codex" else None,
+            proxy_provider=source.get("proxy_provider"),
+            proxy_country=source.get("proxy_country"),
         )
     except LookupError as exc:
         if reserved_codex:

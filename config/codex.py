@@ -44,7 +44,7 @@ CODEX_REQUEST_TIMEOUT: int = 30
 # 手机验证靠接码平台 GrizzlySMS 自动收码。
 # ============================================================
 
-# 注册成功后是否自动跑 Codex 授权（True=自动，False=跳过）
+# 是否启用 Codex 授权（True=注册成功自动授权且允许手动补跑，False=两者均跳过）
 ENABLE_CODEX_AUTO: bool = False
 
 # Codex OAuth 授权驱动：
@@ -102,7 +102,7 @@ SMS_PROVIDER: str = "l"
 SMS_API_BASE: str = "https://api.grizzlysms.com/stubs/handler_api.php"
 
 # 接码 API 密钥（在 GrizzlySMS 后台 → 设置 获取）
-# 留空时 Codex 授权的手机验证步会失败；如不需要 Codex 自动授权，把 ENABLE_CODEX_AUTO=False。
+# 留空时 Codex 授权的手机验证步会失败；如不需要 Codex 授权，把 ENABLE_CODEX_AUTO=False。
 SMS_API_KEY: str = env_str("SMS_API_KEY", "")
 
 # 服务代码：OpenAI = "dr"

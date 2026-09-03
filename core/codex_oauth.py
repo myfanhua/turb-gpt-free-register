@@ -16,8 +16,8 @@
        workspace_id 从 oai-client-auth-session cookie（base64 解码）的 workspaces[0].id 取
     6. → 重定向 localhost:1455/auth/callback?code=ac_...，从 Location 抠 code
 
-拿到 code 后换 token / 保存到 SQLite 的逻辑（exchange_codex_token /
-build_codex_storage / save_codex_credential）沿用原流程。
+拿到 code 后换 token / 落盘的逻辑（exchange_codex_token / build_codex_storage /
+save_codex_credential）沿用旧实现，未改动。
 """
 import base64
 import hashlib
@@ -27,6 +27,7 @@ import random
 import secrets
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlencode, urlparse, parse_qs, quote
 
 import pyotp
@@ -51,6 +52,8 @@ from core import sms_provider
 from curl_cffi import requests as curl_requests
 
 logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # 跟重定向链时的最大跳数，防死循环
 _MAX_REDIRECTS = 15
@@ -1189,19 +1192,17 @@ def _credential_file_name(email: str, plan_type: str) -> str:
     return f"codex-{email}-{plan}.json"
 
 
-def save_codex_credential(storage: dict, email: str, plan_type: str) -> str:
-    """保存 Codex 凭证到 SQLite，不创建本地文件。"""
+def save_codex_credential(storage: dict, email: str, plan_type: str) -> Path:
+    """落盘到 {PROJECT_ROOT}/{CODEX_OUTPUT_DIRNAME}/codex-{email}.json。"""
+    out_dir = _PROJECT_ROOT / _cfg.CODEX_OUTPUT_DIRNAME
+    out_dir.mkdir(parents=True, exist_ok=True)
     fname = _credential_file_name(email, plan_type)
-    db.upsert_codex_credential(storage, fname)
-    return f"sqlite://codex_accounts/{fname}"
-
-
-def _save_codex_credential(email: str, storage: dict) -> str:
-    """BrowserUse 兼容入口：同样只保存到 SQLite。"""
-    plan = ""
-    if isinstance(storage, dict):
-        plan = storage.get("plan_type") or storage.get("chatgpt_plan_type") or ""
-    return save_codex_credential(storage, email, plan)
+    path = out_dir / fname
+    path.write_text(
+        json.dumps(storage, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def _extract_cpa_auth_json(payload: dict) -> dict | None:
@@ -1247,11 +1248,11 @@ def _save_cpa_local_record(
     auth_url: str,
     state: str,
     submit_payload: dict,
-) -> str | None:
+) -> Path | None:
     """
-    在 SQLite 记录 CPA 授权结果：
+    本地记录 CPA 授权结果：
       1) 如果 CPA 返回完整 auth json，保存为可用 codex-邮箱[-plan].json；
-      2) 否则按配置保存 callback 提交回执，便于追踪 CPA 侧授权结果。
+      2) 否则按配置保存 callback 提交回执，便于追踪 CPA 侧授权文件。
     """
     auth_json = _extract_cpa_auth_json(submit_payload)
     if auth_json:
@@ -1262,8 +1263,10 @@ def _save_cpa_local_record(
     if not bool(getattr(_cfg, "CPA_SAVE_CALLBACK_RECEIPT", True)):
         return None
 
+    out_dir = _PROJECT_ROOT / _cfg.CODEX_OUTPUT_DIRNAME
+    out_dir.mkdir(parents=True, exist_ok=True)
     safe_email = (email or "unknown").strip().replace("/", "_").replace("\\", "_")
-    fname = f"codex-{safe_email}-cpa-callback.json"
+    path = out_dir / f"codex-{safe_email}-cpa-callback.json"
     record = {
         "type": "codex_cpa_callback",
         "email": email,
@@ -1275,8 +1278,8 @@ def _save_cpa_local_record(
         "submitted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "note": "授权地址由 CPA 生成；callback 已提交给 CPA。若 CPA 响应未包含 token，本文件为本地回执记录。",
     }
-    db.upsert_codex_credential(record, fname)
-    return f"sqlite://codex_accounts/{fname}"
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def _save_sub2_local_record(
@@ -1286,8 +1289,8 @@ def _save_sub2_local_record(
     auth_url: str,
     state: str,
     submit_payload: dict,
-) -> str | None:
-    """在 SQLite 记录 sub2 授权结果；若返回完整 auth json，则保存为 Codex 凭证。"""
+) -> Path | None:
+    """本地记录 sub2 授权结果；若 sub2 返回完整 auth json，则保存为可用 codex 凭证。"""
     auth_json = _extract_cpa_auth_json(submit_payload)
     if auth_json:
         effective_email = auth_json.get("email") or email
@@ -1297,8 +1300,10 @@ def _save_sub2_local_record(
     if not bool(getattr(_cfg, "CPA_SAVE_CALLBACK_RECEIPT", True)):
         return None
 
+    out_dir = _PROJECT_ROOT / _cfg.CODEX_OUTPUT_DIRNAME
+    out_dir.mkdir(parents=True, exist_ok=True)
     safe_email = (email or "unknown").strip().replace("/", "_").replace("\\", "_")
-    fname = f"codex-{safe_email}-sub2-callback.json"
+    path = out_dir / f"codex-{safe_email}-sub2-callback.json"
     try:
         sub2_origin = _sub2_codex_base()
     except Exception:
@@ -1314,8 +1319,8 @@ def _save_sub2_local_record(
         "submitted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "note": "授权地址由 sub2 生成；callback 已上传给 sub2。若 sub2 响应未包含 token，本文件为本地回执记录。",
     }
-    db.upsert_codex_credential(record, fname)
-    return f"sqlite://codex_accounts/{fname}"
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 # ============================================================
@@ -1338,7 +1343,7 @@ def run_codex_oauth(
     Args:
         email: 已注册成功的账号邮箱
         otp_provider: 邮箱 OTP 获取回调 fn(email, after_ts)->code，默认用 wait_for_otp
-        proxy: 代理（不传从 PROXY_POOL 抽）
+        proxy: 代理（不传从当前内置代理平台生成）
         force: True 时跳过 ENABLE_CODEX_AUTO 开关限制，供手动补跑使用
 
     Returns:

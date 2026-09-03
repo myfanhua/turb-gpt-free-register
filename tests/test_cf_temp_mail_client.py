@@ -148,7 +148,80 @@ class CFTempMailClientTests(unittest.TestCase):
         self.assertTrue(args[1].endswith("/api/mails"))
         self.assertEqual(kwargs["params"]["limit"], 20)
         self.assertEqual(kwargs["params"]["offset"], 0)
+        self.assertEqual(kwargs["params"]["poll"], "1")
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer jwt-xyz")
+
+    @patch("core.cf_temp_mail_client.requests.request")
+    def test_control_plane_requests_bypass_ambient_proxy(self, request_mock):
+        """邮箱控制面不能继承宿主机 HTTP(S)_PROXY，否则代理抖动会拖死 OTP 轮询。"""
+        response = Mock(status_code=200)
+        response.json.return_value = {"results": []}
+        request_mock.return_value = response
+
+        with patch.object(client._email_cfg, "CLOUDFLARE_API_BASE", "https://mail.example.com", create=True), patch.object(
+            client._email_cfg, "CLOUDFLARE_PATH_MESSAGES", "/api/mails", create=True
+        ), patch.object(client._email_cfg, "CLOUDFLARE_AUTH_MODE", "none", create=True), patch.object(
+            client._email_cfg, "CLOUDFLARE_API_KEY", "", create=True
+        ), patch.object(client._email_cfg, "CLOUDFLARE_CUSTOM_AUTH", "", create=True):
+            client.list_messages("jwt-xyz")
+
+        self.assertEqual(
+            request_mock.call_args.kwargs["proxies"],
+            {"http": None, "https": None, "all": None},
+        )
+
+    @patch("core.cf_temp_mail_client.time.sleep")
+    @patch("core.cf_temp_mail_client.requests.request")
+    def test_fetch_latest_otp_uses_admin_mail_fallback_when_user_inbox_is_empty(self, request_mock, sleep):
+        target = "fresh@mail.example.com"
+        client._CONTEXT_CACHE[target] = client.CFTempMailAccount(
+            email=target,
+            jwt="jwt-xyz",
+            domain="mail.example.com",
+        )
+
+        def respond(method, url, **kwargs):
+            response = Mock(status_code=200)
+            if url.endswith("/api/mails"):
+                response.json.return_value = {"results": [], "count": 0}
+            elif url.endswith("/admin/mails"):
+                response.json.return_value = {
+                    "results": [{
+                        "id": 99,
+                        "address": target,
+                        "timestamp": 250,
+                        "from": "noreply@openai.com",
+                        "subject": "Your ChatGPT code",
+                        "text": "Your verification code is 654321",
+                    }],
+                    "count": 1,
+                }
+            else:
+                raise AssertionError(f"unexpected URL: {url}")
+            return response
+
+        request_mock.side_effect = respond
+
+        with patch.object(client._email_cfg, "CLOUDFLARE_API_BASE", "https://mail.example.com", create=True), patch.object(
+            client._email_cfg, "CLOUDFLARE_PATH_MESSAGES", "/api/mails", create=True
+        ), patch.object(client._email_cfg, "CLOUDFLARE_AUTH_MODE", "x-admin-auth", create=True), patch.object(
+            client._email_cfg, "CLOUDFLARE_API_KEY", "admin-pass", create=True
+        ), patch.object(client._email_cfg, "CLOUDFLARE_CUSTOM_AUTH", "", create=True):
+            code = client.fetch_latest_otp(
+                target,
+                after_ts=200,
+                max_wait=1,
+                poll_interval=1,
+                settle_seconds=0,
+            )
+
+        self.assertEqual(code, "654321")
+        calls = request_mock.call_args_list
+        self.assertEqual(calls[0].args[1], "https://mail.example.com/api/mails")
+        self.assertEqual(calls[0].kwargs["headers"]["Authorization"], "Bearer jwt-xyz")
+        self.assertEqual(calls[1].args[1], "https://mail.example.com/admin/mails")
+        self.assertEqual(calls[1].kwargs["headers"]["x-admin-auth"], "admin-pass")
+        self.assertEqual(calls[1].kwargs["params"]["address"], target)
 
 
     def test_created_at_without_tz_is_utc(self):

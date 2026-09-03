@@ -195,6 +195,9 @@ def _request(
             headers=headers,
             json=json_body,
             params=query or None,
+            # 临时邮箱 Worker 是控制面，不应跟随浏览器/任务代理或宿主机的
+            # HTTP(S)_PROXY。代理池抖动时继承环境代理会让 OTP 轮询间歇性 503。
+            proxies={"http": None, "https": None, "all": None},
             timeout=_timeout(),
         )
     except requests.RequestException as exc:
@@ -230,19 +233,37 @@ def _request(
 
 
 def _pick_list_payload(data: Any) -> list[dict]:
+    """兼容 Worker/API 版本间的邮件列表包裹结构。
+
+    MZEmail 的标准返回值是 ``{"results": [...], "count": n}``，旧版
+    兼容层和部分代理则会把列表放在 ``data.items``/``data.rows``，或直接
+    返回单封邮件对象。只沿已知列表键递归，避免把分页元数据误当邮件。
+    """
     if isinstance(data, list):
         return [item for item in data if isinstance(item, dict)]
     if not isinstance(data, dict):
         return []
-    for key in ("results", "hydra:member", "data", "messages", "mails", "emails"):
+
+    list_keys = (
+        "results", "hydra:member", "messages", "mails", "emails",
+        "items", "rows", "list", "data", "message",
+    )
+    for key in list_keys:
         value = data.get(key)
         if isinstance(value, list):
             return [item for item in value if isinstance(item, dict)]
         if isinstance(value, dict):
-            for nested_key in ("messages", "mails", "emails", "results", "list"):
-                nested = value.get(nested_key)
-                if isinstance(nested, list):
-                    return [item for item in nested if isinstance(item, dict)]
+            nested = _pick_list_payload(value)
+            if nested:
+                return nested
+
+    # 详情接口有时直接返回一封邮件，而不是列表包裹对象。
+    message_markers = (
+        "raw", "raw_blob", "source", "message_id", "msgid", "mail_id",
+        "subject", "from", "created_at", "createdAt", "timestamp", "receivedAt",
+    )
+    if any(key in data for key in message_markers):
+        return [data]
     return []
 
 
@@ -515,8 +536,13 @@ def _message_id(item: dict) -> str:
     return str(item.get("id") or item.get("msgid") or item.get("mail_id") or "").strip()
 
 
-def list_messages(jwt: str, *, limit: int = 20, offset: int = 0) -> list[dict]:
-    """拉取收件箱。cloudflare_temp_email 的 /api/mails 要求有效 limit（否则 HTTP 400 Invalid limit）。"""
+def list_messages(jwt: str, *, address: str = "", limit: int = 20, offset: int = 0) -> list[dict]:
+    """拉取收件箱，并在 admin 创建的地址上用管理接口兜底。
+
+    ``poll=1`` 是 MZEmail 为轮询场景提供的参数：跳过计数和地址更新时间
+    写入，避免验证码短轮询产生额外写入。管理接口兜底只在主接口明确返回
+    空列表时触发，不会覆盖主接口已经返回的邮件。
+    """
     path = _normalize_path(
         _cfg_str("CLOUDFLARE_PATH_MESSAGES", "/api/mails"),
         "/api/mails",
@@ -528,9 +554,63 @@ def list_messages(jwt: str, *, limit: int = 20, offset: int = 0) -> list[dict]:
         "GET",
         path,
         bearer_jwt=jwt,
-        params={"limit": safe_limit, "offset": safe_offset},
+        params={"limit": safe_limit, "offset": safe_offset, "poll": "1"},
     )
-    return _pick_list_payload(payload)
+    rows = _pick_list_payload(payload)
+    # MZEmail 的管理邮件接口只接受 x-admin-auth；仅在当前配置确实具备
+    # 该权限时兜底，避免把普通 API Key 当成管理凭据反复请求。
+    admin_fallback_enabled = bool(_api_key()) and _auth_mode() == "x-admin-auth"
+    if rows or not str(address or "").strip() or not admin_fallback_enabled:
+        if not rows:
+            keys = sorted(payload.keys()) if isinstance(payload, dict) else []
+            count = payload.get("count") if isinstance(payload, dict) else None
+            logger.info(
+                "[Cloudflare] 收件箱为空：path=%s response_type=%s keys=%s count=%s",
+                path,
+                type(payload).__name__,
+                keys,
+                count if isinstance(count, (int, float)) else "-",
+            )
+        return rows
+
+    admin_path = _normalize_path(
+        _cfg_str("CLOUDFLARE_PATH_ADMIN_MESSAGES", "/admin/mails"),
+        "/admin/mails",
+    )
+    if admin_path == path:
+        return rows
+
+    try:
+        admin_payload = _request(
+            "GET",
+            admin_path,
+            params={
+                "limit": safe_limit,
+                "offset": safe_offset,
+                "address": str(address).strip(),
+            },
+        )
+        admin_rows = _pick_list_payload(admin_payload)
+        if admin_rows:
+            logger.info(
+                "[Cloudflare] 用户收件箱为空，已用 admin 邮件接口兜底读取 %s 封",
+                len(admin_rows),
+            )
+            return admin_rows
+        keys = sorted(admin_payload.keys()) if isinstance(admin_payload, dict) else []
+        count = admin_payload.get("count") if isinstance(admin_payload, dict) else None
+        logger.info(
+            "[Cloudflare] admin 收件箱也为空：path=%s response_type=%s keys=%s count=%s",
+            admin_path,
+            type(admin_payload).__name__,
+            keys,
+            count if isinstance(count, (int, float)) else "-",
+        )
+    except CFTempMailError as exc:
+        # 主接口是有效的空响应时，admin 兜底失败不能覆盖原始轮询结果；
+        # 记录短错误，下一轮继续从主接口读取。
+        logger.info("[Cloudflare] admin 邮件接口兜底未启用：%s", exc)
+    return rows
 
 
 def get_message_detail(jwt: str, message_id: str) -> dict:
@@ -541,6 +621,8 @@ def get_message_detail(jwt: str, message_id: str) -> dict:
         "/api/mails",
     )
     candidates = [
+        f"/api/parsed_mail/{message_id}",
+        f"/api/parsed_mails/{message_id}",
         f"/api/mail/{message_id}",
         f"{messages_path}/{message_id}",
     ]
@@ -595,7 +677,7 @@ def fetch_latest_otp(
 
     while time.monotonic() < deadline:
         try:
-            messages = list_messages(account.jwt)
+            messages = list_messages(account.jwt, address=target)
         except CFTempMailError as exc:
             last_error = str(exc)
             logger.warning("[Cloudflare] 拉取邮件失败: %s", exc)

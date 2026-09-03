@@ -1,6 +1,6 @@
 # Turb GPT Free Register
 
-ChatGPT / OpenAI 账号自动注册与 Codex OAuth 授权工具。当前项目支持三套注册驱动：
+ChatGPT / OpenAI 账号自动注册与 Codex OAuth 授权工具。当前项目支持五套注册驱动：
 
 - **protocol**：原纯协议注册，基于 `curl_cffi` + Sentinel/PoW。
 - **roxy**：RoxyBrowser 指纹浏览器 + Selenium 自动化注册，兼容新版页面流，例如 `create-account/password`、`about-you` 年龄/生日表单、地区本地化页面等。
@@ -12,7 +12,8 @@ ChatGPT / OpenAI 账号自动注册与 Codex OAuth 授权工具。当前项目�
 
 > 项目说明：本项目基于 [xiaoguzuiniu/gpt-free-register](https://github.com/xiaoguzuiniu/gpt-free-register) 进行改造与扩展。
 
-- TG 交流群：[https://t.me/+uC3Ix0l2E085Njhl](https://t.me/+uC3Ix0l2E085Njhl)
+- TG 交流群：[加入 Telegram 群](https://t.me/mzaijlq)
+- QQ 交流群：[加入 QQ 群 952990450](https://qm.qq.com/cgi-bin/qm/qr?group_code=952990450)
 
 > 开源版说明：仓库只保留源码、配置模板和文档；运行时账号、Token、邮箱池、Codex 凭证、日志等真实数据均已通过 `.gitignore` 排除。
 
@@ -49,7 +50,6 @@ ChatGPT / OpenAI 账号自动注册与 Codex OAuth 授权工具。当前项目�
 - Cloudflare Worker 临时邮箱：自动创建 + JWT 取码（`cloudflare`，兼容 cloudflare_temp_email）
 - 通用 API 邮箱：`email----取码地址`
 - GPTMail 临时邮箱 API：运行时随机生成邮箱并自动收取验证码
-- Remail 开放 API：按项目下单短效邮箱并自动收取验证码（`remail`）
 - `EMAIL_SOURCE` 支持多个来源组合，例如：
 
 ```python
@@ -60,7 +60,7 @@ EMAIL_SOURCE = "outlook,generic_api"
 
 ### Codex OAuth
 
-- 注册成功后可自动跑 Codex OAuth。
+- 注册成功后可自动跑 Codex OAuth；账号页手动补跑也受同一开关控制。
 - Codex 授权驱动可选：
   - `CODEX_OAUTH_DRIVER = "protocol"`
   - `CODEX_OAUTH_DRIVER = "roxy"`
@@ -72,7 +72,7 @@ EMAIL_SOURCE = "outlook,generic_api"
   - GrizzlySMS
   - 本地 L 取号服务，见 `L_API.md`
 - 手机验证支持自动取号、填号、收码、提交、失败换号重试。
-- Codex 凭证保存到 SQLite 的 `codex_accounts` 表。
+- Codex 凭证落盘到 `codex_accounts/`。
 
 ### WebUI
 
@@ -81,86 +81,26 @@ EMAIL_SOURCE = "outlook,generic_api"
 - 动态调整注册线程数，提交后新任务立即使用最新值。
 - 批量补跑 Codex，补跑线程数每次提交即时生效。
 - 管理账号、邮箱池、Codex 凭证；账号页支持复制全部/选中整行，邮箱池列表展示导入时间、已用时间和状态。
-- 邮箱池导入默认不创建账号；勾选“导入后默认视为注册成功账号”后，会将邮箱池标记为已用并同步显示在账号页，可直接批量补跑 Codex。
-- Roxy/Cloak 浏览器注册完成后统计整个浏览器会话的上传、下载和总流量，任务列表与账号扩展信息均会保存结果；Browser Use/Skyvern 云端浏览器不启用本地流量监听、资源拦截或 JS 覆盖率采集。
 - 配置页支持热加载，保存后无需重启。
 - Roxy 团队/项目可在配置页获取并保存。
 
-### 数据存储
+### ChatGPT 邮箱换绑（纯协议）
 
-- 账号、邮箱库、任务及 Codex 凭证运行时统一存储在项目根目录 `turb.sqlite3`，按业务拆分为 `accounts`、`email_pool`（邮箱库）、`registration_jobs`、`codex_accounts` 和 `codex_agent_accounts` 五张表。
-- 数据库启用 WAL、超时等待和常用字段索引，WebUI 的账号、套餐状态、邮箱库、Codex 和任务分页直接执行 SQLite `COUNT(*) + LIMIT/OFFSET`，不再先读取全量数据后由 Python 切片。
-- 首次启动会自动把现有 JSON/历史 SQLite 数据迁移到新数据库；迁移完成后不再读写账号、任务、邮箱池和 Codex 凭证 JSON/TXT 文件。
-- `turb.sqlite3*` 属于运行时数据，已加入 `.gitignore`，请纳入备份策略。
+- 已内置 `chatgpt-rebind-standalone` 的纯协议流程：旧邮箱密码 + TOTP 登录 → `change_email` 验证 → 新邮箱密码 + TOTP 重登 → 导出新会话。
+- WebUI「资源与工具 → 邮箱换绑」是独立板块，只显示已经查出 Plus 试用资格的账号；点击资格号即可自动识别已经接入的域名邮箱服务、创建目标邮箱并用同一服务收取验证码，不再重复填写新邮箱和收信 API。完成后原子更新本地账号的当前邮箱、access token、用户/账号信息和换绑状态，失败时保留原凭据；失败行提供「查看原因」，读取完整错误代码、失败原因和脱敏执行日志。
+- 命令行入口：
 
-### 浏览器网络流量统计
-
-浏览器驱动会从打开注册页开始统计，到注册后停留结束、浏览器关闭前完成汇总。结果包含：
-
-- 上传字节、下载字节、总字节数；
-- HTTP 请求数、失败/未完成请求数；
-- WebSocket 帧 payload 字节（如流程使用 WebSocket）。
-
-现代/Legacy WebUI 的注册任务列表会显示总流量，完整结构保存在任务记录的 `network_traffic` 和成功账号的 `extra_json` 中。统计为浏览器侧可观测的请求/响应流量，不包含 TLS/IP/代理隧道额外开销，也不包含邮箱 API、Roxy API 或 CDP 控制通道流量。
-
-#### 省流量模式
-
-在 WebUI「浏览器画像」中开启「本地浏览器省流量模式」，或在 `.env` 设置（仅 Roxy/Cloak 生效）：
-
-```dotenv
-BROWSER_DATA_SAVER_MODE=True
-BROWSER_DATA_SAVER_BLOCKED_RESOURCE_TYPES=["image", "media"]
-# URL glob 列表；WebUI 中则是一行一条
-BROWSER_DATA_SAVER_BLOCKED_URL_PATTERNS='["**://auth.openai.com/awe/api/v2/rum**", "**://chatgpt.com/ces/statsc/flush**", "**://connect.facebook.net/**", "**://analytics.tiktok.com/**", "**://snap.licdn.com/**", "**://bat.bing.com/**", "**://accounts.google.com/gsi/client**"]'
+```bash
+python run_rebind_email.py --yes \
+  --old-email '<old-email>' \
+  --password '<chatgpt-password>' \
+  --totp-secret '<totp-secret>' \
+  --new-email '<new-email>' \
+  --mail-api 'https://<mail-api>/...' \
+  --out accounts/rebind/manual
 ```
 
-Roxy/Selenium 会在启动参数中关闭图片加载，并使用 Chrome CDP 拦截常见图片、媒体等 URL 后缀及配置的 URL glob（因此也能覆盖无扩展名资源）；Cloak 使用 Playwright 按资源类型和 URL glob 拦截。Browser Use/Skyvern 是云端浏览器，不安装本地省流量拦截器，始终保留完整页面资源。默认只拦截 `image`、`media`，以及配置中列出的 RUM/广告统计 URL，不会按类型拦截登录所需的核心脚本、接口和 WebSocket。Playwright 会放行带验证码/challenge 关键词的 URL；Roxy 的 Chromium 图片开关和 CDP URL 黑名单无法提供 URL 例外规则，若页面出现验证码或布局异常，关闭该模式后重试。
-
-Job 208 的明细显示，当前规则实际拦截了 5 个第三方脚本（Google GSI、Facebook、TikTok、LinkedIn、Bing）以及 380 次 RUM 请求；邮箱/密码注册成功。注册侧下载约 9.92 MiB，其中脚本约 8.90 MiB，主要来自 ChatGPT 核心 CDN chunk。
-
-当前默认规则只包含 RUM/广告统计和 Google GSI。邮箱/密码注册不使用 Google 登录，因此可以保留 GSI 规则；如果将来启用 Google 登录，需从「省流量 URL 屏蔽规则」中移除以下行：
-
-```text
-**://accounts.google.com/gsi/client**
-```
-
-疑似 CES 遥测的 `**://chatgpt.com/ces/v1/rgstr` 约 277 KiB/轮，也可在单独验证注册成功率后加入。
-
-不要屏蔽 `chatgpt.com/cdn/assets/*.js`、`auth-cdn.oaistatic.com/assets/*.js`、`sentinel.openai.com`、`chatgpt.com/backend-api/sentinel/*`、`ab.chatgpt.com/v1/initialize`、`chatgpt.com/realtime/wm` 和注册/OTP/session API。Job 207 屏蔽 `7aaae702-*.js` 后出现 OTP 输入框缺失；Job 208 放行该 chunk 后完整成功，因此不能仅凭低函数执行比例屏蔽 CDN chunk。URL 规则填写 `[]` 可恢复为仅按资源类型拦截，空白则使用内置默认规则。
-
-如需拦截 CSS，可加入 `stylesheet`：
-
-```dotenv
-BROWSER_DATA_SAVER_BLOCKED_RESOURCE_TYPES=["image", "media", "stylesheet"]
-```
-
-CSS 通常不是注册接口必需，但会影响隐藏元素、布局和可见性判断，建议先单独测试；出现元素找不到或点击异常时移除 `stylesheet`。
-
-#### 资源明细日志
-
-需要分析注册流程中哪些资源占流量时，开启：
-
-```dotenv
-BROWSER_TRAFFIC_DETAIL_LOG=True
-BROWSER_TRAFFIC_DETAIL_MAX_ENTRIES=2000
-```
-
-启用统计的 Roxy/Cloak 注册任务结束后，日志会输出 `[资源明细]` 行，包含资源 URL、类型、HTTP 方法、状态码、上传大小、下载大小、响应 body/header 大小，以及 `failed`、`blocked`、`unfinished`、`cache` 状态；明细按单请求总字节从大到小排列。Browser Use/Skyvern 云端浏览器不启用该监听。`ws_upload/ws_download` 表示 WebSocket 帧 payload。Playwright 缓存状态在无法从 API 确认时显示 `unknown`，Selenium/CDP 能识别时显示 `hit` 或 `miss`。URL 查询参数值、data/blob URL 内容不会写入日志。
-
-把一轮注册的 `[资源明细]` 日志发回后，可以按域名、路径、资源类型和实际字节量判断下一步是否适合继续拦截；`stylesheet`、`font` 等类型需要结合注册是否受影响再启用。
-
-#### JS 执行函数覆盖率
-
-需要确认某个 CDN chunk 是否在 Roxy/Cloak 注册流程中真正执行时，开启：
-
-```dotenv
-BROWSER_JS_COVERAGE_LOG=True
-BROWSER_JS_COVERAGE_MAX_ENTRIES=1000
-```
-
-Roxy/Selenium 会在当前 Chrome target 上启用 CDP `Profiler.startPreciseCoverage`，Cloak 会为已发现的 Chromium Page 建立 CDP session；Browser Use/Skyvern 不启用 JS 覆盖率监听。任务结束时日志包含：`[JS执行汇总]`、每个脚本的 `[JS脚本]`、实际执行函数的 `[JS执行]`（函数名、调用次数、`startOffset-endOffset:count`）以及“本次未观察到执行范围”的 `[JS候选]`。`network_traffic.js_coverage` 会保存脚本级摘要和候选 URL，逐函数 offset 只写日志，不保存源码、参数或返回值。
-
-`[JS候选]` 仅表示该轮覆盖率没有观察到执行代码，不能单独证明可以屏蔽：先用一轮未屏蔽核心脚本的成功注册作为基线，再一次只屏蔽一个候选并对比 OTP、session、资料页和成功率。脚本若来自 `data:`/`blob:`/扩展页不会列为 URL 屏蔽候选；跨 popup/多 target 的 Selenium 页面只覆盖当前 CDP target。若 CDP Profiler 不受当前指纹浏览器支持，日志会标记 `supported=False`，不会影响注册流程。
+- 上游来源：[MervLis/chatgpt-rebind-standalone](https://github.com/MervLis/chatgpt-rebind-standalone)，已固定到提交 `e27b3217dbfddab19e83dc57ab225173877e4663`；集成代码位于 `rebind_core/` 与 `registration_core/`。
 
 ---
 
@@ -200,7 +140,6 @@ cp .env.example .env
 - `ROXY_API_TOKEN`
 - `QQ_IMAP_PASSWORD`
 - `CLOUDFLARE_API_KEY` / `CLOUDFLARE_CUSTOM_AUTH`（`EMAIL_SOURCE=cloudflare` 时）
-- `REMAIL_API_KEY`（`EMAIL_SOURCE=remail` 时）
 - `CPA_MANAGEMENT_KEY`
 - `SMS_API_KEY`
 - `L_ADMIN_AUTH_CODE`
@@ -321,34 +260,6 @@ Cloudflare Email Routing 需要把域名邮件转发到 QQ 邮箱。此模式不
 - `api-key`获取页面：https://mailnest.top/account
 - 项目代码获取页面：https://mailnest.top/buy-email。默认为`chatgpt001`，可以直接使用
 
-#### Remail 开放 API
-
-Remail API 文档：[https://remail.aishop6.com/docs](https://remail.aishop6.com/docs)。该服务使用 API Key
-按项目创建短效接码订单，订单返回的邮箱和 service token 会自动用于后续取码。
-
-在 WebUI「配置 → 邮箱 / OTP」填写：
-
-- `REMAIL_API_KEY`：Remail 控制台生成的 `rk-` 开头 API Key；
-- `REMAIL_PROJECT_ID`：Remail「项目」列表中用于 ChatGPT/OpenAI 验证码的 `projectId`；
-- `REMAIL_EMAIL_SUFFIX`：下单后缀，微软邮箱通常填 `outlook.com`。
-
-然后设置：
-
-```dotenv
-USE_EMAIL_SERVICE=True
-EMAIL_SOURCE=remail
-REMAIL_API_BASE=https://remail.aishop6.com
-REMAIL_API_KEY=你的_Remail_API_Key
-REMAIL_PROJECT_ID=项目ID
-REMAIL_EMAIL_SUFFIX=outlook.com
-REMAIL_SERVICE_MODE=purchase
-REMAIL_SUPPLY_POLICY=public_only
-```
-
-`REMAIL_SERVICE_MODE` 默认为 `purchase`（长效购买，可重复收件），也可改为 `code`（短效接码）。
-`REMAIL_SUPPLY_POLICY` 默认为 `public_only`，也可改为 `private_first`。每个注册任务会创建一个
-对应模式的订单，验证码通过 `/v1/pickup` 获取；Remail 订单余额和对应项目库存需可用。
-
 ---
 
 ### 2. 配置注册驱动
@@ -412,7 +323,7 @@ CLOAK_USER_DATA_DIR = ""        # 留空临时环境；填路径可持久化 pro
 说明：
 
 - `CLOAK_GEOIP=True` 会按当前出口 IP 自动生成 `locale / timezone / Accept-Language`，并传给 CloakBrowser 与 Playwright context。
-- 如果你通过项目代理池使用代理，请在 `config/proxy.py` 的 `PROXY_POOL` 填写代理；如果你使用系统代理/VPN，也会按当前实际出口 IP 自动定位。
+- 如果你使用项目内置代理平台，请在 WebUI「配置 → 内置代理」填写 CliProxy 或 IPRoyal 的账号、密码和出口国家，点击“测试连通并保存”；如果你使用系统代理/VPN，也会按当前实际出口 IP 自动定位。
 - 免费版没有在项目侧限制窗口数；本项目每个注册任务会启动一个 CloakBrowser 实例，即一个实例一套指纹。
 - WebUI 中，`Codex授权驱动` 位于「CPA / Codex」分组，对应 `config/codex.py` 的 `CODEX_OAUTH_DRIVER`。
 
@@ -422,7 +333,7 @@ CLOAK_USER_DATA_DIR = ""        # 留空临时环境；填路径可持久化 pro
 REGISTRATION_DRIVER = "protocol"
 ```
 
-协议注册会使用 `curl_cffi`、Sentinel/PoW、代理池等配置。
+协议注册会使用 `curl_cffi`、Sentinel/PoW 和当前内置代理平台配置。
 
 #### 使用 Browser Use Cloud 注册
 
@@ -472,21 +383,26 @@ pip install playwright
 
 ### 3. 配置代理
 
-编辑 `config/proxy.py`：
+推荐直接在 WebUI「配置 → 内置代理」配置。当前提供两个内置平台：
 
 ```python
-PROXY_POOL = [
-    "http://user:pass@host:port",
-]
+PROXY_PROVIDER = "cliproxy_traffic"  # 或 iproyal_traffic
+CLIPROXY_PROXY_USERNAME = "你的平台账号"
+CLIPROXY_PROXY_PASSWORD = "你的平台密码"
+CLIPROXY_PROXY_COUNTRY = "ID"
+
+IPROYAL_PROXY_USERNAME = "你的平台账号"
+IPROYAL_PROXY_PASSWORD = "你的平台密码"
+IPROYAL_PROXY_COUNTRY = "ID"
 ```
 
-Roxy 一号一环境开启 `ROXY_CREATE_USE_PROXY_POOL=True` 时，会从这里随机取代理写入 Roxy Profile。
+主机、端口和 sticky 会话时长都有默认值。任务中心可按批次选择代理平台与出口国家；点击“测试连通并保存”后，Roxy 一号一环境会把对应会话代理写入新环境。
 
 ---
 
 ### 4. 配置 Codex OAuth
 
-如不需要 Codex，关闭：
+如不需要 Codex（自动授权和手动补跑都会关闭），关闭：
 
 ```python
 ENABLE_CODEX_AUTO = False
@@ -584,7 +500,7 @@ WebUI 页面说明：
 |---|---|
 | 注册 | 设置注册数量、线程数，启动批量注册，查看任务和日志 |
 | 账号 | 查看账号、复制 token、补跑 Codex、批量删除账号 |
-| Codex 授权 | 查看/下载/删除 SQLite 中的 Codex 凭证 |
+| Codex 授权 | 查看/下载/删除 `codex_accounts/` 凭证 |
 | 邮箱池 | 导入邮箱、筛选来源、标记可用/失败、删除邮箱 |
 | 配置 | 修改运行配置并热加载，含 Roxy、Codex、邮箱、代理、人工节奏等 |
 
@@ -675,7 +591,7 @@ REGISTER_PASSWORD = "你的固定密码"
 保存位置：
 
 - 账号 `extra_json.registration_password`
-- SQLite `accounts.payload` 中的 `extra_json.registration_password`
+- 批次归档 `accounts/YYYYMMDD-.../注册成功账号.json` 的 `extra.registration_password`
 
 注意：账号表里的 `password` 字段仍用于 Outlook 邮箱素材密码，不会被 OpenAI 注册密码覆盖。
 
@@ -689,7 +605,7 @@ REGISTER_PASSWORD = "你的固定密码"
 | `config/cloakbrowser.py` | CloakBrowser 无头/humanize/geoip/语言时区/指纹 seed |
 | `config/codex.py` | Codex OAuth、授权驱动、CPA 管理接口、接码平台 |
 | `config/email.py` | 邮箱来源、OTP 轮询、QQ IMAP、域名邮箱、Cloudflare Worker 临时邮箱 |
-| `config/proxy.py` | 代理池 |
+| `config/proxy.py` | 内置代理平台、出口国家与套餐查询网络策略 |
 | `config/register.py` | 默认邮箱、密码、显示名 |
 | `config/twofa.py` | 2FA 开关 |
 | `config/humanize.py` | 随机停顿/人工节奏 |
@@ -705,9 +621,25 @@ WebUI 配置页保存后会调用热加载；Roxy、Codex、邮箱、代理、�
 
 | 路径 | 内容 |
 |---|---|
-| `turb.sqlite3` | 账号、邮箱库、任务、Codex 和 Agent 凭证全部数据 |
-| 旧 JSON/TXT/Codex 文件 | 仅用于首次迁移，运行期间不再读写 |
+| `用于注册的邮箱.txt/json` | Outlook 邮箱池及状态 |
+| `用于注册的API邮箱.txt/json` | 通用 API 邮箱池及状态 |
+| `注册成功的邮箱.txt/json` | 注册成功账号 |
+| `注册成功的token.txt` | ChatGPT access token |
+| `accounts/` | 每次运行的批次归档 |
+| `codex_accounts/` | Codex OAuth 凭证 JSON |
+| `注册任务.json` | WebUI 注册任务表 |
 | `注册日志/` | 注册任务日志、Codex 补跑日志 |
+| `accounts_viewer.html` | 本地账号查看页 |
+
+批次目录示例：
+
+```text
+accounts/20260709-10个-3线程/
+├── 注册成功的邮箱.txt
+├── 注册成功的token.txt
+├── 注册成功整行.txt
+└── 注册成功账号.json
+```
 
 ---
 
@@ -738,7 +670,7 @@ WebUI 配置页保存后会调用热加载；Roxy、Codex、邮箱、代理、�
   ↓
 可选 Codex OAuth
   ↓
-保存账号到 SQLite
+保存账号与批次归档
   ↓
 关闭/删除 Roxy Profile
 ```
@@ -758,7 +690,7 @@ Roxy 打开授权页
   ↓
 提交 callback 给 CPA 或本地换 token
   ↓
-保存 Codex 凭证到 SQLite
+保存 codex_accounts/codex-邮箱*.json
 ```
 
 ---
@@ -814,7 +746,7 @@ python tools/test_codex_oauth.py --email <邮箱> --verbose
 ENABLE_CODEX_AUTO = False
 ```
 
-注册主流程不依赖接码，Codex 自动授权才需要。
+注册主流程不依赖接码，Codex 授权（自动或手动补跑）才需要。
 
 ---
 
@@ -834,8 +766,6 @@ ENABLE_CODEX_AUTO = False
 │   ├── register.py                 # 默认注册信息
 │   └── ...
 ├── core/
-│   ├── browser_data_saver.py       # Roxy/Cloak 本地浏览器省流量资源拦截
-│   ├── browser_traffic.py          # 浏览器注册 HTTP/WebSocket 流量统计
 │   ├── roxy_registration.py        # Roxy / 浏览器注册页面流程
 │   ├── cloakbrowser_registration.py # Cloak 注册入口
 │   ├── cloakbrowser_driver.py      # Cloak Playwright→Selenium 风格适配层
@@ -848,8 +778,8 @@ ENABLE_CODEX_AUTO = False
 │   ├── email_provider.py           # 邮箱来源调度
 │   ├── cf_temp_mail_client.py      # Cloudflare Worker 临时邮箱
 │   ├── sms_provider.py             # 接码平台
-│   ├── account_export.py           # 注册后处理与 SQLite 保存
-│   └── db.py                       # SQLite 数据库与一次性迁移
+│   ├── account_export.py           # 保存账号/批次归档
+│   └── db.py                       # 文件数据库
 ├── webui/
 │   ├── app.py                      # Flask API
 │   ├── config_editor.py            # 配置读写/热加载
@@ -890,6 +820,23 @@ ROXY_OPEN_HEADLESS = False
 - [curl_cffi](https://github.com/yifeikong/curl_cffi) — 底层 HTTP 库，提供 TLS 指纹 impersonate 能力
 
 ---
+
+## 本项目优化说明
+
+上面的 README 主体沿用并整理自 [xiaoguzuiniu/gpt-free-register](https://github.com/xiaoguzuiniu/gpt-free-register)；下面列出本项目在其基础上的主要优化，便于使用者快速了解改动内容：
+
+| 范围 | 主要改动 | 主要位置 |
+| --- | --- | --- |
+| ChatGPT 邮箱换绑 | 接入纯协议换绑流程，支持旧邮箱登录、换绑验证、新邮箱重登和会话导出。 | `rebind_core/`、`registration_core/`、`core/rebind_service.py`、`run_rebind_email.py` |
+| 换绑资源与状态 | 在资源工具中自动识别可用邮箱资源；成功时更新当前邮箱、Token、账号信息和换绑状态，失败时保留原凭据并记录错误原因。 | `core/db.py`、`core/rebind_service.py` |
+| WebUI | 增加独立的邮箱换绑/试用账号入口、任务状态和失败原因查看，并兼容现代与 legacy 页面模板。 | `webui/app.py`、`webui/templates/index.html`、`webui/templates/index_legacy.html` |
+| 注册与授权配置 | 保留并整理多种注册驱动、Codex OAuth 驱动和内置代理平台配置。 | `config/`、`core/` |
+| 测试 | 增加换绑流程、WebUI 路由、资源探测、失败回滚和页面入口测试。 | `tests/test_rebind_integration.py` |
+| 联系方式 | 在 WebUI 侧栏加入 Telegram、QQ 图标跳转，并显示“ai交流资源群”和 QQ 群号。 | `webui/templates/index.html`、`webui/templates/index_legacy.html`、`tests/test_contact_links.py` |
+| 公开分发 | 重新整理为不带运行数据的分享包，只提供源码、配置模板、文档和测试。 | `.gitignore`、`.env.example`、`SHAREABLE.md` |
+
+换绑集成参考的上游项目是 [MervLis/chatgpt-rebind-standalone](https://github.com/MervLis/chatgpt-rebind-standalone)，当前固定到提交 `e27b3217dbfddab19e83dc57ab225173877e4663`。本仓库不替代上游署名，具体使用方式仍以本 README 的配置说明为准。
+
 
 ## License
 

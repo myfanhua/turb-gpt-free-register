@@ -18,37 +18,64 @@ AUTH_ENV_KEYS = ("WEBUI_AUTH_CODE", "AUTH_CODE", "WEB_AUTH_CODE")
 _SESSION_KEY = "webui_auth_ok"
 _AUTH_CODE: str | None = None
 _GENERATED = False
+_AUTH_DISABLED = False
+
+
+def _is_truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 def init_auth(app: Any, *, auth_code: str | None = None) -> str:
     """初始化授权码和 Flask session。未显式配置时生成临时授权码。"""
-    global _AUTH_CODE, _GENERATED
+    global _AUTH_CODE, _GENERATED, _AUTH_DISABLED
 
-    code = (auth_code or "").strip()
-    if not code:
-        try:
-            from config.env_loader import load_env, env_str
-            load_env(override=False)
+    try:
+        from config.env_loader import load_env, env_str
+        load_env(override=False)
+    except Exception:
+        env_str = None
+
+    code = ""
+    explicit_code = (auth_code or "").strip()
+    # A caller-supplied code is an explicit request to enable authentication
+    # (used by tests and embedders).  The environment switch remains the
+    # default for the normal ``create_app()`` startup path.
+    _AUTH_DISABLED = _is_truthy(os.getenv("WEBUI_AUTH_DISABLED")) and not explicit_code
+    if _AUTH_DISABLED:
+        _AUTH_CODE = None
+        _GENERATED = False
+    else:
+        code = explicit_code
+        if not code:
+            try:
+                if env_str is not None:
+                    for key in AUTH_ENV_KEYS:
+                        code = env_str(key, "")
+                        if code:
+                            break
+            except Exception:
+                pass
             for key in AUTH_ENV_KEYS:
-                code = env_str(key, "")
                 if code:
                     break
-        except Exception:
-            for key in AUTH_ENV_KEYS:
                 code = (os.getenv(key) or "").strip()
                 if code:
                     break
 
-    if not code:
-        code = secrets.token_urlsafe(18)
-        _GENERATED = True
-    else:
-        _GENERATED = False
+        if not code:
+            code = secrets.token_urlsafe(18)
+            _GENERATED = True
+        else:
+            _GENERATED = False
 
-    _AUTH_CODE = code
+        _AUTH_CODE = code
+
     session_secret = os.getenv("WEBUI_SESSION_SECRET") or os.getenv("FLASK_SECRET_KEY")
     if not session_secret:
-        # 授权码来自 .env 时，用带命名空间的摘要生成稳定签名密钥；修改授权码会自然注销旧会话。
-        session_secret = hashlib.sha256(f"turb-gpt-webui-session:{code}".encode("utf-8")).hexdigest()
+        if _AUTH_DISABLED:
+            session_secret = secrets.token_urlsafe(32)
+        else:
+            # 授权码来自 .env 时，用带命名空间的摘要生成稳定签名密钥；修改授权码会自然注销旧会话。
+            session_secret = hashlib.sha256(f"turb-gpt-webui-session:{_AUTH_CODE}".encode("utf-8")).hexdigest()
     app.secret_key = session_secret
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
@@ -60,6 +87,10 @@ def init_auth(app: Any, *, auth_code: str | None = None) -> str:
 
 def is_generated_code() -> bool:
     return _GENERATED
+
+
+def is_auth_disabled() -> bool:
+    return _AUTH_DISABLED
 
 
 def expected_auth_code() -> str:
@@ -83,6 +114,8 @@ def code_is_valid(code: str) -> bool:
 
 
 def request_is_authorized() -> bool:
+    if is_auth_disabled():
+        return True
     if session.get(_SESSION_KEY) is True:
         return True
     return code_is_valid(_extract_auth_code())
@@ -104,6 +137,8 @@ def _unauthorized_response():
 def register_auth_routes(app: Any) -> None:
     @app.before_request
     def _require_auth_code():
+        if is_auth_disabled():
+            return None
         endpoint = request.endpoint or ""
         if endpoint in {"auth_login", "auth_logout", "static"}:
             return None
@@ -119,6 +154,8 @@ def register_auth_routes(app: Any) -> None:
         next_url = request.values.get("next") or "/"
         if not str(next_url).startswith("/") or str(next_url).startswith("//"):
             next_url = "/"
+        if is_auth_disabled():
+            return redirect(next_url)
         if request.method == "POST":
             code = (request.form.get("auth_code") or "").strip()
             remember = (request.form.get("remember") or "").strip().lower() in ("1", "true", "on", "yes")

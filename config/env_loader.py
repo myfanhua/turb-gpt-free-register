@@ -35,7 +35,6 @@ SECRET_ENV_KEYS: dict[str, str] = {
     "MAIL_NEST_API_KEY": "MailNest API Key",
     "CLOUDMAIL_AUTH_TOKEN": "CloudMail Authorization Token",
     "CLOUDMAIL_PASSWORD": "CloudMail 登录密码",
-    "REMAIL_API_KEY": "Remail 开放 API Key",
     "CPA_MANAGEMENT_KEY": "CPA 管理接口密钥",
     "EXTRACT_LINK_CDK": "提链服务 CDK",
     "SUB2API_API_KEY": "sub2api 管理接口 API Key",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-import random
+import threading
 import time
 from dataclasses import dataclass
 from urllib.parse import unquote, urljoin, urlparse
@@ -12,8 +12,72 @@ from urllib.parse import unquote, urljoin, urlparse
 import requests
 
 from config import roxybrowser as _cfg
+from core.humanize import pacing_rng
 
 logger = logging.getLogger(__name__)
+
+# Roxy 本地端在同一时间只接受一个环境创建操作。注册线程池并发提交时，
+# 若多个线程同时 POST /browser/create，后到请求会返回“正在创建中，请稍等”。
+# 进程内串行化创建，并且只对这个明确的“未创建、请稍等”响应做有限重试；
+# create 超时等结果不确定的错误仍不重试，避免产生孤儿环境。
+_ROXY_CREATE_LOCK = threading.Lock()
+_ROXY_CREATE_BUSY_ATTEMPTS = 5
+_ROXY_CREATE_BUSY_DELAY = 2.0
+_ROXY_CREATE_CAPACITY_ATTEMPTS = 60
+_ROXY_CREATE_CAPACITY_DELAY = 2.0
+_ROXY_PROFILE_CAPACITY = threading.Condition()
+_ROXY_ACTIVE_PROFILE_SLOTS = 0
+
+
+def _is_explicit_create_busy_error(exc: Exception) -> bool:
+    text = str(exc or "").strip().lower()
+    if "正在创建中" in text or "请稍等" in text:
+        return True
+    return "creat" in text and any(marker in text for marker in ("in progress", "busy", "please wait"))
+
+
+def _is_explicit_capacity_error(exc: Exception) -> bool:
+    text = str(exc or "").strip().lower()
+    if "窗口额度不足" in text:
+        return True
+    return "window" in text and any(marker in text for marker in ("limit", "quota", "capacity", "full"))
+
+
+def _profile_capacity_limit() -> int:
+    try:
+        return max(1, int(getattr(_cfg, "ROXY_MAX_CONCURRENT_PROFILES", 2) or 2))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _acquire_profile_capacity() -> None:
+    """等待 Roxy 窗口额度，避免线程数高于套餐额度时直接失败。"""
+    global _ROXY_ACTIVE_PROFILE_SLOTS
+    announced = False
+    with _ROXY_PROFILE_CAPACITY:
+        while _ROXY_ACTIVE_PROFILE_SLOTS >= _profile_capacity_limit():
+            if not announced:
+                logger.info(
+                    "[Roxy] 当前环境已达并发上限 %s，任务排队等待可用窗口",
+                    _profile_capacity_limit(),
+                )
+                announced = True
+            _ROXY_PROFILE_CAPACITY.wait(timeout=1.0)
+            # Web 注册任务在等待额度时仍响应“停止”操作；独立 CLI 调用没有任务上下文。
+            try:
+                from core.registration_service import check_stop_requested
+
+                check_stop_requested()
+            except ImportError:
+                pass
+        _ROXY_ACTIVE_PROFILE_SLOTS += 1
+
+
+def _release_profile_capacity() -> None:
+    global _ROXY_ACTIVE_PROFILE_SLOTS
+    with _ROXY_PROFILE_CAPACITY:
+        _ROXY_ACTIVE_PROFILE_SLOTS = max(0, _ROXY_ACTIVE_PROFILE_SLOTS - 1)
+        _ROXY_PROFILE_CAPACITY.notify_all()
 
 
 @dataclass
@@ -24,6 +88,7 @@ class RoxyOpenResult:
     webdriver_url: str | None = None
     ws_endpoint: str | None = None
     created_by_run: bool = False
+    capacity_slot_acquired: bool = False
 
 
 def _strip_slashes(value: str) -> str:
@@ -122,42 +187,6 @@ def _project_id_value() -> str | int:
     return int(raw) if raw.isdigit() else raw
 
 
-def _apply_data_saver_open_args(params: dict) -> dict:
-    """在 Roxy 启动参数中尽早关闭图片加载，覆盖无扩展名图片 URL。
-
-    Network.setBlockedURLs 只能按 URL 后缀拦截，而 Roxy 浏览器在 Selenium 连接
-    前就已经启动；使用 Chromium 开关可以让图片在首个页面请求前就被禁用。该开关
-    只在用户明确开启省流量模式且包含 image 类型时追加。
-    """
-    try:
-        from config import browser as _browser_cfg
-
-        if not bool(getattr(_browser_cfg, "BROWSER_DATA_SAVER_MODE", False)):
-            return params
-        raw_types = getattr(_browser_cfg, "BROWSER_DATA_SAVER_BLOCKED_RESOURCE_TYPES", [])
-        if isinstance(raw_types, str):
-            types = {item.strip().lower() for item in raw_types.replace(",", "\n").splitlines() if item.strip()}
-        else:
-            types = {str(item or "").strip().lower() for item in (raw_types or []) if str(item or "").strip()}
-        if "image" not in types and "images" not in types and "img" not in types:
-            return params
-
-        current = params.get("args")
-        if isinstance(current, (list, tuple)):
-            args = list(current)
-        elif current:
-            args = [str(current)]
-        else:
-            args = []
-        switch = "--blink-settings=imagesEnabled=false"
-        if switch not in args:
-            args.append(switch)
-        params["args"] = args
-    except Exception as exc:
-        logger.debug("[Roxy] 添加省流量图片启动参数失败，继续使用原参数：%s", exc)
-    return params
-
-
 def _random_roxy_os() -> str:
     raw = str(getattr(_cfg, "ROXY_RANDOM_OS_CHOICES", "Windows,macOS") or "Windows,macOS")
     choices = [
@@ -170,19 +199,23 @@ def _random_roxy_os() -> str:
     choices = [x for x in choices if x in valid]
     if not choices:
         choices = ["Windows", "macOS"]
-    return random.choice(choices)
+    rng = pacing_rng()
+    return rng.choice(choices)
 
 
 def _random_roxy_profile_name() -> str:
     prefix = str(getattr(_cfg, "ROXY_PROFILE_NAME_PREFIX", "rb") or "rb").strip() or "rb"
     # Roxy 环境名每次创建都不同：前缀 + 毫秒时间戳 + 随机 4 位十六进制。
-    return f"{prefix}-{int(time.time() * 1000)}-{random.randrange(0x10000):04x}"
+    rng = pacing_rng()
+    return f"{prefix}-{int(time.time() * 1000)}-{rng.randrange(0x10000):04x}"
 
 
 class RoxyBrowserClient:
     def __init__(self, api_base: str | None = None, token: str | None = None):
         self.api_base = (api_base or _cfg.ROXY_API_BASE).strip()
         self.token = (token if token is not None else _cfg.ROXY_API_TOKEN).strip()
+        self._runtime_workspace_id: str | int = ""
+        self._runtime_project_id: str | int = ""
         self.http = requests.Session()
         if self.token:
             # 官方文档要求所有接口请求头必须加 token。这里同时兼容 token / Authorization。
@@ -410,8 +443,53 @@ class RoxyBrowserClient:
 
         return {"ok": False, "items": [], "errors": errors}
 
-    def create_profile(self, payload: dict | None = None) -> str:
+    @staticmethod
+    def _api_id(value: object) -> str | int:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        return int(text) if text.isdigit() else text
+
+    def _active_workspace_id(self) -> str | int:
+        return self._runtime_workspace_id or _workspace_id_value()
+
+    def _active_project_id(self) -> str | int:
+        return self._runtime_project_id or _project_id_value()
+
+    def _resolve_workspace_selection(self, body: dict) -> tuple[str | int, str | int]:
+        """在创建前校验团队/项目，唯一可用项时自动替换过期保存值。"""
+        configured_workspace = str(body.get("workspaceId") or _workspace_id_value() or "").strip()
+        configured_project = str(body.get("projectId") or _project_id_value() or "").strip()
+        try:
+            result = self.list_workspaces()
+            items = [item for item in (result.get("items") or []) if isinstance(item, dict)]
+        except Exception as exc:
+            logger.warning("[Roxy] 获取可用团队/项目失败，沿用已保存配置：%s", exc)
+            items = []
+
+        selected = None
+        for item in items:
+            item_workspace = str(item.get("id") or "").strip()
+            item_project = str(item.get("projectId") or "").strip()
+            if item_workspace == configured_workspace and (not configured_project or item_project == configured_project):
+                selected = item
+                break
+        if selected is None and len(items) == 1:
+            selected = items[0]
+            logger.warning("[Roxy] 保存的团队/项目不可用，已自动切换到当前唯一可用项")
+
+        if selected is not None:
+            workspace_id = self._api_id(selected.get("id"))
+            project_id = self._api_id(selected.get("projectId"))
+        else:
+            workspace_id = self._api_id(configured_workspace)
+            project_id = self._api_id(configured_project)
+        return workspace_id, project_id
+
+    def create_profile(self, payload: dict | None = None, proxy: str | None = None) -> str:
         body = dict(getattr(_cfg, "ROXY_PROFILE_CREATE_PAYLOAD", {}) or {})
+        if payload:
+            body.update(payload)
         random_name_enabled = bool(getattr(_cfg, "ROXY_RANDOM_PROFILE_NAME_ON_CREATE", True))
         if random_name_enabled:
             # 覆盖 ROXY_PROFILE_CREATE_PAYLOAD 里的固定 name，避免所有 Roxy 窗口同名。
@@ -430,38 +508,64 @@ class RoxyBrowserClient:
             default_os_version = str(getattr(_cfg, "ROXY_DEFAULT_OS_VERSION", "") or "").strip()
             if default_os_version:
                 body.setdefault("osVersion", default_os_version)
-        workspace_id = _workspace_id_value()
+        random_fingerprint_enabled = bool(getattr(_cfg, "ROXY_RANDOM_FINGERPRINT_ON_CREATE", True))
+        follow_proxy_ip = bool(getattr(_cfg, "ROXY_FINGERPRINT_FOLLOW_PROXY_IP", True))
+        native_only = bool(getattr(_cfg, "ROXY_NATIVE_FINGERPRINT_ONLY", True))
+        finger_info = body.get("fingerInfo")
+        finger_info = dict(finger_info) if isinstance(finger_info, dict) else {}
+        if random_fingerprint_enabled:
+            # Roxy 官方 fingerInfo.randomFingerprint 会按系统/内核生成匹配的随机环境参数。
+            # 原生模式只传随机指纹开关，不把旧 UA/WebRTC/语言等局部覆盖混进新画像。
+            # 关闭原生模式时仍保留高级用户显式配置的 fingerInfo 字段。
+            if native_only:
+                finger_info = {}
+            finger_info["randomFingerprint"] = True
+        if follow_proxy_ip:
+            # Roxy 官方 API 的四个联动字段：语言、界面语言、时区和地理位置
+            # 都按当前 proxyInfo 出口匹配，避免只随机硬件却保留异地语言/时区。
+            finger_info.update({
+                "isLanguageBaseIp": True,
+                "isDisplayLanguageBaseIp": True,
+                "isTimeZone": True,
+                "isPositionBaseIp": True,
+            })
+        if random_fingerprint_enabled or follow_proxy_ip:
+            body["fingerInfo"] = finger_info
+        workspace_id, project_id = self._resolve_workspace_selection(body)
         if workspace_id:
-            # Roxy 官方 /browser/create 要求 workspaceId。
-            body.setdefault("workspaceId", workspace_id)
-        project_id = _project_id_value()
+            # Roxy 官方 /browser/create 要求 workspaceId；以当前可访问团队为准。
+            body["workspaceId"] = workspace_id
+            self._runtime_workspace_id = workspace_id
         if project_id:
-            body.setdefault("projectId", project_id)
-        if bool(getattr(_cfg, "ROXY_CREATE_USE_PROXY_POOL", False)) and not body.get("proxyInfo"):
+            body["projectId"] = project_id
+            self._runtime_project_id = project_id
+        else:
+            body.pop("projectId", None)
+        # 调用方传入的是本次任务已经选择并预检过的会话代理，优先级最高；
+        # 不能被 profile payload 中残留的旧 proxyInfo 覆盖。
+        if proxy or (not body.get("proxyInfo") and bool(getattr(_cfg, "ROXY_CREATE_USE_PROXY_POOL", False))):
             from config import proxy as _proxy_cfg
 
-            proxy_url = _proxy_cfg.pick_proxy()
+            proxy_url = proxy or _proxy_cfg.pick_proxy()
             if proxy_url:
                 proxy_info = _proxy_url_to_roxy_info(proxy_url)
                 body["proxyInfo"] = proxy_info
                 logger.info(
-                    "[Roxy] 创建环境启用代理池：proxy=%s type=%s host=%s port=%s",
+                    "[Roxy] 创建环境启用内置代理：proxy=%s type=%s host=%s port=%s",
                     _mask_proxy(proxy_url),
                     proxy_info.get("protocol") or proxy_info.get("proxyCategory"),
                     proxy_info.get("host"),
                     proxy_info.get("port"),
                 )
             else:
-                logger.warning("[Roxy] 已启用 ROXY_CREATE_USE_PROXY_POOL，但 PROXY_POOL 为空，本次创建环境不设置代理")
-        if payload:
-            body.update(payload)
+                logger.warning("[Roxy] 已启用代理配置，但当前代理平台没有生成可用代理，本次创建环境不设置代理")
         if not body.get("workspaceId"):
             raise RuntimeError(
                 "Roxy 创建环境需要 workspaceId。请在 config/roxybrowser.py 或 WebUI 的 RoxyBrowser 配置中填写 ROXY_WORKSPACE_ID，"
                 "或直接在 ROXY_PROFILE_CREATE_PAYLOAD 里加入 {'workspaceId': '你的工作区ID'}。"
             )
         logger.info(
-            "[Roxy] 创建环境参数：workspaceId=%s projectId=%s name=%s random_name=%s os=%s osVersion=%s random_os=%s",
+            "[Roxy] 创建环境参数：workspaceId=%s projectId=%s name=%s random_name=%s os=%s osVersion=%s random_os=%s native_random_fingerprint=%s follow_proxy_ip=%s",
             body.get("workspaceId"),
             body.get("projectId") or "-",
             body.get("name") or "-",
@@ -469,8 +573,45 @@ class RoxyBrowserClient:
             body.get("os") or "-",
             body.get("osVersion") or "-",
             random_os_enabled,
+            bool((body.get("fingerInfo") or {}).get("randomFingerprint")) if isinstance(body.get("fingerInfo"), dict) else False,
+            follow_proxy_ip,
         )
-        result = self.request(_cfg.ROXY_CREATE_METHOD, _cfg.ROXY_CREATE_PATH, json_body=body)
+        with _ROXY_CREATE_LOCK:
+            result = None
+            attempt = 1
+            while True:
+                try:
+                    result = self.request(_cfg.ROXY_CREATE_METHOD, _cfg.ROXY_CREATE_PATH, json_body=body)
+                    if attempt > 1:
+                        logger.info(
+                            "[Roxy] 创建环境等待后成功：attempt=%s",
+                            attempt,
+                        )
+                    break
+                except Exception as exc:
+                    if _is_explicit_create_busy_error(exc):
+                        limit = _ROXY_CREATE_BUSY_ATTEMPTS
+                        delay = _ROXY_CREATE_BUSY_DELAY
+                        message = "本地端正在创建其他环境"
+                    elif _is_explicit_capacity_error(exc):
+                        limit = _ROXY_CREATE_CAPACITY_ATTEMPTS
+                        delay = _ROXY_CREATE_CAPACITY_DELAY
+                        message = "真实窗口额度已满，排队等待窗口释放"
+                    else:
+                        raise
+                    if attempt >= limit:
+                        raise
+                    logger.warning(
+                        "[Roxy] %s，%.1fs 后重试：attempt=%s/%s",
+                        message,
+                        delay,
+                        attempt,
+                        limit,
+                    )
+                    time.sleep(delay)
+                    attempt += 1
+        if result is None:  # pragma: no cover - 循环只会返回结果或抛出异常
+            raise RuntimeError("Roxy 创建环境未返回结果")
         profile_id = _first(result, [
             ("id",), ("dirId",), ("dir_id",), ("profile_id",), ("profileId",), ("browser_id",),
             ("data", "id"), ("data", "dirId"), ("data", "dir_id"),
@@ -488,7 +629,17 @@ class RoxyBrowserClient:
             return ""
         return text
 
-    def open_profile(self, profile_id: str | None = None) -> RoxyOpenResult:
+    def open_profile(self, profile_id: str | None = None, proxy: str | None = None) -> RoxyOpenResult:
+        _acquire_profile_capacity()
+        try:
+            opened = self._open_profile(profile_id=profile_id, proxy=proxy)
+            opened.capacity_slot_acquired = True
+            return opened
+        except Exception:
+            _release_profile_capacity()
+            raise
+
+    def _open_profile(self, profile_id: str | None = None, proxy: str | None = None) -> RoxyOpenResult:
         one_profile = bool(getattr(_cfg, "ROXY_ONE_PROFILE_PER_ACCOUNT", True))
         configured_pid = self._normalize_profile_id(profile_id if profile_id is not None else getattr(_cfg, "ROXY_PROFILE_ID", ""))
         if one_profile and configured_pid:
@@ -500,28 +651,31 @@ class RoxyBrowserClient:
         pid = configured_pid
         created_by_run = False
         if not pid:
-            pid = self.create_profile()
+            pid = self.create_profile(proxy=proxy)
             created_by_run = True
             logger.info("[Roxy] 已创建临时环境：%s", pid)
 
         path = str(_cfg.ROXY_OPEN_PATH).format(profile_id=pid)
         params = dict(getattr(_cfg, "ROXY_OPEN_EXTRA_PARAMS", {}) or {})
         # Roxy 官方 /browser/open body: {workspaceId, dirId, args, forceOpen, headless}
-        params.setdefault("workspaceId", _workspace_id_value())
+        params.setdefault("workspaceId", self._active_workspace_id())
         params.setdefault("dirId", int(pid) if str(pid).isdigit() else pid)
         params.setdefault("args", [])
         params.setdefault("forceOpen", True)
-        _apply_data_saver_open_args(params)
         # ROXY_OPEN_HEADLESS 是显式开关，优先级应高于 ROXY_OPEN_EXTRA_PARAMS，
         # 否则 extra 里残留 headless=False 会导致 WebUI 保存无头后仍弹窗口。
         params["headless"] = bool(getattr(_cfg, "ROXY_OPEN_HEADLESS", False))
         logger.info("[Roxy] open 参数：profile=%s headless=%s keep_open=%s", pid, params.get("headless"), getattr(_cfg, "ROXY_KEEP_BROWSER_OPEN", False))
-        result = self.request(
-            _cfg.ROXY_OPEN_METHOD,
-            path,
-            params=params if _cfg.ROXY_OPEN_METHOD.upper() == "GET" else None,
-            json_body=params if _cfg.ROXY_OPEN_METHOD.upper() != "GET" else None,
-        )
+        try:
+            result = self.request(
+                _cfg.ROXY_OPEN_METHOD,
+                path,
+                params=params if _cfg.ROXY_OPEN_METHOD.upper() == "GET" else None,
+                json_body=params if _cfg.ROXY_OPEN_METHOD.upper() != "GET" else None,
+            )
+        except Exception:
+            self._cleanup_created_profile_after_open_failure(pid, created_by_run)
+            raise
         debugger_address = self._extract_debugger_address(result)
         logger.info("[Roxy] open 返回摘要: debugger=%s raw=%s", debugger_address, json.dumps(result, ensure_ascii=False)[:800])
         webdriver_url = _first(result, [
@@ -535,6 +689,7 @@ class RoxyBrowserClient:
             ("data", "ws"), ("data", "wsEndpoint"), ("data", "ws_endpoint"), ("data", "debuggerWsUrl"),
         ]) or None
         if not debugger_address and not webdriver_url:
+            self._cleanup_created_profile_after_open_failure(pid, created_by_run)
             raise RuntimeError(f"Roxy 已打开环境但未返回 Selenium/调试地址，请检查 ROXY_OPEN_PATH 或接口响应: {result}")
         return RoxyOpenResult(
             pid,
@@ -545,13 +700,24 @@ class RoxyBrowserClient:
             created_by_run=created_by_run,
         )
 
+    def _cleanup_created_profile_after_open_failure(self, profile_id: str, created_by_run: bool) -> None:
+        """create 成功但 open 失败时回收临时环境，防止关闭环境继续占用套餐额度。"""
+        if not created_by_run or not profile_id:
+            return
+        self.close_profile(profile_id)
+        if (
+            bool(getattr(_cfg, "ROXY_ONE_PROFILE_PER_ACCOUNT", True))
+            and bool(getattr(_cfg, "ROXY_DELETE_PROFILE_AFTER_RUN", True))
+        ):
+            self.delete_profile(profile_id)
+
     def close_profile(self, profile_id: str) -> None:
         if not profile_id:
             return
         path = str(_cfg.ROXY_CLOSE_PATH).format(profile_id=profile_id)
         try:
             body = {
-                "workspaceId": _workspace_id_value(),
+                "workspaceId": self._active_workspace_id(),
                 "dirId": int(profile_id) if str(profile_id).isdigit() else profile_id,
             }
             self.request(
@@ -571,7 +737,7 @@ class RoxyBrowserClient:
         method = str(getattr(_cfg, "ROXY_DELETE_METHOD", "POST") or "POST")
         try:
             body = {
-                "workspaceId": _workspace_id_value(),
+                "workspaceId": self._active_workspace_id(),
                 "dirIds": [int(profile_id) if str(profile_id).isdigit() else profile_id],
             }
             self.request(
@@ -586,23 +752,32 @@ class RoxyBrowserClient:
 
     def cleanup_profile(self, opened: RoxyOpenResult | None) -> None:
         """任务结束清理：关闭窗口；一号一环境时删除本轮创建的 Profile。"""
-        if not opened or not opened.profile_id:
+        if not opened:
+            return
+        if not opened.profile_id:
+            if opened.capacity_slot_acquired:
+                opened.capacity_slot_acquired = False
+                _release_profile_capacity()
             return
         keep_open = bool(getattr(_cfg, "ROXY_KEEP_BROWSER_OPEN", False))
-        if not keep_open:
-            self.close_profile(opened.profile_id)
-
         should_delete = (
             bool(getattr(_cfg, "ROXY_ONE_PROFILE_PER_ACCOUNT", True))
             and bool(getattr(_cfg, "ROXY_DELETE_PROFILE_AFTER_RUN", True))
             and bool(opened.created_by_run)
         )
-        if should_delete:
-            # 删除前尽量确保已关闭；若 keep_open=True 则不删除，便于调试保留现场。
-            if keep_open:
+        # keep_open 会继续占用一个真实 Roxy 窗口，因此同时保留容量槽位。
+        if keep_open:
+            if should_delete:
                 logger.info("[Roxy] ROXY_KEEP_BROWSER_OPEN=True，跳过删除环境：%s", opened.profile_id)
-                return
-            self.delete_profile(opened.profile_id)
+            return
+        try:
+            self.close_profile(opened.profile_id)
+            if should_delete:
+                self.delete_profile(opened.profile_id)
+        finally:
+            if opened.capacity_slot_acquired:
+                opened.capacity_slot_acquired = False
+                _release_profile_capacity()
 
     @staticmethod
     def _extract_debugger_address(payload: dict) -> str | None:

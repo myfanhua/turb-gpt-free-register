@@ -58,6 +58,50 @@ def _registration_recheck_delay() -> float:
     return _float_setting("PLAN_CHECK_REGISTRATION_RECHECK_DELAY", 2.0, 0.0, 30.0)
 
 
+def resolve_account_plan_proxy(
+    *,
+    account_id: int,
+    email: str,
+    proxy: str | None,
+    trigger: str | None = None,
+) -> tuple[str | None, dict | None]:
+    """选择套餐查询代理；显式代理优先，否则复用注册任务的国家上下文。"""
+    if proxy is not None:
+        return str(proxy), None
+    try:
+        context = db.get_account_proxy_context(
+            account_id=account_id,
+            email=email,
+            include_running=str(trigger or "").strip().lower() == "registration_auto",
+        ) or {}
+    except Exception as exc:
+        logger.warning("[Plan] 读取账号注册代理上下文失败，沿用全局选路: %s", exc)
+        return None, None
+    if not context:
+        return None, None
+
+    provider = str(context.get("proxy_provider") or "").strip().lower()
+    country = str(context.get("proxy_country") or "").strip().upper()
+    try:
+        from core.proxy_provider import build_proxy
+
+        selected = build_proxy(
+            provider or None,
+            country or None,
+            job_id=context.get("job_id"),
+        )
+        if selected:
+            return selected, context
+    except Exception as exc:
+        logger.warning(
+            "[Plan] 生成账号注册代理失败，沿用全局选路: provider=%s country=%s error=%s",
+            provider or "-",
+            country or "-",
+            exc,
+        )
+    return None, context
+
+
 def _run_plan_check(
     *,
     account_id: int,
@@ -71,12 +115,22 @@ def _run_plan_check(
         if not db.mark_account_plan_check_running(account_id):
             return {"ok": False, "error": "账号已删除或套餐查询状态已被重置"}
 
+        selected_proxy, proxy_context = resolve_account_plan_proxy(
+            account_id=account_id,
+            email=email,
+            proxy=proxy,
+            trigger=trigger,
+        )
         _wait_for_rate_slot()
         result = check_account_plan(
             access_token,
-            proxy=proxy,
+            proxy=selected_proxy,
             timezone_offset_min=timezone_offset_min,
         )
+        if proxy_context:
+            result.setdefault("plan_check_proxy_provider", proxy_context.get("proxy_provider"))
+            result.setdefault("plan_check_proxy_country", proxy_context.get("proxy_country"))
+            result.setdefault("plan_check_proxy_context", "registration_job")
 
         recheck_delay = _registration_recheck_delay()
         should_recheck = (
@@ -92,10 +146,14 @@ def _run_plan_check(
             _wait_for_rate_slot()
             recheck_result = check_account_plan(
                 access_token,
-                proxy=proxy,
+                proxy=selected_proxy,
                 timezone_offset_min=timezone_offset_min,
                 max_attempts=1,
             )
+            if proxy_context:
+                recheck_result.setdefault("plan_check_proxy_provider", proxy_context.get("proxy_provider"))
+                recheck_result.setdefault("plan_check_proxy_country", proxy_context.get("proxy_country"))
+                recheck_result.setdefault("plan_check_proxy_context", "registration_job")
             if recheck_result.get("ok"):
                 result = recheck_result
             else:

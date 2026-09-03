@@ -8,7 +8,6 @@ import argparse
 import logging
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from typing import Callable
 
 from config import REGISTER_EMAIL, REGISTER_NAME  # 这两个一般不在 WebUI 改
 # 可热改的，按模块属性方式读
@@ -126,16 +125,18 @@ def generate_display_name() -> str:
     return random_display_name()
 
 
-def prepare_registration_inputs() -> tuple[str | None, str, str]:
+def prepare_registration_inputs() -> tuple[str, str, str]:
     """按 CLI 规则准备一次注册所需的邮箱、显示名和生日。"""
     email = REGISTER_EMAIL
     name = REGISTER_NAME
     birthday = generate_random_birthday()
 
-    # 邮箱：自动模式下先留空；浏览器驱动会在页面找到邮箱输入框后领取，
-    # protocol 驱动会在 run_registration 开始认证前领取。
+    # 邮箱：留空 + USE_EMAIL_SERVICE=True 时从 Outlook 池领取
     if not email:
-        if not _email_cfg.USE_EMAIL_SERVICE:
+        if _email_cfg.USE_EMAIL_SERVICE:
+            email = acquire_email()
+            logger.debug(f"自动获取邮箱: {email}")
+        else:
             email = input("请输入注册邮箱: ").strip()
 
     # 显示名称：未填则随机生成
@@ -147,22 +148,19 @@ def prepare_registration_inputs() -> tuple[str | None, str, str]:
         else:
             name = input("请输入显示名称: ").strip()
 
-    if not name:
-        raise RuntimeError("显示名称不能为空")
-    if not email and not _email_cfg.USE_EMAIL_SERVICE:
-        raise RuntimeError("邮箱不能为空")
+    if not all([email, name]):
+        raise RuntimeError("邮箱和名称不能为空")
 
     return email, name, birthday
 
 
 def run_registration(
-    email: str | None,
+    email: str,
     name: str,
     birthday: str | None = None,
     proxy: str = None,
     otp_code: str = None,
     batch_dir=None,
-    on_email_acquired: Callable[[str], None] | None = None,
 ):
     """
     执行完整的 ChatGPT 注册流程（OTP-only，无密码）。
@@ -194,7 +192,6 @@ def run_registration(
             proxy=proxy,
             otp_code=otp_code,
             batch_dir=batch_dir,
-            on_email_acquired=on_email_acquired,
         )
     if driver_mode in ("cloak", "cloakbrowser"):
         from core.cloakbrowser_registration import run_cloak_registration
@@ -205,7 +202,6 @@ def run_registration(
             proxy=proxy,
             otp_code=otp_code,
             batch_dir=batch_dir,
-            on_email_acquired=on_email_acquired,
         )
     if driver_mode in ("browser_use", "browseruse", "browser-use", "bu"):
         from core.browser_use_registration import run_browser_use_registration
@@ -216,7 +212,6 @@ def run_registration(
             proxy=proxy,
             otp_code=otp_code,
             batch_dir=batch_dir,
-            on_email_acquired=on_email_acquired,
         )
     if driver_mode in ("skyvern", "sv"):
         from core.skyvern_registration import run_skyvern_registration
@@ -227,23 +222,11 @@ def run_registration(
             proxy=proxy,
             otp_code=otp_code,
             batch_dir=batch_dir,
-            on_email_acquired=on_email_acquired,
         )
     if driver_mode not in ("protocol", "api", "http"):
         raise RuntimeError(
             f"不支持的 REGISTRATION_DRIVER={driver_mode!r}，可选 protocol / roxy / cloak / browser_use / skyvern"
         )
-
-    # 纯协议驱动没有“邮箱输入框”可等待，因此在创建 BrowserSession 前领取。
-    if not str(email or "").strip():
-        if not _email_cfg.USE_EMAIL_SERVICE:
-            raise RuntimeError(
-                "手动模式未配置邮箱。请在 WebUI 配置页设置 REGISTER_EMAIL，"
-                "或开启 USE_EMAIL_SERVICE 并从邮箱池领取。"
-            )
-        email = acquire_email()
-        if on_email_acquired:
-            on_email_acquired(email)
 
     # 创建浏览器会话（proxy=None 时自动从 config.PROXY_POOL 随机抽一个）
     session = BrowserSession(proxy=proxy)
@@ -622,11 +605,11 @@ def main():
 
     if args.workers > 1:
         batch_dir = create_batch_archive_dir(args.count, args.workers)
-        logger.info("[批量] 账号数据将直接写入 SQLite")
+        logger.info(f"[批量] 本批次归档目录：{batch_dir}")
         results = run_parallel_batch(args.count, args.workers, args.delay, args.continue_on_fail, batch_dir)
     else:
         batch_dir = create_batch_archive_dir(args.count, args.workers)
-        logger.info("[批量] 账号数据将直接写入 SQLite")
+        logger.info(f"[批量] 本批次归档目录：{batch_dir}")
         results = run_serial_batch(args.count, args.delay, args.continue_on_fail, batch_dir)
 
     success_count = sum(1 for r in results if _is_success(r))

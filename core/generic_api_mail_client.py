@@ -32,6 +32,7 @@ _CONTEXT_CACHE: dict[str, "GenericApiEmailAccount"] = {}
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _ACCOUNTS_FILE = _PROJECT_ROOT / "用于注册的API邮箱.txt"
 _YANGYANG_MESSAGES_RE = re.compile(r"/messages/([^/]+)/([^/?#]+)", re.IGNORECASE)
+_TIBOSB_SHARE_RE = re.compile(r"/share/([^/?#]+)", re.IGNORECASE)
 _YANGYANG_OPENAI_SUBJECT_HINTS = (
     "temporary chatgpt",
     "chatgpt verification code",
@@ -46,6 +47,19 @@ _YANGYANG_OPENAI_SUBJECT_HINTS = (
 
 class GenericApiMailError(RuntimeError):
     """通用 API 取码邮箱错误。"""
+
+
+def _normalize_code_url(url: str) -> str:
+    """把 tibosb 分享页地址转换成实际返回邮箱数据的公开 API 地址。"""
+    try:
+        parsed = urlparse(str(url or "").strip())
+        host = str(parsed.hostname or "").lower()
+        path = parsed.path or ""
+        if host == "api.tibosb.cloud" and path.startswith("/share/"):
+            return urlunparse(parsed._replace(path="/api/public" + path))
+    except Exception:
+        pass
+    return str(url or "").strip()
 
 
 def _cache_busted_url(url: str, attempt: int) -> str:
@@ -246,6 +260,97 @@ def _parse_generic_api_ts(value) -> float | None:
             return datetime.strptime(raw[:19], fmt).timestamp()
         except Exception:
             pass
+    return None
+
+
+def _parse_tibosb_share_url(code_url: str) -> tuple[str, str] | None:
+    """解析 tibosb 分享页，返回 (origin, token)。"""
+    try:
+        parsed = urlparse(code_url)
+    except Exception:
+        return None
+    if str(parsed.hostname or "").lower() != "api.tibosb.cloud":
+        return None
+    match = _TIBOSB_SHARE_RE.search(parsed.path or "")
+    if not match:
+        return None
+    origin = urlunparse((parsed.scheme or "http", parsed.netloc, "", "", "", ""))
+    token = unquote(match.group(1))
+    if not origin or not token:
+        return None
+    return origin.rstrip("/"), token
+
+
+def _fetch_tibosb_otp(
+    session: requests.Session,
+    code_url: str,
+    headers: dict,
+    after_ts: float | None = None,
+) -> tuple[str, dict] | None:
+    """通过 tibosb 分享页对应的 inbox/message API 读取最新 OpenAI OTP。"""
+    parsed = _parse_tibosb_share_url(code_url)
+    if not parsed:
+        return None
+    origin, token = parsed
+    token_q = quote(token, safe="")
+    inbox_url = f"{origin}/api/public/share/{token_q}/inbox?limit=30&days=7"
+    response = session.get(
+        inbox_url,
+        headers={**headers, "Accept": "application/json"},
+        timeout=20,
+        verify=False,
+    )
+    if response.status_code != 200:
+        logger.debug("[GenericAPI] tibosb inbox HTTP %s", response.status_code)
+        return None
+    payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) else None
+    messages = data.get("messages") if isinstance(data, dict) else None
+    if not isinstance(messages, list):
+        return None
+
+    items = [item for item in messages if isinstance(item, dict)]
+    items.sort(key=lambda item: _parse_generic_api_ts(item.get("date")) or 0, reverse=True)
+    for item in items:
+        msg_ts_raw = item.get("date")
+        msg_ts = _parse_generic_api_ts(msg_ts_raw)
+        if after_ts and msg_ts and msg_ts + 2 < after_ts:
+            continue
+        subject = str(item.get("subject") or "")
+        preview = str(item.get("preview") or "")
+        code = _extract_yangyang_openai_code(subject, preview)
+        msg_id = item.get("id")
+        if not code and msg_id:
+            query = urlencode({"uid": str(msg_id), "folder": str(item.get("folder") or "")})
+            detail_url = f"{origin}/api/public/share/{token_q}/message?{query}"
+            detail_response = session.get(
+                detail_url,
+                headers={**headers, "Accept": "application/json"},
+                timeout=20,
+                verify=False,
+            )
+            if detail_response.status_code == 200:
+                detail_payload = detail_response.json()
+                detail = detail_payload.get("data") if isinstance(detail_payload, dict) else None
+                if isinstance(detail, dict):
+                    subject = str(detail.get("subject") or subject)
+                    msg_ts_raw = detail.get("date") or msg_ts_raw
+                    msg_ts = _parse_generic_api_ts(msg_ts_raw) or msg_ts
+                    code = _extract_yangyang_openai_code(subject, str(detail.get("body") or detail.get("preview") or ""))
+        if code:
+            logger.info(
+                "[GenericAPI] tibosb inbox 提取到 OTP=%s, mail_id=%s ts=%s subject=%r",
+                code,
+                msg_id,
+                msg_ts_raw,
+                subject[:80],
+            )
+            return code, {
+                "mail_id": msg_id,
+                "received_at": msg_ts_raw,
+                "subject": subject,
+                "msg_ts": msg_ts,
+            }
     return None
 
 
@@ -491,8 +596,12 @@ def _fetch_inline_messages_page_otp(
 
 
 def pick_account() -> GenericApiEmailAccount:
-    """直接从 SQLite 邮箱库领取一个可用通用 API 邮箱。"""
+    """领取一个可用通用 API 邮箱。"""
     from core.db import claim_next_generic_api_email, generic_api_email_pool_summary
+
+    inserted, skipped = import_from_file()
+    if inserted:
+        logger.info(f"[GenericAPI] 已自动从 {_ACCOUNTS_FILE.name} 导入 {inserted} 个邮箱（跳过 {skipped} 个）")
 
     row = claim_next_generic_api_email()
     if row is None:
@@ -576,34 +685,44 @@ def fetch_latest_otp(
     best_otp: str | None = None
     best_seen_at: float = 0.0
     settle_until: float | None = None
+    stored_code_url = str(account.code_url or "")
+    code_url = _normalize_code_url(stored_code_url)
     logger.info(
         f"[GenericAPI] 开始轮询取码地址: {email}，"
         f"最长 {max_wait or _email_cfg.OTP_MAX_WAIT}s, settle={settle}s"
     )
-    is_yangyang = _parse_yangyang_code_url(account.code_url) is not None
+    is_tibosb = _parse_tibosb_share_url(stored_code_url) is not None
+    is_yangyang = not is_tibosb and _parse_yangyang_code_url(code_url) is not None
 
     attempt = 0
     while time.time() < deadline:
         attempt += 1
         try:
             session = requests.Session()
-            # 不修改 yangyang 的路径型 URL；其列表接口本身按邮件 ID 返回数据。
-            poll_url = account.code_url if is_yangyang else _cache_busted_url(account.code_url, attempt)
-            yy_result = _fetch_yangyang_otp(session, poll_url, headers, after_ts=after_ts) if is_yangyang else None
-            if yy_result:
-                code, yy_meta = yy_result
+            # tibosb / yangyang 都要读取列表与详情 API；其它来源直接轮询 code_url。
+            poll_url = code_url if (is_tibosb or is_yangyang) else _cache_busted_url(code_url, attempt)
+            special_result = None
+            special_source = ""
+            if is_tibosb:
+                special_source = "tibosb"
+                special_result = _fetch_tibosb_otp(session, stored_code_url, headers, after_ts=after_ts)
+            elif is_yangyang:
+                special_source = "yangyang"
+                special_result = _fetch_yangyang_otp(session, poll_url, headers, after_ts=after_ts)
+            if special_result:
+                code, special_meta = special_result
                 now_seen = time.time()
                 if not best_otp:
                     best_otp = code
                     best_seen_at = now_seen
                     settle_until = now_seen + settle
                     logger.info(
-                        f"[GenericAPI] 首次锁定 OTP={code}, source=yangyang mail_id={yy_meta.get('mail_id')} ts={yy_meta.get('received_at')}, "
+                        f"[GenericAPI] 首次锁定 OTP={code}, source={special_source} mail_id={special_meta.get('mail_id')} ts={special_meta.get('received_at')}, "
                         f"等 {settle}s 看取码接口是否出现更新验证码..."
                     )
                 elif code != best_otp:
                     logger.info(
-                        f"[GenericAPI] 发现更新 OTP={code}, source=yangyang mail_id={yy_meta.get('mail_id')} ts={yy_meta.get('received_at')}，"
+                        f"[GenericAPI] 发现更新 OTP={code}, source={special_source} mail_id={special_meta.get('mail_id')} ts={special_meta.get('received_at')}，"
                         f"替换之前的 {best_otp}, 重置 settle 计时"
                     )
                     best_otp = code
@@ -614,8 +733,8 @@ def fetch_latest_otp(
                 resp = None
                 text = ""
             else:
-                if is_yangyang:
-                    last_error = "yangyang 列表中尚未出现 after_ts 之后的新验证码邮件"
+                if is_tibosb or is_yangyang:
+                    last_error = f"{special_source} 列表中尚未出现 after_ts 之后的新验证码邮件"
                     resp = None
                     text = ""
                 else:

@@ -17,13 +17,13 @@ import string
 import time
 from datetime import date
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from config import browser_use as _cfg
 from config import twofa as _twofa_cfg
 from core.account_export import save_account_data, _post_register_dwell_seconds
 from core.browser_use_client import BrowserUseClient
-from core.email_provider import acquire_email_after_input, resolve_email_source, wait_for_otp
+from core.email_provider import resolve_email_source, wait_for_otp
 from core.humanize import delay as human_delay
 
 logger = logging.getLogger(__name__)
@@ -811,8 +811,8 @@ def _submit_email_step_pw(page, email: str) -> bool:
         return False
 
 
-def _wait_for_email_input_pw(page, timeout_ms: int | None = None):
-    """进入邮箱登录/注册方式并返回已找到的可见邮箱输入框。"""
+def _type_email(page, email: str, timeout_ms: int | None = None) -> None:
+    """Roxy 同款邮箱入口流程：先找输入框，找不到再按 DOM 属性点邮箱入口，全程人工逐字输入。"""
     fill_timeout_ms = timeout_ms if timeout_ms is not None else min(_timeout_ms(), 24000)
     end = time.time() + (fill_timeout_ms / 1000.0)
     clicked_email_option = False
@@ -821,7 +821,18 @@ def _wait_for_email_input_pw(page, timeout_ms: int | None = None):
     while time.time() < end:
         loc = _find_email_input_locator_pw(page, timeout_ms=1000)
         if loc is not None:
-            return loc
+            _human_fill_locator(
+                page,
+                loc,
+                email,
+                timeout=6000,
+                typing_delay_range=_cloud_typing_delay("email"),
+                per_char=True,
+            )
+            _human_pause(0.3, 0.8)
+            if not _submit_email_step_pw(page, email):
+                raise RuntimeError(f"邮箱已输入但提交失败，页面={_page_url(page) or '-'} state={_email_entry_state_pw(page)}")
+            return
 
         last_state = _email_entry_state_pw(page)
         if not clicked_email_option:
@@ -859,22 +870,6 @@ def _wait_for_email_input_pw(page, timeout_ms: int | None = None):
     raise RuntimeError(f"找不到邮箱输入框/邮箱入口，页面={_page_url(page) or '-'} state={last_state}")
 
 
-def _type_email(page, email: str, timeout_ms: int | None = None) -> None:
-    """找到邮箱输入框后人工逐字输入并提交邮箱。"""
-    loc = _wait_for_email_input_pw(page, timeout_ms=timeout_ms)
-    _human_fill_locator(
-        page,
-        loc,
-        email,
-        timeout=6000,
-        typing_delay_range=_cloud_typing_delay("email"),
-        per_char=True,
-    )
-    _human_pause(0.3, 0.8)
-    if not _submit_email_step_pw(page, email):
-        raise RuntimeError(f"邮箱已输入但提交失败，页面={_page_url(page) or '-'} state={_email_entry_state_pw(page)}")
-
-
 def _wait_after_email_submit_transition(page, context=None, timeout: int = 14) -> str:
     """提交邮箱后确认页面真的离开邮箱输入页，避免直接空等 OTP。"""
     end = time.time() + timeout
@@ -908,45 +903,16 @@ def _wait_after_email_submit_transition(page, context=None, timeout: int = 14) -
     return last_state
 
 
-def _submit_email_until_transition(
-    page,
-    context,
-    email: str | None,
-    *,
-    attempts: int = 2,
-    timeout_ms: int | None = None,
-    email_supplier: Callable[[], str] | None = None,
-) -> str:
+def _submit_email_until_transition(page, context, email: str, *, attempts: int = 2, timeout_ms: int | None = None) -> str:
     """
     填写并提交邮箱，并确认进入 password/OTP/后续页面。
     若仍停留 chatgpt.com/auth/login?email=...，重试一次，避免无效等待邮箱验证码。
     """
     last_state = "other"
-    current_email = str(email or "").strip()
     for attempt in range(1, max(1, attempts) + 1):
         _check_manual_stop()
-        logger.info("[BrowserUse] 提交邮箱尝试 %s/%s：%s", attempt, attempts, current_email or "页面找到输入框后分配")
-        if current_email:
-            _type_email(page, current_email, timeout_ms=timeout_ms)
-        else:
-            # 先确认页面已有可用输入框，再领取邮箱；不能把领取动作放在页面导航之前。
-            email_input = _wait_for_email_input_pw(page, timeout_ms=timeout_ms)
-            if email_supplier is None:
-                raise RuntimeError("已找到邮箱输入框，但未提供邮箱分配器")
-            current_email = str(email_supplier() or "").strip()
-            if not current_email:
-                raise RuntimeError("邮箱分配器返回了空邮箱地址")
-            _human_fill_locator(
-                page,
-                email_input,
-                current_email,
-                timeout=6000,
-                typing_delay_range=_cloud_typing_delay("email"),
-                per_char=True,
-            )
-            _human_pause(0.3, 0.8)
-            if not _submit_email_step_pw(page, current_email):
-                raise RuntimeError(f"邮箱已输入但提交失败，页面={_page_url(page) or '-'} state={_email_entry_state_pw(page)}")
+        logger.info("[BrowserUse] 提交邮箱尝试 %s/%s：%s", attempt, attempts, email)
+        _type_email(page, email, timeout_ms=timeout_ms)
         _check_manual_stop()
         last_state = _wait_after_email_submit_transition(page, context=context, timeout=10 if _fast_mode() else 16)
         logger.info("[BrowserUse] 邮箱提交后状态：%s url=%s", last_state, _page_url(page) or "-")
@@ -2545,14 +2511,13 @@ def _fetch_chatgpt_session(page, context=None, timeout: int = 120) -> dict:
 
 
 def run_browser_use_registration(
-    email: str | None,
+    email: str,
     name: str,
     birthday: str,
     proxy: str | None = None,
     otp_code: str | None = None,
     batch_dir: Path | None = None,
     cloud_provider: str = "browser_use",
-    on_email_acquired: Callable[[str], None] | None = None,
 ) -> dict:
     """Browser Use / Skyvern 云端浏览器注册入口。proxy 参数保留兼容。"""
     try:
@@ -2582,7 +2547,6 @@ def run_browser_use_registration(
     browser = None
     context = None
     page = None
-    network_traffic: dict[str, Any] | None = None
 
     logger.info(
         "[%s] 开始注册：%s proxyCountry=%s profileId=%s local_proxy_arg=%s",
@@ -2610,9 +2574,6 @@ def run_browser_use_registration(
             page = context.pages[0] if context.pages else context.new_page()
             page.set_default_timeout(_timeout_ms())
             page.set_default_navigation_timeout(_timeout_ms(getattr(_cfg, "BROWSER_USE_NAVIGATION_TIMEOUT", 90)))
-            # Browser Use/Skyvern 是云端浏览器，不安装本地省流量路由、网络流量
-            # 监听器或 JS 覆盖率采集，确保云端页面按原始流程运行且不增加 CDP 开销。
-            logger.info("[%s] 云端浏览器跳过省流量、网络监听和 JS 覆盖率采集", cloud_label)
             if _should_apply_cloud_automation_mask(provider_prefix):
                 _apply_cloud_browser_automation_mask(
                     context,
@@ -2640,26 +2601,11 @@ def run_browser_use_registration(
             _maybe_accept_cookies(page)
             _check_manual_stop()
 
-            def _email_supplier_after_input() -> str:
-                nonlocal email
-                _check_manual_stop()
-                email = acquire_email_after_input(email)
-                if on_email_acquired:
-                    on_email_acquired(email)
-                return email
-
             _t_email = _StepTimer("填写并提交邮箱")
             # OpenAI 可能在点击提交后立刻发 OTP，甚至邮件 ReceivedDateTime 早于 Playwright
             # 点击函数返回的本地时间；先记录时间戳，配合 _is_after 的时钟容忍，避免过滤掉首次验证码。
             otp_after_ts = time.time()
-            next_state = _submit_email_until_transition(
-                page,
-                context,
-                email,
-                attempts=2,
-                timeout_ms=20000,
-                email_supplier=_email_supplier_after_input,
-            )
+            next_state = _submit_email_until_transition(page, context, email, attempts=2, timeout_ms=20000)
             _t_email.done(f"state={next_state}")
             logger.info("[BrowserUse] 已提交邮箱：%s", email)
             _assert_not_external_idp(page, "提交邮箱后")
@@ -2856,8 +2802,6 @@ def run_browser_use_registration(
                     "message": f"{type(exc).__name__}: {str(exc)[:220]}",
                 }
 
-            # 云端浏览器不采集本地流量明细；注册后停留仅用于完成页面流程。
-            _post_register_dwell(page, context, provider_prefix=provider_prefix, email=email)
             account_id = save_account_data(
                 email=email,
                 access_token=access_token,
@@ -2877,9 +2821,9 @@ def run_browser_use_registration(
                     },
                     "registration_password": openai_password,
                     "codex": codex_result,
-                    "network_traffic": network_traffic,
                 },
             )
+            _post_register_dwell(page, context, provider_prefix=provider_prefix, email=email)
             _t_all.done("success")
             return {
                 "success": True,
@@ -2888,26 +2832,23 @@ def run_browser_use_registration(
                 "access_token": access_token,
                 "totp_secret": totp_secret,
                 "codex": codex_result,
-                "network_traffic": network_traffic,
                 "error": None,
             }
     except Exception as exc:
         logger.error("[BrowserUse] 注册失败：%s: %s", type(exc).__name__, exc)
         logger.debug("[BrowserUse] 失败详情", exc_info=True)
         try:
-            if email:
-                from core.email_provider import release_email
-                release_email(
-                    email,
-                    status="failed" if create_acknowledged else "available",
-                    note=f"BrowserUse注册失败: {str(exc)[:180]}",
-                )
+            from core.email_provider import release_email
+            release_email(
+                email,
+                status="failed" if create_acknowledged else "available",
+                note=f"BrowserUse注册失败: {str(exc)[:180]}",
+            )
         except Exception:
             pass
         return {
             "success": False,
             "email": email,
-            "network_traffic": network_traffic,
             "error": f"{type(exc).__name__}: {str(exc)[:300]}",
         }
     finally:

@@ -634,7 +634,7 @@ def create_codex_agent_identity(
     完整流程：从 ChatGPT session JWT 创建 Codex Agent Identity auth.json。
 
     :param access_token: ChatGPT session JWT（从 /api/auth/session 获取的 accessToken）
-    :param output_path: 可选的 auth.json 输出路径；不传时只返回内存对象
+    :param output_path: auth.json 输出路径，默认当前目录
     :param verify_task: 是否验证 task 注册（可选）
     :return: auth.json dict
     """
@@ -690,10 +690,13 @@ def create_codex_agent_identity(
         display_name=email,
     )
 
-    if output_path:
-        _log("Step 5", "已忽略本地输出路径，凭证由 SQLite 持久化", "OK")
-    else:
-        _log("Step 5", "auth.json 已返回内存对象，由 SQLite 持久化", "OK")
+    if output_path is None:
+        output_path = os.path.join(os.getcwd(), "auth.json")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(auth_json, f, indent=2, ensure_ascii=False)
+
+    _log("Step 5", f"已保存到 {output_path}", "OK")
 
     return auth_json
 
@@ -724,7 +727,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Codex Agent Identity 自动注册")
     parser.add_argument("--token", type=str, help="ChatGPT session JWT (accessToken)")
     parser.add_argument("--file", type=str, help="包含 accessToken 的 JSON 文件路径")
-    parser.add_argument("--output", "-o", type=str, default=None, help="可选输出路径；默认仅返回并由 SQLite 保存")
+    parser.add_argument("--output", "-o", type=str, default="auth.json", help="输出路径 (默认: auth.json)")
     parser.add_argument("--no-verify", action="store_true", help="跳过 task 注册验证")
     args = parser.parse_args()
 

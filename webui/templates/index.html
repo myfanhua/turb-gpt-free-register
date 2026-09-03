@@ -176,6 +176,9 @@
       max-width: 260px; white-space: normal; overflow-wrap: anywhere;
     }
     .agent-token-cell { margin-top: 4px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+    .trial-payment-cell-v2 { display:flex; align-items:center; gap:4px; flex-wrap:wrap; margin-top:4px; }
+    .trial-payment-cell-v2 .pill { min-width:auto; padding:2px 6px; font-size:11px; }
+    .trial-payment-label-v2 { color:var(--muted); font-size:11px; font-weight:700; }
     .agent-token-cell button { min-height:24px; border:1px solid #b9dfc9; border-radius:999px; background:#f0fbf5; color:#166534; padding:0 9px; font-size:12px; font-weight:800; cursor:pointer; }
     .agent-token-cell .agent-download { border-color:#bdd0ff; background:#f3f7ff; color:#1d4ed8; }
     .actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -198,8 +201,8 @@
       width: 100%; max-width: 100%; min-width: 0;
       max-height: 320px; overflow: auto; line-height: 1.5;
     }
-    #logPanel, #retryLogPanel, #liveLogPanel, #totpLogPanel, #qrPanel { min-width: 0; max-width: 100%; overflow-x: hidden; }
-    #logPanel:not(.hidden), #retryLogPanel:not(.hidden), #liveLogPanel:not(.hidden), #totpLogPanel:not(.hidden), #qrPanel:not(.hidden) {
+    #logPanel, #retryLogPanel, #liveLogPanel, #totpLogPanel, #qrPanel, #rebindReasonPanelV2 { min-width: 0; max-width: 100%; overflow-x: hidden; }
+    #logPanel:not(.hidden), #retryLogPanel:not(.hidden), #liveLogPanel:not(.hidden), #totpLogPanel:not(.hidden), #qrPanel:not(.hidden), #rebindReasonPanelV2:not(.hidden) {
       position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
       z-index: 1000; display: block; width: min(1100px, calc(100vw - 48px));
       max-height: min(760px, calc(100vh - 48px)); overflow: hidden;
@@ -207,9 +210,11 @@
       background: var(--surface); box-shadow: 0 0 0 9999px rgba(15,23,42,.45), 0 24px 70px rgba(15,23,42,.34);
     }
     #qrPanel:not(.hidden) { width: min(520px, calc(100vw - 48px)); text-align: center; }
-    #logPanel h3, #retryLogPanel h3, #liveLogPanel h3, #totpLogPanel h3, #qrPanel h3 { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
-    #logPanel h3 .btn, #retryLogPanel h3 .btn, #liveLogPanel h3 .btn, #totpLogPanel h3 .btn, #qrPanel h3 .btn { margin-left:auto; float:none !important; }
-    #logPanel .log, #retryLogPanel .log, #liveLogPanel .log, #totpLogPanel .log { max-height: calc(min(760px, calc(100vh - 48px)) - 74px); margin-top:0; }
+    #rebindReasonPanelV2:not(.hidden) { width: min(760px, calc(100vw - 48px)); }
+    #logPanel h3, #retryLogPanel h3, #liveLogPanel h3, #totpLogPanel h3, #qrPanel h3, #rebindReasonPanelV2 h3 { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+    #logPanel h3 .btn, #retryLogPanel h3 .btn, #liveLogPanel h3 .btn, #totpLogPanel h3 .btn, #qrPanel h3 .btn, #rebindReasonPanelV2 h3 .btn { margin-left:auto; float:none !important; }
+    #logPanel .log, #retryLogPanel .log, #liveLogPanel .log, #totpLogPanel .log, #rebindReasonPanelV2 .log { max-height: calc(min(760px, calc(100vh - 48px)) - 74px); margin-top:0; }
+    #rebindReasonSummaryV2 { white-space: pre-wrap; margin: 0 0 10px; }
     #qrPanel img { display:block; max-width:min(360px, calc(100vw - 96px)); max-height:420px; margin:12px auto; border:1px solid var(--line); border-radius:10px; background:#fff; }
     #qrPanel .qr-link { display:block; word-break:break-all; white-space:normal; font-size:12px; color:var(--muted); margin-top:8px; }
     .hidden { display: none !important; }
@@ -308,6 +313,29 @@
       width: 16px; height: 16px; flex-shrink: 0;
       stroke: currentColor; fill: none;
     }
+    .sidebar-contact {
+      margin: 0 2px 4px; padding: 9px 10px 10px;
+      border: 1px solid #e8eef5; border-radius: 10px; background: #f8fafc;
+    }
+    .sidebar-contact-label {
+      display: block; margin-bottom: 8px; color: #64748b;
+      font-size: 12px; font-weight: 700; line-height: 1.2;
+    }
+    .sidebar-contact-links { display: flex; align-items: center; gap: 8px; }
+    .sidebar-footer .sidebar-contact-link {
+      width: 34px; height: 34px; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid #dbe5ef; border-radius: 9px;
+      background: #fff; color: #64748b; text-decoration: none;
+      transition: color .15s ease, border-color .15s ease, background .15s ease, transform .15s ease;
+    }
+    .sidebar-footer .sidebar-contact-link:hover {
+      color: var(--sidebar-accent); border-color: #b8d0f2; background: #eff6ff;
+      transform: translateY(-1px);
+    }
+    .sidebar-contact-icon { width: 18px; height: 18px; fill: currentColor; }
+    .sidebar-contact-icon.qq { fill: none; stroke: currentColor; stroke-width: 1.7; }
+    .sidebar-contact-icon.qq text { fill: currentColor; stroke: none; font-size: 7px; font-weight: 800; }
     .sidebar-logout { margin: 0; }
     .sidebar-logout button {
       width: 100%; display: flex; align-items: center; gap: 10px;
@@ -331,6 +359,36 @@
       display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
       padding: 16px;
     }
+    .jobs-proxybar-v2 {
+      display: flex; align-items: flex-end; justify-content: space-between; gap: 16px;
+      flex-wrap: wrap; padding: 14px 16px;
+      border-bottom: 1px solid #ebeef5; background: #f8fbff;
+    }
+    .jobs-proxybar-v2-intro { min-width: 220px; flex: 1 1 300px; }
+    .jobs-proxybar-v2-title {
+      color: #1d4ed8; font-size: 14px; font-weight: 700; line-height: 1.4;
+    }
+    .jobs-proxybar-v2-help {
+      margin-top: 4px; color: #64748b; font-size: 12px; line-height: 1.45;
+    }
+    .jobs-proxybar-v2-controls {
+      display: flex; align-items: flex-end; gap: 10px; flex: 1 1 520px;
+    }
+    .jobs-proxybar-v2-field {
+      display: flex; flex-direction: column; gap: 5px; min-width: 150px; flex: 1;
+      color: #475569; font-size: 12px; font-weight: 700;
+    }
+    .jobs-proxybar-v2-field select {
+      width: 100%; height: 38px; min-height: 38px; margin: 0; padding: 0 10px;
+      border: 1px solid #cbd5e1; border-radius: 6px; background: #fff;
+      color: #334155; font-size: 13px; box-sizing: border-box;
+    }
+    .jobs-proxybar-v2-field select:focus { outline: none; border-color: #377DFF; box-shadow: 0 0 0 2px rgba(55,125,255,.12); }
+    .jobs-proxybar-v2-status {
+      min-width: 180px; color: #64748b; font-size: 12px; line-height: 1.45; padding-bottom: 4px;
+    }
+    .jobs-proxybar-v2-status.is-ready { color: #166534; }
+    .jobs-proxybar-v2-status.is-blocked { color: #b45309; }
     .jobs-toolbar-v2 .jobs-tb-btn {
       min-height: 40px; border: 1px solid #dcdfe6; border-radius: 6px;
       background: #fff; color: #606266; padding: 8px 18px;
@@ -578,8 +636,9 @@
     }
     .jobs-table-v2 .col-status { width: 110px; }
     .jobs-table-v2 .col-email { min-width: 200px; width: 24%; }
+    .jobs-table-v2 .col-proxy { width: 112px; }
+    .jobs-table-v2 .col-country { width: 92px; }
     .jobs-table-v2 .col-time { width: 170px; }
-    .jobs-table-v2 .col-traffic { width: 120px; white-space: nowrap; }
     .jobs-table-v2 .col-error { width: auto; min-width: 160px; }
     .jobs-table-v2 .col-actions {
       width: 168px; overflow: visible; text-overflow: clip; white-space: nowrap;
@@ -717,7 +776,7 @@
     .accounts-table-v2-wrap { overflow: auto; padding: 0; }
     .accounts-table-v2 {
       width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 14px;
-      min-width: 1280px;
+      min-width: 1390px;
     }
     .accounts-table-v2 th, .accounts-table-v2 td {
       padding: 12px 12px; border-bottom: 1px solid #ebeef5;
@@ -742,6 +801,7 @@
     .accounts-table-v2 .col-password { width: 120px; }
     .accounts-table-v2 .col-plan { width: 120px; }
     .accounts-table-v2 .col-note { width: 140px; }
+    .accounts-table-v2 .col-country { width: 110px; }
     .accounts-table-v2 .col-small { width: 170px; }
     .accounts-table-v2 .col-status { width: 100px; }
     .accounts-table-v2 .col-agent { width: 140px; }
@@ -976,6 +1036,17 @@
     #accountsToolbarV2 .jobs-tb-btn {
       min-height: 32px; padding: 0 12px; font-size: 13px;
     }
+    .account-actions-primary { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .account-actions-advanced { flex: 1 1 100%; border: 1px solid #e2e8f0; border-radius: 8px; background: #fff; }
+    .account-actions-advanced > summary {
+      min-height: 38px; padding: 0 12px; display: flex; align-items: center; gap: 8px;
+      color: #475569; font-size: 13px; font-weight: 700; cursor: pointer; list-style: none;
+    }
+    .account-actions-advanced > summary::-webkit-details-marker { display: none; }
+    .account-actions-advanced > summary::after { content: '展开'; margin-left: auto; color: #94a3b8; font-size: 11px; font-weight: 600; }
+    .account-actions-advanced[open] > summary::after { content: '收起'; }
+    .account-actions-advanced[open] > summary { border-bottom: 1px solid #e2e8f0; }
+    .account-actions-advanced-body { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px; }
     .accounts-filter-v2 {
       display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap;
       padding: 16px 16px 0;
@@ -986,7 +1057,7 @@
       background: #fafbfc;
     }
     .accounts-filter-v2 .acc-v2-search-wrap {
-      flex: 0 1 260px; width: 260px; max-width: 100%; min-width: 200px; padding: 4px 8px;
+      flex: 0 1 320px; width: 320px; max-width: 100%; min-width: 200px; padding: 4px 8px;
     }
     .accounts-filter-v2 .acc-v2-search-wrap input {
       width: 100%; min-width: 0; min-height: 32px !important; margin: 0;
@@ -1048,13 +1119,6 @@
     .accounts-filter-v2 .el-input-number__increase svg,
     .accounts-filter-v2 .el-input-number__decrease svg {
       width: 11px; height: 11px;
-    }
-    @media (max-width: 900px) {
-      .accounts-filter-v2 { flex-wrap: wrap; }
-      .accounts-filter-v2 .acc-v2-btn-group { flex-wrap: wrap; }
-      .accounts-filter-v2 .acc-v2-search-wrap {
-        flex-basis: 100%; width: 100%;
-      }
     }
     #accountsToolbarV2 { padding-top: 12px; }
 
@@ -1273,6 +1337,107 @@
 
 
     /* ---- 邮箱池 ---- */
+    .rebind-resource-panel-v2 {
+      margin-bottom: 14px; border: 1px solid #dbe7f6; border-radius: 10px; background: #fff;
+      box-shadow: 0 0 12px rgba(0,0,0,.035); overflow: hidden;
+    }
+    .rebind-resource-head-v2 {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 14px;
+      padding: 16px 18px 10px; border-bottom: 1px solid #edf3fb;
+    }
+    .rebind-resource-head-v2 h2 { margin: 0; color: #1f2937; font-size: 16px; line-height: 1.4; }
+    .rebind-resource-head-v2 p { margin: 4px 0 0; color: #718096; font-size: 12px; line-height: 1.5; }
+    .rebind-resource-detected-v2 {
+      flex: 0 0 auto; min-height: 28px; padding: 5px 10px; border: 1px solid #b9dfc9;
+      border-radius: 999px; background: #edf8f1; color: #166534; font-size: 12px; font-weight: 800;
+    }
+    .rebind-resource-detected-v2.is-empty { border-color: #f3d99b; background: #fff7e6; color: #92600a; }
+    .rebind-resource-body-v2 { padding: 14px 18px 16px; }
+    .rebind-resource-grid-v2 {
+      display: grid; grid-template-columns: minmax(260px, 1fr) 160px auto;
+      align-items: end; gap: 10px;
+    }
+    .rebind-resource-field-v2 { display: grid; gap: 5px; min-width: 0; }
+    .rebind-resource-field-v2 > span { color: #667085; font-size: 12px; font-weight: 800; }
+    .rebind-resource-field-v2 input, .rebind-resource-field-v2 select {
+      width: 100%; min-height: 38px; box-sizing: border-box; margin: 0; padding: 7px 10px;
+      border: 1px solid #dcdfe6; border-radius: 6px; background: #fff; color: #606266; font: inherit;
+      font-size: 13px; outline: none;
+    }
+    .rebind-resource-field-v2 input:focus, .rebind-resource-field-v2 select:focus { border-color: #409eff; box-shadow: 0 0 0 2px rgba(64,158,255,.12); }
+    .rebind-resource-help-v2 { min-height: 18px; margin-top: 9px; color: #718096; font-size: 12px; line-height: 1.5; }
+    .rebind-resource-status-v2 { margin-top: 10px; color: #475467; font-size: 12px; white-space: pre-wrap; }
+    .rebind-resource-status-v2.is-error { color: #b42318; }
+    .rebind-resource-status-v2.is-success { color: #166534; }
+    @media (max-width: 980px) { .rebind-resource-grid-v2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 560px) { .rebind-resource-grid-v2 { grid-template-columns: 1fr; } .rebind-resource-detected-v2 { display: none; } }
+    .rebind-trial-panel-v2 {
+      border: 1px solid #ebeef5; border-radius: 10px; background: #fff;
+      box-shadow: 0 0 12px rgba(0,0,0,.04); overflow: hidden;
+    }
+    .rebind-trial-head-v2 {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 14px;
+      padding: 16px 18px 12px; border-bottom: 1px solid #edf3fb;
+    }
+    .rebind-trial-head-v2 h2 { margin: 0; color: #1f2937; font-size: 16px; line-height: 1.4; }
+    .rebind-trial-head-v2 p { margin: 4px 0 0; color: #718096; font-size: 12px; line-height: 1.5; }
+    .rebind-trial-stats-v2 {
+      display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 14px 18px;
+      background: #f8fbff; border-bottom: 1px solid #edf3fb;
+    }
+    .rebind-trial-stat-v2 { padding: 10px 12px; border: 1px solid #dbe7f6; border-radius: 8px; background: #fff; }
+    .rebind-trial-stat-v2 span { display: block; color: #718096; font-size: 12px; }
+    .rebind-trial-stat-v2 strong { display: block; margin-top: 4px; color: #1d4ed8; font-size: 22px; line-height: 1.1; }
+    .rebind-trial-table-v2-wrap { overflow: auto; }
+    .rebind-trial-table-v2 { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+    .rebind-trial-table-v2 th, .rebind-trial-table-v2 td {
+      padding: 11px 14px; border-bottom: 1px solid #edf1f5; text-align: left; vertical-align: middle;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .rebind-trial-table-v2 th { color: #667085; font-size: 12px; font-weight: 800; background: #fbfcfe; }
+    .rebind-trial-table-v2 .rebind-trial-col-account { width: 92px; }
+    .rebind-trial-table-v2 .rebind-trial-col-email { width: 250px; }
+    .rebind-trial-table-v2 .rebind-trial-col-qualification { width: 180px; }
+    .rebind-trial-table-v2 .rebind-trial-col-time { width: 180px; }
+    .rebind-trial-table-v2 .rebind-trial-col-status { width: 180px; }
+    .rebind-trial-table-v2 .rebind-trial-col-actions { width: 220px; }
+    .rebind-trial-account-id-v2 { color: #1d4ed8; font-weight: 800; }
+    .rebind-trial-email-v2 { color: #1f2937; font-weight: 700; }
+    .rebind-trial-sub-v2 { margin-top: 3px; color: #98a2b3; font-size: 11px; }
+    .rebind-trial-empty-v2 { padding: 34px 18px !important; color: #98a2b3; text-align: center !important; white-space: normal !important; }
+    .rebind-trial-action-v2 {
+      min-height: 32px; padding: 6px 12px; border: 1px solid #377DFF; border-radius: 6px;
+      background: #377DFF; color: #fff; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer;
+    }
+    .rebind-trial-action-v2:hover:not(:disabled) { background: #5a94ff; border-color: #5a94ff; }
+    .rebind-trial-action-v2:disabled { border-color: #d7e5ff; background: #ebf2ff; color: #9cbfff; cursor: not-allowed; }
+    .rebind-trial-actions-v2 { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .rebind-trial-reason-v2 {
+      min-height: 32px; padding: 6px 10px; border: 1px solid #f3c6c4; border-radius: 6px;
+      background: #fff7f6; color: #b42318; font: inherit; font-size: 12px; font-weight: 800; cursor: pointer;
+    }
+    .rebind-trial-reason-v2:hover { background: #ffeceb; border-color: #e9a4a0; }
+    @media (max-width: 560px) { .rebind-trial-stats-v2 { grid-template-columns: 1fr; } }
+    .rebind-completed-panel-v2 {
+      margin-top: 14px; border: 1px solid #cfe7d7; border-radius: 10px; background: #fff;
+      box-shadow: 0 0 12px rgba(0,0,0,.035); overflow: hidden;
+    }
+    .rebind-completed-head-v2 {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 14px;
+      padding: 16px 18px 12px; border-bottom: 1px solid #e4f2e8;
+    }
+    .rebind-completed-head-v2 h2 { margin: 0; color: #166534; font-size: 16px; line-height: 1.4; }
+    .rebind-completed-head-v2 p { margin: 4px 0 0; color: #718096; font-size: 12px; line-height: 1.5; }
+    .rebind-completed-actions-v2 { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+    .rebind-completed-count-v2 { color: #166534; font-size: 12px; font-weight: 800; white-space: nowrap; }
+    .rebind-completed-output-v2 { display: grid; gap: 5px; padding: 12px 18px; background: #f5fbf7; border-bottom: 1px solid #e4f2e8; }
+    .rebind-completed-output-v2 label { color: #667085; font-size: 12px; font-weight: 800; }
+    .rebind-completed-output-v2 textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 76px; padding: 8px 10px; border: 1px solid #cfe7d7; border-radius: 6px; background: #fff; color: #344054; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .rebind-completed-table-v2-wrap { overflow: auto; }
+    .rebind-completed-table-v2 .rebind-trial-col-email { width: 250px; }
+    @media (max-width: 760px) { .rebind-completed-head-v2 { flex-direction: column; } .rebind-completed-actions-v2 { justify-content: flex-start; } }
+    .account-category-v2 { margin-bottom: 4px; }
+    .account-category-badge-v2 { font-size: 11px; }
     .outlook-panel-v2 {
       border: 1px solid #ebeef5; border-radius: 10px; background: #fff;
       box-shadow: 0 0 12px rgba(0,0,0,.04); overflow: hidden;
@@ -1825,22 +1990,62 @@
       line-height: 1.45; white-space: normal; overflow: visible;
       overflow-wrap: anywhere; word-break: break-word;
     }
-    .config-field-wrap { min-width: 0; }
-    .config-field-wrap > label.fld { margin-bottom: 0; }
-    .config-external-link {
-      display: inline-flex; align-items: center; gap: 4px; margin-top: 7px;
-      color: #377DFF; font-size: 12px; font-weight: 500; text-decoration: none;
+    .builtin-proxy-section-v2 {
+      margin-top: 18px; padding: 16px; border: 1px solid #c3d4fb;
+      border-radius: 10px; background: #f8fbff;
     }
-    .config-external-link:hover { text-decoration: underline; }
-    .config-recommendations {
-      margin-top: 9px; padding: 10px 12px;
-      border: 1px solid #e6f0ff; border-radius: 8px; background: #f7fbff;
-      font-size: 12px; line-height: 1.55; color: #606266;
+    .builtin-proxy-section-v2-head {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 14px;
     }
-    .config-recommendations-title { color: #303133; font-weight: 600; }
-    .config-recommendations-item { display: block; margin-top: 4px; }
-    .config-recommendations-item a { color: #377DFF; font-weight: 500; text-decoration: none; }
-    .config-recommendations-item a:hover { text-decoration: underline; }
+    .builtin-proxy-section-v2-title { color: #1e40af; font-size: 15px; font-weight: 700; }
+    .builtin-proxy-section-v2-help { margin-top: 4px; color: #64748b; font-size: 12px; line-height: 1.5; }
+    .builtin-proxy-provider-row {
+      display: grid; grid-template-columns: minmax(220px, 320px) 1fr;
+      gap: 14px; align-items: end; margin-top: 16px;
+    }
+    .builtin-proxy-provider-row .fld { margin: 0; }
+    .builtin-proxy-provider-row select { width: 100%; }
+    .builtin-proxy-cards-v2 { display: grid; gap: 12px; margin-top: 14px; }
+    .builtin-proxy-card-v2 {
+      display: none; padding: 14px; border: 1px solid #dbe5f4; border-radius: 8px; background: #fff;
+    }
+    .builtin-proxy-card-v2.is-active { display: block; }
+    .builtin-proxy-card-v2-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+    }
+    .builtin-proxy-card-v2-title { color: #303133; font-size: 14px; font-weight: 700; }
+    .builtin-proxy-card-v2-badge {
+      display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px;
+      border-radius: 999px; color: #64748b; background: #f1f5f9; font-size: 11px; font-weight: 700;
+    }
+    .builtin-proxy-card-v2-grid {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; margin-top: 12px;
+    }
+    .builtin-proxy-card-v2-grid .fld { margin: 0; min-width: 0; }
+    .builtin-proxy-card-v2-grid .fld > input,
+    .builtin-proxy-card-v2-grid .fld > select { width: 100%; }
+    .builtin-proxy-advanced-v2 {
+      margin-top: 12px; border-top: 1px solid #eef2f7; padding-top: 10px;
+    }
+    .builtin-proxy-advanced-v2 summary {
+      cursor: pointer; color: #475569; font-size: 12px; font-weight: 700; user-select: none;
+    }
+    .builtin-proxy-advanced-v2 .config-section-v2-body { margin-top: 12px; }
+    .builtin-proxy-test-row-v2 {
+      display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; margin-top: 14px;
+    }
+    .builtin-proxy-test-status-v2 { color: #64748b; font-size: 12px; line-height: 1.4; }
+    .builtin-proxy-test-status-v2.is-ready { color: #166534; }
+    .builtin-proxy-test-status-v2.is-error { color: #b42318; }
+    .builtin-proxy-note-v2 {
+      margin-top: 12px; padding-top: 12px; border-top: 1px solid #dbe5f4;
+      color: #64748b; font-size: 12px; line-height: 1.5;
+    }
+    @media (max-width: 760px) {
+      .jobs-proxybar-v2-controls { flex-basis: 100%; flex-wrap: wrap; }
+      .jobs-proxybar-v2-status { min-width: 100%; padding-bottom: 0; }
+      .builtin-proxy-provider-row, .builtin-proxy-card-v2-grid { grid-template-columns: 1fr; }
+    }
     .config-section-v2-actions {
       margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px;
     }
@@ -1883,13 +2088,6 @@
     .config-subtabs-v2 button.active { background: #ecf5ff; color: #377DFF; font-weight: 600; }
     .config-section-v2-subhelp {
       margin: 12px 0 0; font-size: 13px; color: #909399; line-height: 1.5;
-    }
-    .remail-promo-notice {
-      display: inline-flex; align-items: center; gap: 6px;
-      margin: 0 0 0 10px; padding: 8px 12px;
-      color: #b42318; background: #fff1f0; border: 1px solid #fecdca;
-      border-radius: 8px; font-size: 13px; font-weight: 700; line-height: 1.4;
-      vertical-align: middle; white-space: nowrap;
     }
     .config-switches-v2 + .config-section-v2-body {
 
@@ -1977,14 +2175,156 @@
       margin: 10px 0 0; max-width: 720px;
       font-size: 13px; line-height: 1.65; color: #909399;
     }
+    .config-filter-v2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+    .config-filter-v2 input {
+      width: min(420px, 100%); min-height: 38px; margin: 0; border-color: #cbd5e1;
+    }
+    .config-mode-v2 { display: inline-flex; padding: 3px; border: 1px solid #cbd5e1; border-radius: 8px; background: #f8fafc; }
+    .config-mode-v2 button {
+      min-height: 30px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent;
+      color: #64748b; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+    }
+    .config-mode-v2 button.is-active { color: #1d4ed8; background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.08); }
+    .config-filter-status-v2 { color: #64748b; font-size: 12px; }
+    .date-filter-icon { width: 14px; height: 14px; margin-right: 5px; vertical-align: -2px; stroke: currentColor; fill: none; stroke-width: 1.8; }
     @media (max-width: 700px) {
       .config-overview-v2 { padding: 18px 16px; }
       .config-overview-v2-title { font-size: 24px; }
     }
 
+    /* ---- Commercial operations workbench ---- */
+    :root {
+      --ops-primary: #1e3a5f;
+      --ops-action: #2563eb;
+      --ops-success: #16a34a;
+      --ops-bg: #f8fafc;
+      --ops-text: #0f172a;
+      --ops-border: #cbd5e1;
+      --ops-danger: #dc2626;
+    }
+    body { background: var(--ops-bg); color: var(--ops-text); }
+    .skip-link {
+      position: fixed; left: 16px; top: 10px; z-index: 2000;
+      transform: translateY(-160%); padding: 9px 13px; border-radius: 7px;
+      color: #fff; background: var(--ops-primary); text-decoration: none;
+      transition: transform .16s ease;
+    }
+    .skip-link:focus { transform: translateY(0); }
+    :where(button, a, input, select, textarea, summary):focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--ops-action) 42%, transparent);
+      outline-offset: 2px;
+    }
+    .sidebar-section-label {
+      margin: 14px 12px 5px; color: #94a3b8; font-size: 10px;
+      font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+    }
+    .sidebar-instance {
+      padding: 8px 12px 10px; color: #64748b; font-size: 11px; line-height: 1.5;
+    }
+    .sidebar-instance strong { display: block; color: #334155; font-size: 12px; }
+    .dashboard-header {
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 20px;
+      padding: 5px 0 2px;
+    }
+    .dashboard-page { display: grid; gap: 14px; }
+    .dashboard-eyebrow {
+      margin-bottom: 5px; color: var(--ops-action); font-size: 11px; font-weight: 800;
+      letter-spacing: .1em; text-transform: uppercase;
+    }
+    .dashboard-title { font-size: 28px; line-height: 1.2; letter-spacing: -.025em; }
+    .dashboard-subtitle { margin-top: 7px; color: #64748b; font-size: 13px; line-height: 1.55; }
+    .dashboard-refresh {
+      min-height: 38px; padding: 0 14px; border: 1px solid var(--ops-border); border-radius: 8px;
+      background: #fff; color: #334155; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+    }
+    .dashboard-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .dashboard-kpi {
+      min-width: 0; padding: 16px; border: 1px solid #e2e8f0; border-radius: 10px;
+      background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.035);
+    }
+    .dashboard-kpi-label { color: #64748b; font-size: 12px; font-weight: 650; }
+    .dashboard-kpi-value { display: block; margin-top: 10px; font-size: 25px; line-height: 1; }
+    .dashboard-kpi-note { margin-top: 8px; color: #94a3b8; font-size: 11px; }
+    .dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(330px, .85fr); gap: 14px; }
+    .ops-card {
+      min-width: 0; overflow: hidden; border: 1px solid #e2e8f0; border-radius: 10px;
+      background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.035);
+    }
+    .ops-card-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 15px 17px; border-bottom: 1px solid #e2e8f0;
+    }
+    .ops-card-head h2 { font-size: 15px; }
+    .ops-card-head p { margin-top: 3px; color: #64748b; font-size: 12px; }
+    .readiness-score {
+      display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 10px;
+      border-radius: 999px; font-size: 12px; font-weight: 800;
+    }
+    .readiness-score--ready { color: #166534; background: #dcfce7; }
+    .readiness-score--warning { color: #92400e; background: #fef3c7; }
+    .readiness-score--blocked { color: #991b1b; background: #fee2e2; }
+    .readiness-list { display: grid; }
+    .readiness-item {
+      display: grid; grid-template-columns: 10px minmax(120px, .3fr) 1fr auto;
+      gap: 10px; align-items: center; padding: 12px 17px; border-bottom: 1px solid #f1f5f9;
+    }
+    .readiness-item:last-child { border-bottom: 0; }
+    .readiness-dot { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; }
+    .readiness-item--ready .readiness-dot { background: var(--ops-success); }
+    .readiness-item--warning .readiness-dot { background: #d97706; }
+    .readiness-item--blocked .readiness-dot { background: var(--ops-danger); }
+    .readiness-label { color: #334155; font-size: 12px; font-weight: 800; }
+    .readiness-message { min-width: 0; color: #64748b; font-size: 12px; line-height: 1.45; }
+    .readiness-action {
+      min-height: 30px; padding: 0 10px; border: 1px solid #bfdbfe; border-radius: 7px;
+      background: #eff6ff; color: #1d4ed8; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+    }
+    .dashboard-quick-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; padding: 15px 17px; }
+    .dashboard-quick-action {
+      min-height: 54px; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 9px;
+      background: #fff; color: #334155; font: inherit; text-align: left; cursor: pointer;
+      transition: border-color .16s ease, background .16s ease;
+    }
+    .dashboard-quick-action:hover { border-color: #93c5fd; background: #f8fbff; }
+    .dashboard-quick-action strong { display: block; font-size: 13px; }
+    .dashboard-quick-action span { display: block; margin-top: 3px; color: #64748b; font-size: 11px; }
+    .dashboard-recent { width: 100%; border-collapse: collapse; table-layout: auto; }
+    .dashboard-recent th, .dashboard-recent td { padding: 10px 15px; font-size: 12px; }
+    .dashboard-empty { padding: 24px 17px; color: #64748b; font-size: 12px; text-align: center; }
+    .dashboard-error { padding: 14px 17px; color: #991b1b; background: #fff1f2; font-size: 12px; }
+    @media (max-width: 1100px) {
+      .dashboard-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .dashboard-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      :root { --sidebar-width: 76px; --page-gutter: 14px; }
+      .sidebar-brand { justify-content: center; padding: 0 10px; }
+      .sidebar-brand-title, .sidebar-item-label, .sidebar-section-label,
+      .sidebar-instance, .sidebar-logout span { display: none; }
+      .sidebar-contact { margin: 0; padding: 8px 0; border: 0; background: transparent; }
+      .sidebar-contact-label { display: none; }
+      .sidebar-contact-links { flex-direction: column; gap: 6px; }
+      .sidebar-footer .sidebar-contact-link { width: 36px; height: 36px; }
+      .app-sidebar .sidebar-nav button, .app-sidebar .sidebar-nav button.sidebar-item,
+      .sidebar-logout button { justify-content: center; padding: 11px; }
+      .sidebar-item-icon { width: 20px; height: 20px; }
+      .dashboard-header { align-items: stretch; flex-direction: column; }
+      .dashboard-refresh { align-self: flex-start; }
+      .readiness-item { grid-template-columns: 10px 1fr auto; }
+      .readiness-message { grid-column: 2 / -1; }
+    }
+    @media (max-width: 480px) {
+      .dashboard-kpis, .dashboard-quick-actions { grid-template-columns: 1fr; }
+      .dashboard-title { font-size: 23px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
+    }
+
   </style>
 </head>
 <body>
+<a class="skip-link" href="#main-content">跳到主要内容</a>
 <aside class="app-sidebar" aria-label="主导航">
   <div class="sidebar-brand">
     <svg class="sidebar-brand-icon" viewBox="0 0 44 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -1997,59 +2337,78 @@
       <path d="M22 3L38.928 12.75V35.25L22 45L5.072 35.25V12.75L22 3Z" fill="url(#sidebarLogoGrad)"/>
       <path d="M22 13L30.928 18.25V29.75L22 35L13.072 29.75V18.25L22 13Z" fill="white" fill-opacity="0.92"/>
     </svg>
-    <span class="sidebar-brand-title">GPT Registrator</span>
+    <span class="sidebar-brand-title">Operations Console</span>
   </div>
   <nav class="sidebar-nav">
-    <button type="button" data-tab="register" class="sidebar-item active">
+    <div class="sidebar-section-label">运营</div>
+    <button type="button" data-tab="dashboard" class="sidebar-item active">
+      <svg class="sidebar-item-icon" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+      </svg>
+      <span class="sidebar-item-label">工作台</span>
+    </button>
+    <button type="button" data-tab="register" class="sidebar-item">
       <svg class="sidebar-item-icon" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M12 5v14M5 12h14"/>
       </svg>
-      <span class="sidebar-item-label">注册</span>
+      <span class="sidebar-item-label">任务中心</span>
     </button>
     <button type="button" data-tab="accounts" class="sidebar-item">
       <svg class="sidebar-item-icon" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
       </svg>
-      <span class="sidebar-item-label">账号</span>
+      <span class="sidebar-item-label">账号管理</span>
     </button>
+    <div class="sidebar-section-label">资源与工具</div>
     <button type="button" data-tab="codex" class="sidebar-item">
       <svg class="sidebar-item-icon" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
       </svg>
-      <span class="sidebar-item-label">Codex 授权</span>
+      <span class="sidebar-item-label">授权工具</span>
     </button>
     <button type="button" data-tab="outlook" class="sidebar-item">
       <svg class="sidebar-item-icon" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><path d="M22 6l-10 7L2 6"/>
       </svg>
-      <span class="sidebar-item-label">邮箱池</span>
+      <span class="sidebar-item-label">资源管理</span>
     </button>
+    <button type="button" data-tab="rebind" class="sidebar-item">
+      <svg class="sidebar-item-icon" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20 7v5h-5"/><path d="M4 17v-5h5"/><path d="M6.5 9A7 7 0 0 1 20 12"/><path d="M17.5 15A7 7 0 0 1 4 12"/>
+      </svg>
+      <span class="sidebar-item-label">邮箱换绑</span>
+    </button>
+    <div class="sidebar-section-label">系统</div>
     <button type="button" data-tab="config" class="sidebar-item">
       <svg class="sidebar-item-icon" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
       </svg>
-      <span class="sidebar-item-label">配置</span>
+      <span class="sidebar-item-label">系统设置</span>
     </button>
   </nav>
   <div class="sidebar-footer">
-    <a href="https://t.me/+gu_cvEKq_vcyZWRl" target="_blank" rel="noopener noreferrer">
-      <svg class="sidebar-footer-icon" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>
-      </svg>
-      <span>TG 交流群</span>
-    </a>
-    <a href="https://github.com/myfanhua/turb-gpt-free-register" target="_blank" rel="noopener noreferrer">
-      <svg class="sidebar-footer-icon" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
-      </svg>
-      <span>Github 仓库</span>
-    </a>
-    <a href="/?ui=legacy" title="切换到历史版顶部导航 UI">
-      <svg class="sidebar-footer-icon" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M3 6h18M3 12h18M3 18h18"/>
-      </svg>
-      <span>切换老 UI</span>
-    </a>
+    <div class="sidebar-contact" aria-label="联系方式">
+      <span class="sidebar-contact-label">ai交流资源群 · QQ群：952990450</span>
+      <div class="sidebar-contact-links">
+        <a class="sidebar-contact-link" href="https://t.me/mzaijlq" target="_blank" rel="noopener noreferrer" aria-label="Telegram 交流群" title="Telegram 交流群">
+          <svg class="sidebar-contact-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M21.7 3.4 2.9 10.8c-1.3.5-1.3 1.2-.2 1.6l4.8 1.5 1.8 5.7c.2.7.6.8 1.1.3l2.5-2.4 4.8 3.5c.9.5 1.5.2 1.7-.8l3.1-14.7c.3-1.3-.5-1.9-1.6-1.4ZM9.4 13.5l8.9-6.2-7.1 7.8-.3 2.7-1.5-4.3Z"/>
+          </svg>
+        </a>
+        <a class="sidebar-contact-link" href="https://qm.qq.com/cgi-bin/qm/qr?group_code=952990450" target="_blank" rel="noopener noreferrer" aria-label="QQ 交流群 952990450" title="加入 QQ 群 952990450">
+          <svg class="sidebar-contact-icon qq" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7.4 13.9c-.9 1.2-1.4 2.3-1.4 3.1 0 .8.8 1.2 1.8 1.4-.1.3-.2.6-.2.9 0 .8 1 1.3 2.1 1.3h4.6c1.1 0 2.1-.5 2.1-1.3 0-.3-.1-.6-.2-.9 1-.2 1.8-.6 1.8-1.4 0-.8-.5-1.9-1.4-3.1"/>
+            <path d="M8.1 12.8c-.3-.7-.5-1.5-.5-2.3C7.6 7.7 9.5 5.4 12 5.4s4.4 2.3 4.4 5.1c0 .8-.2 1.6-.5 2.3"/>
+            <path d="M8.7 14.8c.9.6 2 .9 3.3.9s2.4-.3 3.3-.9"/>
+            <text x="12" y="11.9" text-anchor="middle">QQ</text>
+          </svg>
+        </a>
+      </div>
+    </div>
+    <div class="sidebar-instance">
+      <strong>本地运营实例</strong>
+      <span>Commercial preview · 仅本机</span>
+    </div>
     <form class="sidebar-logout" method="post" action="/logout">
       <button type="submit">
         <svg class="sidebar-footer-icon" viewBox="0 0 24 24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -2061,9 +2420,53 @@
   </div>
 </aside>
 
-<main>
+<main id="main-content" tabindex="-1">
+  <!-- ============ 工作台 ============ -->
+  <div id="tab-dashboard" class="dashboard-page">
+    <header class="dashboard-header">
+      <div>
+        <div class="dashboard-eyebrow">Operations overview</div>
+        <h1 class="dashboard-title">运营工作台</h1>
+        <p class="dashboard-subtitle">先确认运行准备度，再进入任务、账号和资源处理。</p>
+      </div>
+      <button type="button" class="dashboard-refresh" id="btnRefreshDashboard">刷新状态</button>
+    </header>
+
+    <section class="dashboard-kpis" aria-label="关键指标">
+      <article class="dashboard-kpi"><span class="dashboard-kpi-label">账号总数</span><strong class="dashboard-kpi-value" id="dashboardAccounts">0</strong><p class="dashboard-kpi-note">已进入账号库</p></article>
+      <article class="dashboard-kpi"><span class="dashboard-kpi-label">可用资源</span><strong class="dashboard-kpi-value" id="dashboardAvailable">0</strong><p class="dashboard-kpi-note">当前可分配邮箱</p></article>
+      <article class="dashboard-kpi"><span class="dashboard-kpi-label">活动任务</span><strong class="dashboard-kpi-value" id="dashboardActive">0</strong><p class="dashboard-kpi-note">排队、运行或停止中</p></article>
+      <article class="dashboard-kpi"><span class="dashboard-kpi-label">失败任务</span><strong class="dashboard-kpi-value" id="dashboardFailed">0</strong><p class="dashboard-kpi-note">需要人工复核</p></article>
+    </section>
+
+    <div class="dashboard-grid">
+      <section class="ops-card" aria-labelledby="readinessTitle">
+        <div class="ops-card-head">
+          <div><h2 id="readinessTitle">运行准备度</h2><p>只检查配置完整性，不调用外部服务。</p></div>
+          <span id="readinessScore" class="readiness-score readiness-score--warning">检查中</span>
+        </div>
+        <div id="readinessLive" aria-live="polite" class="readiness-list"><div class="dashboard-empty">正在检查本地配置…</div></div>
+      </section>
+
+      <section class="ops-card" aria-labelledby="quickActionsTitle">
+        <div class="ops-card-head"><div><h2 id="quickActionsTitle">快捷入口</h2><p>按实际工作流组织高频功能。</p></div></div>
+        <div class="dashboard-quick-actions">
+          <button type="button" class="dashboard-quick-action" data-go-tab="register"><strong>创建任务</strong><span>进入任务中心</span></button>
+          <button type="button" class="dashboard-quick-action" data-go-tab="accounts"><strong>处理账号</strong><span>筛选、检查与导出</span></button>
+          <button type="button" class="dashboard-quick-action" data-go-tab="outlook"><strong>管理资源</strong><span>查看邮箱池状态</span></button>
+          <button type="button" class="dashboard-quick-action" data-go-tab="config"><strong>系统设置</strong><span>修复准备度问题</span></button>
+        </div>
+      </section>
+    </div>
+
+    <section class="ops-card" aria-labelledby="recentJobsTitle">
+      <div class="ops-card-head"><div><h2 id="recentJobsTitle">最近任务</h2><p>显示最新六条任务，完整操作请前往任务中心。</p></div></div>
+      <div id="dashboardRecentJobs"><div class="dashboard-empty">正在加载任务…</div></div>
+    </section>
+  </div>
+
   <!-- ============ 注册 ============ -->
-  <div id="tab-register">
+  <div id="tab-register" class="hidden">
     <div class="register-overview">
       <h1 class="register-title">注册机</h1>
       <div class="stats">
@@ -2116,6 +2519,21 @@
     </div>
 
     <section class="jobs-panel-v2" id="jobsPanelV2" aria-label="注册任务">
+      <div class="jobs-proxybar-v2" id="jobsProxyBarV2">
+        <div class="jobs-proxybar-v2-intro">
+          <div class="jobs-proxybar-v2-title">内置代理</div>
+          <div class="jobs-proxybar-v2-help">每批任务固定代理平台和出口国家；账号、密码请在系统设置中测试连通并保存。</div>
+        </div>
+        <div class="jobs-proxybar-v2-controls">
+          <label class="jobs-proxybar-v2-field">代理平台
+            <select id="regProxyProviderV2" aria-label="注册代理平台"></select>
+          </label>
+          <label class="jobs-proxybar-v2-field">出口国家
+            <select id="regProxyCountryV2" aria-label="注册代理出口国家"></select>
+          </label>
+          <span class="jobs-proxybar-v2-status" id="regProxyStatusV2" aria-live="polite">正在加载代理平台…</span>
+        </div>
+      </div>
       <div class="jobs-toolbar-v2" id="jobsToolbarV2">
         <button type="button" class="jobs-tb-btn jobs-tb-btn--retry" id="btnRetrySelectedJobsV2" disabled title="重试选中的失败、已停止或已取消任务">重试选中</button>
         <button type="button" class="jobs-tb-btn jobs-tb-btn--danger" id="btnDeleteSelectedJobsV2" disabled title="删除选中的非运行中任务，并同时删除对应日志">删除选中</button>
@@ -2150,7 +2568,7 @@
         <table class="jobs-table-v2">
           <colgroup>
             <col class="col-check"><col class="col-id"><col class="col-status"><col class="col-email">
-            <col class="col-time"><col class="col-time"><col class="col-traffic"><col class="col-error"><col class="col-actions">
+            <col class="col-proxy"><col class="col-country"><col class="col-time"><col class="col-time"><col class="col-error"><col class="col-actions">
           </colgroup>
           <thead>
             <tr>
@@ -2158,9 +2576,10 @@
               <th class="col-id">ID</th>
               <th class="col-status">状态</th>
               <th class="col-email">邮箱</th>
+              <th class="col-proxy">代理平台</th>
+              <th class="col-country">国家</th>
               <th class="col-time">开始</th>
               <th class="col-time">完成</th>
-              <th class="col-traffic">流量</th>
               <th class="col-error">错误</th>
               <th class="col-actions">操作</th>
             </tr>
@@ -2196,7 +2615,16 @@
           </label>
           <button type="button" class="acc-v2-toggle" id="showArchivedAccountsV2" aria-pressed="false" title="默认只显示未归档账号；开启后单独查看归档账号">查看归档</button>
           <button type="button" class="acc-v2-toggle" id="showPlusAccountsOnlyV2" aria-pressed="false" title="只查询/显示已开通 Plus 的账号">已开通Plus</button>
-          <button type="button" class="acc-v2-toggle" id="showPlusTrialAccountsOnlyV2" aria-pressed="false" title="只查询/显示当前为 free 且可试用 Plus 的账号">可试用Plus</button>
+          <label class="acc-v2-inline" title="按账号主分类筛选；分类由查活和套餐结果自动推导">
+            <select id="accountCategoryFilterV2">
+              <option value="">全部分类</option>
+              <option value="deactivated">已废</option>
+              <option value="trial_eligible">有试用资格</option>
+              <option value="plus">已开通Plus</option>
+              <option value="free">普通Free</option>
+              <option value="unverified">待确认</option>
+            </select>
+          </label>
           <label class="acc-v2-inline" title="按账号状态筛选账号">
             <select id="codexStatusFilterV2">
               <option value="">全部状态</option>
@@ -2208,17 +2636,8 @@
               <option value="deactivated">账号废号</option>
             </select>
           </label>
-          <label class="acc-v2-inline" title="按账号 2FA/TOTP 状态筛选账号">
-            <select id="totpStatusFilterV2">
-              <option value="">2FA：全部</option>
-              <option value="enabled">2FA：已开启</option>
-              <option value="disabled">2FA：未开启</option>
-              <option value="pending">2FA：设置中</option>
-              <option value="failed">2FA：设置失败</option>
-            </select>
-          </label>
           <div class="acc-v2-date-select" id="dateSelectAccountsV2">
-            <button type="button" class="acc-v2-date-select-btn" id="btnDateFilterAccountsV2" title="按注册时间筛选日期范围">📅 日期筛选</button>
+            <button type="button" class="acc-v2-date-select-btn" id="btnDateFilterAccountsV2" title="按注册时间筛选日期范围"><svg class="date-filter-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><line x1="3" y1="9" x2="21" y2="9"/></svg>日期筛选</button>
             <div class="acc-v2-date-select-menu" id="dateFilterPanelAccountsV2"></div>
           </div>
           <div class="hidden">
@@ -2226,16 +2645,23 @@
             <input type="date" id="dateToAccountsV2">
           </div>
           <button type="button" class="jobs-tb-btn" id="btnRefreshAccountsV2" title="重新加载当前筛选条件和当前页账号列表">刷新账号</button>
+          <button type="button" class="jobs-tb-btn jobs-tb-btn--primary" id="btnCheckSelectedLiveTopV2" onclick="checkSelectedLive()" title="重新登录选中账号；成功且未封号则标记正常，并刷新最新 AT/accessToken">查活</button>
 
         </div>
       </div>
       <div class="jobs-toolbar-v2" id="accountsToolbarV2">
+        <div class="account-actions-primary">
         <div class="acc-v2-btn-group">
           <span class="acc-v2-btn-group-title">套餐/提链</span>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--primary" id="btnCheckSelectedLiveV2" onclick="checkSelectedLive()" title="重新登录选中账号；成功且未封号则标记正常，并刷新最新 AT/accessToken">查活</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--primary" id="btnCheckSelectedPlansV2" disabled title="查询选中账号当前套餐；free 账号会检查 Plus 试用资格">查套餐</button>
+          <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnCheckSelectedTrialPaymentsV2" disabled title="逐项探测 Momo、PayPal、GoPay；只创建 checkout 预览，不确认支付">查试用支付</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnExtractSelectedLinksV2" disabled title="给选中的 free(可Plus试用) 账号批量提链，类型按配置 PIX/UPI/KAKAO_PAY/IDEAL">提链</button>
         </div>
+        </div>
+        <details class="account-actions-advanced">
+          <summary>更多批量操作</summary>
+          <div class="account-actions-advanced-body">
         <div class="acc-v2-btn-group">
           <span class="acc-v2-btn-group-title">Codex</span>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--primary" id="btnRetrySelectedCodexV2" disabled title="给选中的账号批量补跑 Codex 授权">补跑</button>
@@ -2244,12 +2670,11 @@
         </div>
         <div class="acc-v2-btn-group">
           <span class="acc-v2-btn-group-title">批量</span>
-          <button type="button" class="jobs-tb-btn jobs-tb-btn--primary" id="btnSetupSelectedTotpV2" disabled title="给选中的账号批量开启 2FA，并在完成后写回 TOTP 密钥">批量开2FA</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnNoteSelectedAccountsV2" disabled title="给选中的账号统一设置备注，留空可清空备注">备注</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnCopySelectedLinesV2" disabled title="复制选中账号的完整整行，每个账号一行">复制行</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnCopySelectedTokensV2" disabled title="复制选中账号的 Token，每个账号一行">复制Token</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnCopySelectedEmailsV2" disabled title="复制选中账号的邮箱，每个账号一行">复制邮箱</button>
-          <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnDownloadSelectedTxtV2" disabled title="把选中账号的完整整行保存为 TXT 文件，每个账号一行">下载TXT</button>
+          <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnDownloadSelectedTxtV2" disabled title="固定格式：账号----密码----2FA----API地址；密码或2FA未设置时保留空字段">下载TXT</button>
           <button type="button" class="jobs-tb-btn" id="btnArchiveSelectedAccountsV2" disabled title="归档选中的账号；默认账号列表将不再查询/显示这些账号">归档选中</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--danger" id="btnDeleteSelectedAccountsV2" disabled title="删除选中的本地账号/token记录">删除</button>
         </div>
@@ -2258,12 +2683,14 @@
           <button type="button" class="jobs-tb-btn jobs-tb-btn--primary" id="btnCopyAllTokensV2" title="复制当前页所有 Token，每个账号一行">复制Token</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnCopyAllLinesV2" title="复制当前页所有账号整行，每个账号一行">复制整行</button>
         </div>
+          </div>
+        </details>
       </div>
       <div class="accounts-table-v2-wrap">
         <table class="accounts-table-v2">
           <colgroup>
             <col class="col-check"><col class="col-id"><col class="col-email"><col class="col-source">
-            <col class="col-token"><col class="col-password"><col class="col-plan"><col class="col-note"><col class="col-small">
+            <col class="col-token"><col class="col-password"><col class="col-plan"><col class="col-note"><col class="col-country"><col class="col-small">
             <col class="col-status"><col class="col-time"><col class="col-actions">
           </colgroup>
           <thead>
@@ -2276,6 +2703,7 @@
               <th class="col-password">密码</th>
               <th class="col-plan">套餐</th>
               <th class="col-note">备注</th>
+              <th class="col-country">注册国家</th>
               <th class="col-small">2FA</th>
               <th class="col-status">Codex</th>
               <th class="col-time">创建时间</th>
@@ -2345,7 +2773,7 @@
           <input id="qCodexV2" type="search" placeholder="搜索邮箱、plan、account_id…" autocomplete="off">
         </div>
         <div class="acc-v2-date-select" id="dateSelectCodexV2">
-          <button type="button" class="acc-v2-date-select-btn" id="btnDateFilterCodexV2" title="按凭证文件修改时间筛选日期范围">📅 日期筛选</button>
+          <button type="button" class="acc-v2-date-select-btn" id="btnDateFilterCodexV2" title="按凭证文件修改时间筛选日期范围"><svg class="date-filter-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><line x1="3" y1="9" x2="21" y2="9"/></svg>日期筛选</button>
           <div class="acc-v2-date-select-menu" id="dateFilterPanelCodexV2"></div>
         </div>
         <div class="hidden">
@@ -2436,11 +2864,102 @@
     </section>
   </div>
 
+  <!-- ============ 邮箱换绑 ============ -->
+  <div id="tab-rebind" class="hidden">
+    <h1 class="register-title">邮箱换绑</h1>
+    <section class="rebind-resource-panel-v2" id="rebindResourcePanelV2" aria-label="邮箱换绑">
+      <div class="rebind-resource-head-v2">
+        <div>
+          <h2>邮箱换绑</h2>
+          <p>这里显示已查出试用资格的账号；直接调用换绑项目的纯协议功能完成邮箱更换。</p>
+        </div>
+        <span class="rebind-resource-detected-v2" id="rebindDetectedV2">识别中…</span>
+      </div>
+      <div class="rebind-resource-body-v2">
+        <div class="rebind-resource-grid-v2">
+          <label class="rebind-resource-field-v2">
+            <span>邮箱资源</span>
+            <select id="rebindProviderV2"><option value="auto">自动识别</option></select>
+          </label>
+          <label class="rebind-resource-field-v2 rebind-timeout-field-v2">
+            <span>验证码等待（秒）</span>
+            <input id="rebindTimeoutV2" type="number" min="5" max="900" value="120" inputmode="numeric">
+          </label>
+          <button type="button" class="jobs-tb-btn" id="btnRefreshRebindResourcesV2">重新识别资源</button>
+        </div>
+        <div class="rebind-resource-help-v2" id="rebindResourceHelpV2">正在读取已经接入的邮箱资源…</div>
+        <div class="rebind-resource-status-v2" id="rebindStatusV2" aria-live="polite"></div>
+      </div>
+    </section>
+    <section class="rebind-trial-panel-v2" aria-label="试用资格账号">
+      <div class="rebind-trial-head-v2">
+        <div>
+          <h2>试用资格号</h2>
+          <p>只显示套餐查询结果为 free 且确认拥有 Plus 试用资格的账号。</p>
+        </div>
+        <button type="button" class="jobs-tb-btn" id="btnRefreshRebindTrialV2">刷新资格号</button>
+      </div>
+      <div class="rebind-trial-stats-v2">
+        <div class="rebind-trial-stat-v2"><span>可换绑资格号</span><strong id="rebindTrialEligibleCountV2">0</strong></div>
+        <div class="rebind-trial-stat-v2"><span>已查套餐账号</span><strong id="rebindTrialCheckedCountV2">0</strong></div>
+        <div class="rebind-trial-stat-v2"><span>套餐查询中</span><strong id="rebindTrialPendingCountV2">0</strong></div>
+      </div>
+      <div class="rebind-trial-table-v2-wrap">
+        <table class="rebind-trial-table-v2">
+          <colgroup>
+            <col class="rebind-trial-col-account"><col class="rebind-trial-col-email"><col class="rebind-trial-col-qualification">
+            <col class="rebind-trial-col-time"><col class="rebind-trial-col-status"><col class="rebind-trial-col-actions">
+          </colgroup>
+          <thead>
+            <tr><th>资格号</th><th>当前邮箱</th><th>资格信息</th><th>查询时间</th><th>换绑状态</th><th>操作</th></tr>
+          </thead>
+          <tbody id="rebindTrialAccountsBodyV2"></tbody>
+        </table>
+      </div>
+    </section>
+    <section class="rebind-completed-panel-v2" aria-label="换绑完成">
+      <div class="rebind-completed-head-v2">
+        <div>
+          <h2>换绑完成</h2>
+          <p>单独列出已经成功完成换绑的账号；下面的输出只包含新邮箱，每行一个。</p>
+        </div>
+        <div class="rebind-completed-actions-v2">
+          <span class="rebind-completed-count-v2" id="rebindCompletedCountV2">0 个</span>
+          <button type="button" class="jobs-tb-btn" id="btnRefreshRebindCompletedV2">刷新完成</button>
+          <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnCopyRebindCompletedV2" disabled>复制新邮箱</button>
+          <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnDownloadRebindCompletedV2" disabled>下载TXT</button>
+        </div>
+      </div>
+      <div class="rebind-completed-output-v2">
+        <label for="rebindCompletedOutputV2">完成邮箱输出</label>
+        <textarea id="rebindCompletedOutputV2" rows="4" readonly placeholder="暂无已完成换绑"></textarea>
+      </div>
+      <div class="rebind-completed-table-v2-wrap">
+        <table class="rebind-trial-table-v2 rebind-completed-table-v2">
+          <colgroup>
+            <col class="rebind-trial-col-account"><col class="rebind-trial-col-email"><col class="rebind-trial-col-email">
+            <col class="rebind-trial-col-time"><col class="rebind-trial-col-status">
+          </colgroup>
+          <thead><tr><th>账号</th><th>原邮箱</th><th>新邮箱</th><th>完成时间</th><th>状态</th></tr></thead>
+          <tbody id="rebindCompletedBodyV2"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
   <!-- ============ 配置 ============ -->
   <div id="tab-config" class="hidden">
     <div class="config-overview-v2" id="configOverviewV2" aria-label="配置概览">
       <h1 class="config-overview-v2-title">运行配置</h1>
-      <p class="config-overview-v2-desc">仅开放运行时安全的开关与数值。协议级常量（client_id / sentinel 版本）不在此处，避免误改废号。修改后点保存即可热加载生效，无需重启。</p>
+      <p class="config-overview-v2-desc">高级模式默认显示全部配置；需要日常精简时，再切换到基础模式。修改后点保存即可热加载生效。</p>
+      <div class="config-filter-v2">
+        <input id="configSearchV2" type="search" placeholder="搜索设置名称、说明或配置键…" autocomplete="off">
+        <div class="config-mode-v2" role="group" aria-label="配置显示模式">
+          <button type="button" data-config-mode="basic" aria-pressed="false">基础</button>
+          <button type="button" class="is-active" data-config-mode="advanced" aria-pressed="true">高级</button>
+        </div>
+        <span class="config-filter-status-v2" id="configFilterStatusV2" aria-live="polite">正在加载配置…</span>
+      </div>
     </div>
 
     <!-- 配置布局：左侧导航 + 右侧卡片/分区 -->
@@ -2462,19 +2981,19 @@
             <div class="config-card-v2-hint" id="configCardRegistrationHintV2">驱动标识: —</div>
           </div>
           <div class="config-card-v2">
-            <div class="config-card-v2-label">占位卡片 2</div>
-            <div class="config-card-v2-value is-placeholder">—</div>
-            <div class="config-card-v2-hint">内容稍后完善</div>
+            <div class="config-card-v2-label">显示模式</div>
+            <div class="config-card-v2-value" id="configModeLabelV2">高级</div>
+            <div class="config-card-v2-hint">默认显示全部配置</div>
           </div>
           <div class="config-card-v2">
-            <div class="config-card-v2-label">占位卡片 3</div>
-            <div class="config-card-v2-value is-placeholder">—</div>
-            <div class="config-card-v2-hint">内容稍后完善</div>
+            <div class="config-card-v2-label">可见分组</div>
+            <div class="config-card-v2-value" id="configVisibleGroupsV2">0</div>
+            <div class="config-card-v2-hint">按模式与搜索过滤</div>
           </div>
           <div class="config-card-v2">
-            <div class="config-card-v2-label">占位卡片 4</div>
-            <div class="config-card-v2-value is-placeholder">—</div>
-            <div class="config-card-v2-hint">内容稍后完善</div>
+            <div class="config-card-v2-label">待保存修改</div>
+            <div class="config-card-v2-value" id="configPendingCountV2">0</div>
+            <div class="config-card-v2-hint">离开前请保存</div>
           </div>
         </div>
         <div class="config-sections-v2" id="configSectionsV2"></div>
@@ -2489,7 +3008,7 @@
     <div class="outlook-import-head">
       <div class="outlook-import-head-main">
         <h3 id="outlookImportTitle">导入邮箱素材</h3>
-        <p>Outlook：邮箱----密码----clientId----refreshToken；通用 API：邮箱----取码地址（---- 或 ==== 均可）。勾选下方选项后按「已注册成功账号」导入，方便在账号页补跑 Codex。</p>
+        <p>Outlook：邮箱----密码----clientId----refreshToken；通用 API：邮箱----取码地址（---- 或 ==== 均可）。默认按「已注册成功账号」导入，方便在账号页补跑 Codex。</p>
       </div>
       <button type="button" class="outlook-import-close" id="btnCloseOutlookImport" aria-label="关闭">×</button>
     </div>
@@ -2508,7 +3027,7 @@
         <span class="outlook-import-hint">注册来源可在配置里填多个，例如：outlook,generic_api</span>
       </label>
       <label class="outlook-import-check">
-        <input id="importAsRegisteredV2" type="checkbox">
+        <input id="importAsRegisteredV2" type="checkbox" checked>
         <span>导入后默认视为「注册成功账号」（邮箱池标记已用，并出现在账号页，可直接批量补跑 Codex）</span>
       </label>
       <label class="outlook-import-field">
@@ -2526,6 +3045,13 @@
   <h3>任务 #<span id="logJobId"></span> 日志 <button class="btn" id="btnCloseLog" style="float:right;min-height:28px;">关闭</button></h3>
   <div class="log" id="logContent">加载中…</div>
 </div>
+<div class="body hidden" id="rebindReasonPanelV2" role="dialog" aria-modal="true" aria-labelledby="rebindReasonTitleV2">
+  <h3 id="rebindReasonTitleV2">换绑失败原因：<span id="rebindReasonAccountV2" style="font-size:13px;font-weight:400;color:var(--muted);"></span>
+    <button class="btn" id="btnCloseRebindReasonV2" style="float:right;min-height:28px;">关闭</button>
+  </h3>
+  <div class="banner warn" id="rebindReasonSummaryV2">加载中…</div>
+  <div class="log" id="rebindReasonContentV2">加载中…</div>
+</div>
 <div id="qrPanel" class="body hidden">
   <h3>支付二维码 <button class="btn" onclick="closeQrModal()">关闭</button></h3>
   <img id="qrImage" alt="支付二维码">
@@ -2538,18 +3064,19 @@ const $$ = (s) => Array.from(document.querySelectorAll(s));
 let copySeq = 0;
 const copyStore = new Map();
 let ACCOUNTS = [], OUTLOOK = [], CONFIG = [];
+let CODEX_AUTHORIZATION_ENABLED = true;
 let ACCOUNTS_TOTAL = 0;
 const TOTP_CODE_CACHE = new Map();
 let OUTLOOK_TOTAL = 0;
 let SHOW_ARCHIVED_ACCOUNTS = false;
 let SHOW_PLUS_ACCOUNTS_ONLY = false;
-let SHOW_PLUS_TRIAL_ACCOUNTS_ONLY = false;
 const ACCOUNT_SELECTED = new Set();
 const OUTLOOK_SELECTED = new Set();
 let JOBS = [];
 let JOBS_TOTAL = 0;
 let JOB_STATUS_COUNTS = {};
 let jobsRenderSignature = '';
+let PROXY_OPTIONS_V2 = { providers: [], countries: [], countries_by_provider: {}, selected_provider: '', selected_country: '' };
 const JOB_SELECTED = new Set();
 let activeLogJob = null, logTimer = null, jobsTimer = null;
 
@@ -2702,6 +3229,20 @@ function pillV2(status) {
   else if (s === 'pending' || s === 'cancelled' || s === 'stopped') cls = 'jobs-v2-pill--muted';
   return `<span class="jobs-v2-pill ${cls}">${esc(map[s]||s||'-')}</span>`;
 }
+const PROXY_PROVIDER_LABELS_V2 = {
+  cliproxy_traffic: 'CliProxy',
+  iproyal_traffic: 'IPRoyal',
+};
+function proxyProviderLabelV2(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return PROXY_PROVIDER_LABELS_V2[key] || (key === 'manual' ? '兼容手动' : (key || '—'));
+}
+function proxyCountryLabelV2(value) {
+  const code = String(value || '').trim().toUpperCase();
+  if (!code) return '—';
+  const hit = proxyCountryCatalogV2().find(x => String(x.value || '').toUpperCase() === code);
+  return hit ? `${code} · ${hit.label}` : code;
+}
 function formatDateTime(v) {
   if (v == null || v === '') return '-';
   const d = v instanceof Date ? v : new Date(v);
@@ -2711,19 +3252,6 @@ function formatDateTime(v) {
   }
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-}
-function formatTraffic(t) {
-  if (!t || !t.available) return '-';
-  const n = (v) => Number.isFinite(Number(v)) ? Math.max(0, Number(v)) : 0;
-  const fmt = (v) => {
-    v = n(v);
-    if (v < 1024) return `${Math.round(v)} B`;
-    if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KiB`;
-    return `${(v / 1024 / 1024).toFixed(2)} MiB`;
-  };
-  const j = t.js_coverage;
-  const jsHint = j && j.enabled ? `，JS脚本 ${n(j.script_count)}（执行 ${n(j.executed_script_count)}，候选 ${n(j.candidate_script_count)}）` : '';
-  return `<span title="上传 ${fmt(t.upload_bytes)}，下载 ${fmt(t.download_bytes)}，${n(t.request_count)} 个请求${jsHint}">${fmt(t.total_bytes)}</span>`;
 }
 function jobsV2OpIcons() {
   return {
@@ -2756,29 +3284,205 @@ function debounce(fn, wait=250) {
 
 // ---------- Tab 切换 ----------
 function activateTab(tab, persist=true) {
-  const allowed = ['register','accounts','codex','outlook','config'];
-  if (!allowed.includes(tab)) tab = 'register';
-  $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
+  const allowed = ['dashboard','register','accounts','codex','outlook','rebind','config'];
+  if (!allowed.includes(tab)) tab = 'dashboard';
+  $$('.sidebar-nav button[data-tab]').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
   allowed.forEach(t => $('#tab-'+t).classList.toggle('hidden', t !== tab));
   if (persist) localStorage.setItem('gpt_console_active_tab', tab);
+  if (tab === 'dashboard') loadWorkbench();
   if (tab === 'accounts') loadAccounts();
   if (tab === 'codex') loadCodex();
   if (tab === 'outlook') loadOutlook();
+  if (tab === 'rebind') loadRebindPageV2();
   if (tab === 'config') loadConfig();
   if (tab === 'register') refreshJobs();
 }
-$$('nav button').forEach(b => b.addEventListener('click', () => activateTab(b.dataset.tab)));
+$$('.sidebar-nav button[data-tab]').forEach(b => b.addEventListener('click', () => activateTab(b.dataset.tab)));
+$$('[data-go-tab]').forEach(b => b.addEventListener('click', () => activateTab(b.dataset.goTab)));
 
 // ---------- 概览 ----------
+function applySummary(s) {
+  $('#statAccounts').textContent = Number(s.accounts || 0);
+  $('#statOutlook').textContent = Number(s.outlook_total || 0);
+  $('#statAvailable').textContent = Number(s.outlook_available || 0);
+  $('#statUsed').textContent = Number(s.outlook_used || 0);
+  $('#statFailed').textContent = Number(s.outlook_failed || 0);
+  $('#dashboardAccounts').textContent = Number(s.accounts || 0);
+  $('#dashboardAvailable').textContent = Number(s.outlook_available || 0);
+}
 async function loadSummary() {
   try {
     const s = await api('/api/summary');
-    $('#statAccounts').textContent = s.accounts;
-    $('#statOutlook').textContent = s.outlook_total;
-    $('#statAvailable').textContent = s.outlook_available;
-    $('#statUsed').textContent = s.outlook_used;
-    $('#statFailed').textContent = s.outlook_failed;
+    applySummary(s);
   } catch(e) {}
+}
+
+function renderReadiness(report) {
+  const score = $('#readinessScore');
+  const checks = Array.isArray(report.checks) ? report.checks : [];
+  const overall = report.status || 'blocked';
+  const scoreValue = Number(report.score || 0);
+  score.className = `readiness-score readiness-score--${esc(overall)}`;
+  score.textContent = `${scoreValue}% · ${overall === 'ready' ? '已就绪' : overall === 'warning' ? '有提醒' : '有阻塞'}`;
+  $('#readinessLive').innerHTML = checks.length ? checks.map(check => {
+    const status = ['ready','warning','blocked'].includes(check.status) ? check.status : 'blocked';
+    const action = check.target_tab && status !== 'ready'
+      ? `<button type="button" class="readiness-action" data-readiness-tab="${esc(check.target_tab)}" data-readiness-group="${esc(check.target_group || '')}">去处理</button>`
+      : '';
+    return `<div class="readiness-item readiness-item--${status}"><span class="readiness-dot" aria-hidden="true"></span><span class="readiness-label">${esc(check.label)}</span><span class="readiness-message">${esc(check.message)}</span>${action}</div>`;
+  }).join('') : '<div class="dashboard-empty">暂无检查项</div>';
+}
+
+function renderDashboardJobs(jobs) {
+  const wrap = $('#dashboardRecentJobs');
+  if (!jobs.length) {
+    wrap.innerHTML = '<div class="dashboard-empty">还没有任务记录</div>';
+    return;
+  }
+  wrap.innerHTML = `<div class="table-wrap"><table class="dashboard-recent"><thead><tr><th>任务</th><th>状态</th><th>账号</th><th>开始时间</th></tr></thead><tbody>${jobs.map(job => `<tr><td>#${esc(job.id)}</td><td>${pillV2(job.status)}</td><td>${esc(job.email || '—')}</td><td>${esc(formatDateTime(job.started_at || job.created_at))}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+async function loadWorkbench() {
+  const live = $('#readinessLive');
+  const refresh = $('#btnRefreshDashboard');
+  if (refresh) refresh.disabled = true;
+  live.innerHTML = '<div class="dashboard-empty">正在检查本地配置…</div>';
+  try {
+    const [summary, readiness, jobs] = await Promise.all([
+      api('/api/summary'),
+      api('/api/system/readiness'),
+      api('/api/jobs?paged=1&page=1&page_size=6')
+    ]);
+    applySummary(summary);
+    const counts = jobs.status_counts || {};
+    $('#dashboardActive').textContent = Number(counts.active || 0);
+    $('#dashboardFailed').textContent = Number(counts.failed || 0) + Number(counts.stopped || 0) + Number(counts.cancelled || 0);
+    renderReadiness(readiness);
+    renderDashboardJobs(jobs.items || []);
+  } catch(e) {
+    live.innerHTML = `<div class="dashboard-error">状态加载失败：${esc(e.message)}。请稍后重试。</div>`;
+    $('#dashboardRecentJobs').innerHTML = '<div class="dashboard-empty">暂时无法加载任务</div>';
+  } finally {
+    if (refresh) refresh.disabled = false;
+  }
+}
+
+$('#readinessLive').addEventListener('click', (e) => {
+  const button = e.target.closest('[data-readiness-tab]');
+  if (!button) return;
+  activateTab(button.dataset.readinessTab);
+  if (button.dataset.readinessTab === 'config' && button.dataset.readinessGroup) {
+    const search = $('#configSearchV2');
+    if (search) search.value = button.dataset.readinessGroup;
+    filterConfigSections();
+    const target = document.getElementById(configGroupSlug(button.dataset.readinessGroup));
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+});
+$('#btnRefreshDashboard').addEventListener('click', loadWorkbench);
+
+// ---------- 内置代理选择 ----------
+const PROXY_COUNTRY_FALLBACK_V2 = [
+  ['ID', '印度尼西亚'], ['US', '美国'], ['GB', '英国'], ['CA', '加拿大'], ['AU', '澳大利亚'],
+  ['DE', '德国'], ['FR', '法国'], ['JP', '日本'], ['SG', '新加坡'], ['NL', '荷兰'],
+  ['BR', '巴西'], ['KR', '韩国'], ['TW', '中国台湾'],
+];
+function proxyCountryCatalogV2(provider = '') {
+  const key = String(provider || $('#regProxyProviderV2')?.value || '').toLowerCase();
+  const byProvider = PROXY_OPTIONS_V2.countries_by_provider || {};
+  const providerRemote = Array.isArray(byProvider[key]) ? byProvider[key] : [];
+  const providerItem = proxyProviderCatalogV2().find(item => String(item.value || '').toLowerCase() === key);
+  const remote = providerRemote.length ? providerRemote : Array.isArray(providerItem?.countries) ? providerItem.countries : (Array.isArray(PROXY_OPTIONS_V2.countries) ? PROXY_OPTIONS_V2.countries : []);
+  return remote.length ? remote : PROXY_COUNTRY_FALLBACK_V2.map(([value, label]) => ({value, label}));
+}
+function proxyProviderCatalogV2() {
+  const remote = Array.isArray(PROXY_OPTIONS_V2.providers) ? PROXY_OPTIONS_V2.providers : [];
+  return remote.length ? remote : [
+    {value: 'cliproxy_traffic', label: 'CliProxy', configured: false, country: 'ID'},
+    {value: 'iproyal_traffic', label: 'IPRoyal', configured: false, country: 'ID'},
+  ];
+}
+function renderRegistrationProxyOptionsV2(providerValue, countryValue) {
+  const providerEl = $('#regProxyProviderV2');
+  const countryEl = $('#regProxyCountryV2');
+  if (!providerEl || !countryEl) return;
+  const providers = proxyProviderCatalogV2();
+  const providerKeys = providers.map(x => String(x.value || '').toLowerCase());
+  const provider = providerKeys.includes(String(providerValue || '').toLowerCase())
+    ? String(providerValue).toLowerCase()
+    : providerKeys[0];
+  providerEl.innerHTML = providers.map(item => {
+    const value = String(item.value || '').toLowerCase();
+    const label = item.label || proxyProviderLabelV2(value);
+    return `<option value="${attrEsc(value)}">${esc(label)}${item.configured ? ' · 已配置' : ' · 待配置'}</option>`;
+  }).join('');
+  providerEl.value = provider;
+
+  const providerInfo = providers.find(x => String(x.value || '').toLowerCase() === provider) || {};
+  const storedCountry = localStorage.getItem(`proxy_country_${provider}`) || '';
+  const fallbackCountry = String(storedCountry || countryValue || providerInfo.country || 'ID').toUpperCase();
+  const countries = proxyCountryCatalogV2(provider);
+  const countryKeys = countries.map(x => String(x.value || '').toUpperCase());
+  const country = countryKeys.includes(fallbackCountry) ? fallbackCountry : countryKeys[0] || 'ID';
+  countryEl.innerHTML = countries.map(item => {
+    const value = String(item.value || '').toUpperCase();
+    return `<option value="${attrEsc(value)}">${attrEsc(value)} · ${esc(item.label || value)}</option>`;
+  }).join('');
+  countryEl.value = country;
+}
+function updateRegistrationProxyStatusV2(message = '') {
+  const status = $('#regProxyStatusV2');
+  const providerEl = $('#regProxyProviderV2');
+  const countryEl = $('#regProxyCountryV2');
+  if (!status || !providerEl || !countryEl) return;
+  const provider = String(providerEl.value || '').toLowerCase();
+  const country = String(countryEl.value || '').toUpperCase();
+  const item = proxyProviderCatalogV2().find(x => String(x.value || '').toLowerCase() === provider) || {};
+  status.classList.toggle('is-ready', !!item.configured);
+  status.classList.toggle('is-blocked', !item.configured);
+  status.textContent = message || `内置 ${item.label || proxyProviderLabelV2(provider)} · ${country} · ${item.configured ? '账号已配置' : '请先到系统设置测试保存'}`;
+}
+function bindRegistrationProxyControlsV2() {
+  const providerEl = $('#regProxyProviderV2');
+  const countryEl = $('#regProxyCountryV2');
+  if (!providerEl || !countryEl) return;
+  if (!providerEl.dataset.bound) {
+    providerEl.dataset.bound = '1';
+    providerEl.addEventListener('change', () => {
+      const provider = String(providerEl.value || '').toLowerCase();
+      renderRegistrationProxyOptionsV2(provider, '');
+      localStorage.setItem('proxy_provider_v2', provider);
+      localStorage.setItem(`proxy_country_${provider}`, countryEl.value || 'ID');
+      updateRegistrationProxyStatusV2();
+    });
+  }
+  if (!countryEl.dataset.bound) {
+    countryEl.dataset.bound = '1';
+    countryEl.addEventListener('change', () => {
+      const provider = String(providerEl.value || '').toLowerCase();
+      localStorage.setItem(`proxy_country_${provider}`, countryEl.value || 'ID');
+      updateRegistrationProxyStatusV2();
+    });
+  }
+}
+async function loadProxyOptions() {
+  const status = $('#regProxyStatusV2');
+  bindRegistrationProxyControlsV2();
+  try {
+    const result = await api('/api/proxy/options');
+    PROXY_OPTIONS_V2 = result || PROXY_OPTIONS_V2;
+    const provider = localStorage.getItem('proxy_provider_v2') || result.selected_provider || '';
+    const country = result.selected_country || '';
+    renderRegistrationProxyOptionsV2(provider, country);
+    updateRegistrationProxyStatusV2();
+  } catch (e) {
+    renderRegistrationProxyOptionsV2(localStorage.getItem('proxy_provider_v2') || 'cliproxy_traffic', 'ID');
+    if (status) {
+      status.classList.remove('is-ready');
+      status.classList.add('is-blocked');
+      status.textContent = `代理平台加载失败：${e.message}`;
+    }
+  }
 }
 
 // ---------- 注册 / 任务 ----------
@@ -2801,7 +3505,16 @@ async function startRegistrationFromInputs(countEl, workersEl, startBtn) {
   };
   const b2 = $('#btnStartV2'); if (b2) b2.disabled = true;
   try {
-    const r = await api('/api/jobs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count, workers}) });
+    const r = await api('/api/jobs', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        count,
+        workers,
+        proxy_provider: $('#regProxyProviderV2')?.value || '',
+        proxy_country: $('#regProxyCountryV2')?.value || '',
+      }),
+    });
     const warnHtml = r.warning ? `<div class="banner warn">${esc(r.warning)}（本次并发 ${r.workers || workers}）</div>` : `<div class="banner info">已提交 ${r.submitted} 个任务，本次并发 ${r.workers || workers}</div>`;
     const warnEl = $('#regWarnV2'); if (warnEl) warnEl.innerHTML = warnHtml;
     const c2 = $('#regCountV2'); if (c2) c2.value = count;
@@ -2930,9 +3643,10 @@ function renderJobs() {
         <td class="col-id">#${esc(j.id)}${j.parent_job_id ? `<div class="sub-cell" title="重试自任务 #${esc(j.parent_job_id)}">↳ #${esc(j.parent_job_id)} · ${esc(j.retry_attempt || 1)}</div>` : ''}</td>
         <td class="col-status">${pillV2(j.display_status || j.status)}</td>
         <td class="col-email" title="${esc(j.email || '-')}">${esc(j.email || '-')}</td>
+        <td class="col-proxy" title="${esc(proxyProviderLabelV2(j.proxy_provider))}">${esc(proxyProviderLabelV2(j.proxy_provider))}</td>
+        <td class="col-country" title="${esc(proxyCountryLabelV2(j.proxy_country))}">${esc(proxyCountryLabelV2(j.proxy_country))}</td>
         <td class="col-time" title="${esc(started)}">${esc(started)}</td>
         <td class="col-time" title="${esc(completed)}">${esc(completed)}</td>
-        <td class="col-traffic">${formatTraffic(j.network_traffic)}</td>
         <td class="col-error" title="${esc(err)}">${esc(err ? short(err, 60) : '-')}</td>
         <td class="col-actions">
           <div class="jobs-v2-ops">
@@ -2944,7 +3658,7 @@ function renderJobs() {
           </div>
         </td>
       </tr>`;
-    }).join('') || '<tr><td colspan="9" style="text-align:center;color:#909399;padding:28px;">暂无任务</td></tr>';
+    }).join('') || '<tr><td colspan="10" style="text-align:center;color:#909399;padding:28px;">暂无任务</td></tr>';
   }
 
 
@@ -2994,6 +3708,7 @@ function updateModalScrollLock() {
     || !$('#retryLogPanel').classList.contains('hidden')
     || !$('#liveLogPanel').classList.contains('hidden')
     || !$('#qrPanel').classList.contains('hidden')
+    || !$('#rebindReasonPanelV2').classList.contains('hidden')
     || !$('#outlookImportModal').classList.contains('hidden');
   const locked = document.body.classList.contains('modal-open');
   if (opened && !locked) {
@@ -3012,6 +3727,10 @@ function closeLogModal() {
   activeLogJob = null;
   clearInterval(logTimer);
   $('#logPanel').classList.add('hidden');
+  updateModalScrollLock();
+}
+function closeRebindReasonV2() {
+  $('#rebindReasonPanelV2').classList.add('hidden');
   updateModalScrollLock();
 }
 function closeRetryLogModal() {
@@ -3040,6 +3759,7 @@ function closeQrModal() {
 }
 
 $('#btnCloseLog').addEventListener('click', closeLogModal);
+$('#btnCloseRebindReasonV2').addEventListener('click', closeRebindReasonV2);
 
 async function submitManualOtpForJob(btn) {
   const jobId = parseInt(btn.dataset.submitOtpJob, 10);
@@ -3185,7 +3905,12 @@ async function pollLog() {
     const r = await api(`/api/jobs/${activeLogJob}/log`);
     const c = $('#logContent');
     const atBottom = c.scrollTop + c.clientHeight >= c.scrollHeight - 30;
-    c.textContent = r.log || '(暂无日志)';
+    const baseLog = r.log || '';
+    const finalError = r.job && r.job.error_message ? String(r.job.error_message).trim() : '';
+    const errorLine = finalError && !baseLog.includes(finalError)
+      ? `\n[ERROR] [Job ${r.job.id}] 任务失败：${finalError}`
+      : '';
+    c.textContent = baseLog + errorLine || '(暂无日志)';
     if (atBottom) c.scrollTop = c.scrollHeight;
     if (r.job && ['success','failed','stopped','cancelled'].includes(r.job.status)) clearInterval(logTimer);
   } catch(e) {}
@@ -3203,34 +3928,32 @@ function getAccountsCodexFilter() {
   const el = document.getElementById('codexStatusFilterV2');
   return (el ? el.value : '').trim();
 }
-function getAccountsTotpFilter() {
-  const el = document.getElementById('totpStatusFilterV2');
+function getAccountsCategoryFilter() {
+  const el = document.getElementById('accountCategoryFilterV2');
   return (el ? el.value : '').trim();
 }
 function getCodexBulkWorkers() {
   const el = document.getElementById('codexBulkWorkersV2');
   return Math.max(1, Math.min(16, Number((el && el.value) || 3)));
 }
-function getAccountsPlanFilter() {
-  if (SHOW_PLUS_ACCOUNTS_ONLY) return 'plus';
-  if (SHOW_PLUS_TRIAL_ACCOUNTS_ONLY) return 'plus_trial';
-  return '';
-}
 async function loadAccounts() {
   if (accountsLoading) return;
   accountsLoading = true;
   try {
     const archived = SHOW_ARCHIVED_ACCOUNTS ? 'only' : '0';
-    const plan = getAccountsPlanFilter();
+    const plan = SHOW_PLUS_ACCOUNTS_ONLY ? 'plus' : '';
+    const category = getAccountsCategoryFilter();
     const codex = getAccountsCodexFilter();
-    const totp = getAccountsTotpFilter();
     const q = getAccountsQuery();
     const dateFrom = document.getElementById('dateFromAccountsV2')?.value || '';
     const dateTo = document.getElementById('dateToAccountsV2')?.value || '';
     const p = PAGERS.accounts;
-    const res = await api(`/api/accounts?paged=1&page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}&codex_status=${encodeURIComponent(codex)}&totp_status=${encodeURIComponent(totp)}&q=${encodeURIComponent(q)}&date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`);
+    const res = await api(`/api/accounts?paged=1&page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}&category=${encodeURIComponent(category)}&codex_status=${encodeURIComponent(codex)}&q=${encodeURIComponent(q)}&date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`);
     ACCOUNTS = res.items || [];
     ACCOUNTS_TOTAL = Number(res.total || ACCOUNTS.length || 0);
+    if (typeof res.codex_authorization_enabled === 'boolean') {
+      CODEX_AUTHORIZATION_ENABLED = res.codex_authorization_enabled;
+    }
     const totalPages = Math.max(1, Math.ceil(ACCOUNTS_TOTAL / p.size));
     if (p.page > totalPages) { p.page = totalPages; accountsLoading = false; return loadAccounts(); }
     renderAccounts();
@@ -3242,14 +3965,12 @@ async function pollAccountPlanStatuses() {
   planStatusLoading = true;
   try {
     const archived = SHOW_ARCHIVED_ACCOUNTS ? 'only' : '0';
-    const plan = getAccountsPlanFilter();
+    const plan = SHOW_PLUS_ACCOUNTS_ONLY ? 'plus' : '';
+    const category = getAccountsCategoryFilter();
     const codex = getAccountsCodexFilter();
-    const totp = getAccountsTotpFilter();
     const q = getAccountsQuery();
-    const dateFrom = document.getElementById('dateFromAccountsV2')?.value || '';
-    const dateTo = document.getElementById('dateToAccountsV2')?.value || '';
     const p = PAGERS.accounts;
-    const snapshot = await api(`/api/accounts/plan-check-status?page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}&codex_status=${encodeURIComponent(codex)}&totp_status=${encodeURIComponent(totp)}&q=${encodeURIComponent(q)}&date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`);
+    const snapshot = await api(`/api/accounts/plan-check-status?page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}&category=${encodeURIComponent(category)}&codex_status=${encodeURIComponent(codex)}&q=${encodeURIComponent(q)}`);
     const items = snapshot.items || [];
     const accountById = new Map(ACCOUNTS.map(r => [Number(r.id), r]));
     const hasUnknown = items.some(item => !accountById.has(Number(item.id)));
@@ -3268,9 +3989,12 @@ async function pollAccountPlanStatuses() {
         const isExtracting = ['queued', 'running'].includes(item.extract_link_status);
         const wasAgenting = ['queued', 'running'].includes(account?.codex_agent_status);
         const isAgenting = ['queued', 'running'].includes(item.codex_agent_status);
+        const wasTrialPayment = ['queued', 'running'].includes(account?.trial_payment_probe_status);
+        const isTrialPayment = ['queued', 'running'].includes(item.trial_payment_probe_status);
         if (wasChecking && !isChecking) needsFullReload = true;
         if (wasExtracting && !isExtracting) needsFullReload = true;
         if (wasAgenting && !isAgenting) needsFullReload = true;
+        if (wasTrialPayment && !isTrialPayment) needsFullReload = true;
         Object.assign(account, item);
       });
       planStatusRevision = snapshot.revision || '';
@@ -3375,6 +4099,19 @@ function _discountLabel(r) {
   if (!Number.isNaN(n)) return `${n}折扣`;
   return `${amount}折扣`;
 }
+function _accountCategoryBadgeV2(r) {
+  const category = String(r.account_category || '').trim().toLowerCase();
+  const labels = {
+    deactivated: '已废',
+    trial_eligible: '有试用资格',
+    plus: '已开通Plus',
+    free: '普通Free',
+    unverified: '待确认',
+  };
+  const label = r.account_category_label || labels[category] || labels.unverified;
+  const cls = category === 'deactivated' ? 'status-failed' : category === 'trial_eligible' || category === 'plus' ? 'status-success' : category === 'free' ? 'status-used' : 'status-running';
+  return `<span class="pill ${cls} account-category-badge-v2" title="分类由查活和套餐结果自动推导">${esc(label)}</span>`;
+}
 function _planCell(r) {
   const ok = r.plan_check_ok;
   const err = r.plan_check_error || '';
@@ -3411,7 +4148,7 @@ function _planCell(r) {
     const text = r.plus_trial_eligible ? 'free(可Plus试用)' : 'free';
     const cls = r.plus_trial_eligible ? 'status-success' : 'status-used';
     const t = r.plus_trial_eligible ? `${title}；Plus 试用资格可用` : title;
-    return `<span class="pill ${cls}" title="${t}">${esc(text)}</span>`;
+      return `<span class="pill ${cls}" title="${t}">${esc(text)}</span>${_trialPaymentCell(r)}`;
   }
 
   const cls = 'status-success';
@@ -3430,7 +4167,29 @@ function _planCell(r) {
   if (r.plan_renews_at) detail.push(`续费时间: ${r.plan_renews_at}`);
   if (r.discount_expires_at) detail.push(`折扣结束: ${r.discount_expires_at}`);
   if (r.discount_promo_campaign_id) detail.push(`优惠: ${r.discount_promo_campaign_id}`);
-  return `<span class="pill ${cls}" title="${esc(detail.join('；'))}">${esc(text)}</span>`;
+  return `<span class="pill ${cls}" title="${esc(detail.join('；'))}">${esc(text)}</span>${_trialPaymentCell(r)}`;
+}
+function _trialPaymentCell(r) {
+  const status = String(r.trial_payment_probe_status || '').toLowerCase();
+  const methods = Array.isArray(r.trial_payment_methods) ? r.trial_payment_methods : [];
+  if (['queued','running'].includes(status)) {
+    const stamp = r.trial_payment_probe_queued_at || r.trial_payment_probe_started_at || '';
+    return `<div class="trial-payment-cell-v2"><span class="pill status-running" title="${esc(stamp)}">支付方式查询中…</span></div>`;
+  }
+  if (status === 'failed') {
+    const error = r.trial_payment_probe_error || '支付方式探测失败';
+    return `<div class="trial-payment-cell-v2"><span class="pill status-failed" title="${esc(error)}">支付方式失败</span></div>`;
+  }
+  if (!methods.length) return '';
+  const parts = methods.map(item => {
+    const id = String(item.id || '').toLowerCase();
+    const label = item.label || ({momo:'Momo', paypal:'PayPal', gopay:'GoPay'}[id] || id);
+    const state = item.status === 'supported' ? '✓' : item.status === 'unsupported' ? '—' : '?';
+    const cls = item.status === 'supported' ? 'status-success' : item.status === 'unsupported' ? 'status-used' : 'status-running';
+    return `<span class="pill ${cls}" title="${esc(item.detail || '')}">${state} ${esc(label)}</span>`;
+  }).join('');
+  const checked = r.trial_payment_probe_checked_at ? ` title="查询: ${esc(r.trial_payment_probe_checked_at)}"` : '';
+  return `<div class="trial-payment-cell-v2"${checked}><span class="trial-payment-label-v2">试用支付</span>${parts}</div>`;
 }
 function _planAction(r) {
   if (['queued','running'].includes(r.plan_check_status)) {
@@ -3439,7 +4198,11 @@ function _planAction(r) {
     const label = automatic ? (queued ? '自动查询排队中…' : '自动查询中…') : (queued ? '查询排队中…' : '查询中…');
     return `<button data-plan-check="${esc(r.id)}" disabled title="套餐查询正在执行，完成后可再次查询">${label}</button>`;
   }
-  return `<button data-plan-check="${esc(r.id)}" title="查询当前套餐；free 账号会检查 Plus 试用资格">查套餐</button>`;
+  const trialStatus = String(r.trial_payment_probe_status || '').toLowerCase();
+  const trialButton = ['queued','running'].includes(trialStatus)
+    ? `<button data-trial-payment-check="${esc(r.id)}" disabled title="逐项探测 Momo、PayPal、GoPay">支付查询中…</button>`
+    : `<button data-trial-payment-check="${esc(r.id)}" title="逐项探测 Momo、PayPal、GoPay；只创建 checkout 预览，不确认支付">查试用支付</button>`;
+  return `<button data-plan-check="${esc(r.id)}" title="查询当前套餐；free 账号会检查 Plus 试用资格">查套餐</button>${trialButton}`;
 }
 function _fmtExtractExpire(v) {
   if (!v) return '';
@@ -3490,6 +4253,9 @@ function _codexAction(r) {
     return `<button class="danger" data-codex-stop="${esc(r.email)}" title="停止该账号正在进行的 Codex 补跑">停止补跑</button> <button data-codex-reset-retrying="${esc(r.email)}" title="只重置状态；不会向运行线程发送停止信号">重置状态</button>`;
   }
   if (s === 'deactivated') return '';
+  if (!CODEX_AUTHORIZATION_ENABLED) {
+    return `<span class="acc-v2-muted" title="Codex 授权已关闭，开启设置后可手动补跑">Codex 已关闭</span>`;
+  }
   const label = s === 'success' ? '重新补跑 Codex' : '补跑 Codex';
   return `<button data-codex-retry="${esc(r.email)}" title="重新跑一次 Codex 授权（会消耗 1 封邮箱 OTP + 1 个接码短信）">${label}</button>`;
 }
@@ -3560,8 +4326,9 @@ function renderAccounts() {
       <td class="col-source">${esc(r.email_source || '-')}</td>
       <td class="col-token">${_tokenCellV2(r)}</td>
       <td class="col-password">${r.password ? `<span class="mono" title="${esc(r.password)}">${esc(short(r.password, 18))}</span>` : '<span class="acc-v2-muted">-</span>'}</td>
-      <td class="col-plan">${_planCell(r)}<div class="acc-v2-sub">${_extractLinkCell(r)}</div></td>
+      <td class="col-plan"><div class="account-category-v2">${_accountCategoryBadgeV2(r)}</div><div class="acc-v2-sub">${_planCell(r)}</div><div class="acc-v2-sub">${_extractLinkCell(r)}</div></td>
       <td class="col-note" title="${esc(r.note || '')}">${r.note ? esc(short(r.note, 80)) : '<span class="acc-v2-muted">-</span>'}</td>
+      <td class="col-country" title="${esc(proxyProviderLabelV2(r.registration_proxy_provider))}">${esc(proxyCountryLabelV2(r.registration_proxy_country))}</td>
       <td class="col-small">${_totpCellV2(r)}</td>
       <td class="col-status">${_codexCellV2(r)}</td>
       <td class="col-time" title="${esc(r.created_at || '-')}">${esc(r.created_at || '-')}</td>
@@ -3578,7 +4345,7 @@ function renderAccounts() {
 
   const bodyV2 = $('#accountsBodyV2');
   if (bodyV2) {
-    bodyV2.innerHTML = rows.map(rowHtmlV2).join('') || '<tr><td colspan="12" style="text-align:center;color:#909399;padding:28px;">暂无账号</td></tr>';
+    bodyV2.innerHTML = rows.map(rowHtmlV2).join('') || '<tr><td colspan="13" style="text-align:center;color:#909399;padding:28px;">暂无账号</td></tr>';
   }
   updateAccountSelectionUi(rows);
   _renderPager('accounts', total);
@@ -3592,15 +4359,18 @@ function updateAccountSelectionUi(pageRows = null) {
   const archiveLabel = SHOW_ARCHIVED_ACCOUNTS ? '恢复选中' : '归档选中';
   const archiveTitle = SHOW_ARCHIVED_ACCOUNTS ? '把选中的归档账号恢复到默认账号列表' : '归档选中的账号；默认账号列表将不再查询/显示这些账号';
   const v2Ids = [
-    'btnCheckSelectedPlansV2', 'btnExtractSelectedLinksV2',
+    'btnCheckSelectedPlansV2', 'btnCheckSelectedTrialPaymentsV2', 'btnExtractSelectedLinksV2',
     'btnRetrySelectedCodexV2', 'btnDownloadSelectedCpaV2', 'btnStopSelectedCodexV2',
-    'btnSetupSelectedTotpV2', 'btnNoteSelectedAccountsV2', 'btnCopySelectedLinesV2', 'btnCopySelectedTokensV2', 'btnCopySelectedEmailsV2',
+    'btnNoteSelectedAccountsV2', 'btnCopySelectedLinesV2', 'btnCopySelectedTokensV2', 'btnCopySelectedEmailsV2',
     'btnDownloadSelectedTxtV2', 'btnArchiveSelectedAccountsV2', 'btnDeleteSelectedAccountsV2',
   ];
   v2Ids.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.disabled = none;
+    el.disabled = none || (id === 'btnRetrySelectedCodexV2' && !CODEX_AUTHORIZATION_ENABLED);
+    if (id === 'btnRetrySelectedCodexV2' && !CODEX_AUTHORIZATION_ENABLED) {
+      el.title = 'Codex 授权已关闭，开启设置后可手动补跑';
+    }
     if (id === 'btnArchiveSelectedAccountsV2') {
       el.textContent = archiveLabel;
       el.title = archiveTitle;
@@ -3777,6 +4547,12 @@ async function onAccountsBodyClick(e) {
   const planBtn = e.target.closest('[data-plan-check]');
   if (planBtn) {
     await checkOnePlan(Number(planBtn.dataset.planCheck), planBtn);
+    return;
+  }
+
+  const trialPaymentBtn = e.target.closest('[data-trial-payment-check]');
+  if (trialPaymentBtn) {
+    await checkOneTrialPayments(Number(trialPaymentBtn.dataset.trialPaymentCheck), trialPaymentBtn);
     return;
   }
 
@@ -3961,19 +4737,7 @@ async function applyAccountsArchivedFilter(on) {
 }
 async function applyAccountsPlusFilter(on) {
   SHOW_PLUS_ACCOUNTS_ONLY = !!on;
-  if (SHOW_PLUS_ACCOUNTS_ONLY) SHOW_PLUS_TRIAL_ACCOUNTS_ONLY = false;
   setAccountsFilterToggle($('#showPlusAccountsOnlyV2'), SHOW_PLUS_ACCOUNTS_ONLY);
-  setAccountsFilterToggle($('#showPlusTrialAccountsOnlyV2'), SHOW_PLUS_TRIAL_ACCOUNTS_ONLY);
-  ACCOUNT_SELECTED.clear();
-  PAGERS.accounts.page = 1;
-  await loadAccounts();
-  await pollAccountPlanStatuses();
-}
-async function applyAccountsPlusTrialFilter(on) {
-  SHOW_PLUS_TRIAL_ACCOUNTS_ONLY = !!on;
-  if (SHOW_PLUS_TRIAL_ACCOUNTS_ONLY) SHOW_PLUS_ACCOUNTS_ONLY = false;
-  setAccountsFilterToggle($('#showPlusAccountsOnlyV2'), SHOW_PLUS_ACCOUNTS_ONLY);
-  setAccountsFilterToggle($('#showPlusTrialAccountsOnlyV2'), SHOW_PLUS_TRIAL_ACCOUNTS_ONLY);
   ACCOUNT_SELECTED.clear();
   PAGERS.accounts.page = 1;
   await loadAccounts();
@@ -4010,11 +4774,12 @@ async function refreshAccountsList(btn) {
     PAGERS.accounts.page = 1;
     loadAccounts();
   });
-  const totpV2 = $('#totpStatusFilterV2');
-  if (totpV2) totpV2.addEventListener('change', () => {
+  const categoryV2 = $('#accountCategoryFilterV2');
+  if (categoryV2) categoryV2.addEventListener('change', () => {
     ACCOUNT_SELECTED.clear();
     PAGERS.accounts.page = 1;
     loadAccounts();
+    pollAccountPlanStatuses();
   });
 
   const archivedV2 = $('#showArchivedAccountsV2');
@@ -4024,10 +4789,6 @@ async function refreshAccountsList(btn) {
   const plusV2 = $('#showPlusAccountsOnlyV2');
   if (plusV2) plusV2.addEventListener('click', () => {
     applyAccountsPlusFilter(!SHOW_PLUS_ACCOUNTS_ONLY);
-  });
-  const plusTrialV2 = $('#showPlusTrialAccountsOnlyV2');
-  if (plusTrialV2) plusTrialV2.addEventListener('click', () => {
-    applyAccountsPlusTrialFilter(!SHOW_PLUS_TRIAL_ACCOUNTS_ONLY);
   });
   const refreshV2 = $('#btnRefreshAccountsV2');
   if (refreshV2) refreshV2.addEventListener('click', () => refreshAccountsList(refreshV2));
@@ -4098,42 +4859,6 @@ async function setupAccountTotp(id, btn) {
   }
 }
 
-async function setupSelectedTotp() {
-  const ids = Array.from(ACCOUNT_SELECTED).map(Number);
-  if (!ids.length) { showToast('请先选择账号'); return; }
-  if (!confirm(`确定为选中的 ${ids.length} 个账号批量开启 2FA？\n\n任务会在后台排队执行，完成后自动把 TOTP 密钥写回账号信息。\n已经开启、没有 Token 或正在设置中的账号会自动跳过。`)) return;
-
-  const btn = document.getElementById('btnSetupSelectedTotpV2');
-  if (!btn) return;
-  const oldText = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '入队中…';
-  try {
-    const r = await api('/api/accounts/totp-setup-bulk', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({account_ids: ids}),
-    });
-    (r.started || []).forEach(item => ACCOUNT_SELECTED.delete(Number(item.id)));
-    const skippedCount = Number(r.skipped_count ?? (r.skipped || []).length) || 0;
-    const busyCount = Number(r.busy_count ?? (r.busy || []).length) || 0;
-    const failedCount = Number(r.failed_count ?? (r.failed || []).length) || 0;
-    const details = [];
-    if (skippedCount) details.push(`跳过 ${skippedCount} 个`);
-    if (busyCount) details.push(`进行中 ${busyCount} 个`);
-    if (failedCount) details.push(`失败 ${failedCount} 个`);
-    showToast(`已入队 ${r.started_count || 0} 个${details.length ? '，' + details.join('，') : ''}`);
-    planStatusRevision = '';
-    await loadAccounts();
-    await pollAccountPlanStatuses();
-  } catch (err) {
-    showToast('批量开启 2FA 失败: ' + err.message);
-  } finally {
-    btn.textContent = oldText;
-    updateAccountSelectionUi();
-  }
-}
-
 async function copySelectedAccountLines() {
   const ids = Array.from(ACCOUNT_SELECTED).map(Number);
   if (!ids.length) { showToast('请先选择账号'); return; }
@@ -4175,7 +4900,8 @@ function bindDateFilterPanel({ btnId, panelId, fromId, toId, onApply }) {
     const t = document.getElementById(toId); if (t) t.value = end;
   };
   const syncBtnText = () => {
-    btn.textContent = (start || end) ? `📅 ${start || '…'} ~ ${end || '…'}` : '📅 日期筛选';
+    const icon = '<svg class="date-filter-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><line x1="3" y1="9" x2="21" y2="9"/></svg>';
+    btn.innerHTML = (start || end) ? `${icon}${start || '…'} ~ ${end || '…'}` : `${icon}日期筛选`;
   };
   const close = () => {
     if (wrap) wrap.classList.remove('open');
@@ -4309,7 +5035,7 @@ async function downloadSelectedAccountTxt() {
   if (!ids.length) { showToast('请先选择账号'); return; }
   let lines = [];
   try {
-    lines = await fetchAccountSecrets(ids, 'copy_line');
+    lines = await fetchAccountSecrets(ids, 'download_txt_line');
   } catch(err) { showToast('生成 TXT 失败: ' + err.message); return; }
   if (!lines.length) { showToast('选中账号没有可下载整行'); return; }
   const now = new Date();
@@ -4380,6 +5106,26 @@ async function checkOnePlan(id, btn) {
     await pollAccountPlanStatuses();
   } catch(err) {
     showToast(err.message);
+    await pollAccountPlanStatuses();
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+async function checkOneTrialPayments(id, btn) {
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '查询中…';
+  try {
+    const r = await api('/api/accounts/check-trial-payments', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({account_id: id}),
+    });
+    showToast(r.message || '试用支付方式探测已入队（仅预览，不会扣款）');
+    await pollAccountPlanStatuses();
+  } catch(err) {
+    showToast('试用支付查询失败: ' + err.message);
     await pollAccountPlanStatuses();
     btn.disabled = false;
     btn.textContent = old;
@@ -4630,6 +5376,31 @@ async function checkSelectedPlans() {
   }
 }
 
+async function checkSelectedTrialPayments() {
+  const ids = Array.from(ACCOUNT_SELECTED);
+  if (!ids.length) { showToast('请先选择账号'); return; }
+  const btn = $('#btnCheckSelectedTrialPaymentsV2');
+  if (!btn) return;
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '查询中…';
+  try {
+    const r = await api('/api/accounts/check-trial-payments-bulk', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({account_ids: ids}),
+    });
+    const skipped = Number(r.skipped_count || 0) + Number(r.busy_count || 0) + Number(r.failed_count || 0);
+    showToast(`已入队 ${r.started_count || 0} 个试用支付探测${skipped ? `，跳过/失败 ${skipped} 个` : ''}`);
+    await pollAccountPlanStatuses();
+  } catch(err) {
+    showToast('批量试用支付查询失败: ' + err.message);
+    updateAccountSelectionUi();
+  } finally {
+    btn.textContent = old;
+  }
+}
+
 async function checkSelectedLive(idsArg = null, btnArg = null) {
   const ids = idsArg || Array.from(ACCOUNT_SELECTED);
   if (ids.length === 0) { showToast('请先选择账号'); return; }
@@ -4831,6 +5602,7 @@ async function stopSelectedCodex() {
 }
 
 async function retrySelectedCodex() {
+  if (!CODEX_AUTHORIZATION_ENABLED) { showToast('Codex 授权已关闭，已跳过手动补跑'); return; }
   const ids = Array.from(ACCOUNT_SELECTED);
   if (ids.length === 0) { showToast('请先选择账号'); return; }
   const workers = getCodexBulkWorkers();
@@ -4886,11 +5658,11 @@ async function copyCurrentPageLines() {
     if (el) el.addEventListener('click', fn);
   };
   bind('btnCheckSelectedPlansV2', checkSelectedPlans);
+  bind('btnCheckSelectedTrialPaymentsV2', checkSelectedTrialPayments);
   bind('btnExtractSelectedLinksV2', extractSelectedLinks);
   bind('btnRetrySelectedCodexV2', retrySelectedCodex);
   bind('btnDownloadSelectedCpaV2', downloadSelectedCpa);
   bind('btnStopSelectedCodexV2', stopSelectedCodex);
-  bind('btnSetupSelectedTotpV2', setupSelectedTotp);
   bind('btnNoteSelectedAccountsV2', noteSelectedAccounts);
   bind('btnCopySelectedLinesV2', copySelectedAccountLines);
   bind('btnCopySelectedTokensV2', copySelectedAccountTokens);
@@ -4903,6 +5675,269 @@ async function copyCurrentPageLines() {
 })();
 
 // ---------- 邮箱池 ----------
+let REBIND_RESOURCES_V2 = {selected: '', resources: []};
+let REBIND_TRIAL_ACCOUNTS_V2 = [];
+let REBIND_TRIAL_META_V2 = {checked_count: 0, pending_count: 0};
+let REBIND_COMPLETED_V2 = [];
+let rebindTrialTimerV2 = null;
+
+function rebindResourceBySourceV2(source) {
+  return (REBIND_RESOURCES_V2.resources || []).find(item => item.source === source) || null;
+}
+function rebindResourceLabelV2(source) {
+  const item = rebindResourceBySourceV2(source);
+  return item?.label || source || '自动识别';
+}
+function setRebindStatusV2(text, kind = '') {
+  const el = $('#rebindStatusV2');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = `rebind-resource-status-v2${kind ? ' is-' + kind : ''}`;
+}
+function rebindTrialStatusV2(row) {
+  const status = row.rebind_status || '';
+  const labels = {queued: '排队中', running: '执行中', success: '已完成', failed: '失败', stopped: '已停止'};
+  const label = labels[status] || '未换绑';
+  const target = row.rebind_new_email ? ` → ${esc(row.rebind_new_email)}` : '';
+  const detail = row.rebind_error || row.rebind_message || '';
+  const cls = status === 'success' ? 'status-success' : status === 'failed' ? 'status-failed' : status === 'queued' || status === 'running' ? 'status-running' : 'status-used';
+  return `<span class="pill ${cls}" title="${esc(detail)}">${label}</span><span class="rebind-trial-sub-v2">${target}${detail ? ` · ${esc(short(detail, 100))}` : ''}</span>`;
+}
+async function openRebindReasonV2(accountId) {
+  const panel = $('#rebindReasonPanelV2');
+  const account = REBIND_TRIAL_ACCOUNTS_V2.find(row => String(row.id) === String(accountId));
+  if (!panel) return;
+  $('#rebindReasonAccountV2').textContent = `#${accountId}${account?.email ? ` · ${account.email}` : ''}`;
+  $('#rebindReasonSummaryV2').textContent = '正在读取完整失败原因…';
+  $('#rebindReasonContentV2').textContent = '加载中…';
+  panel.classList.remove('hidden');
+  updateModalScrollLock();
+  try {
+    const result = await api(`/api/accounts/${encodeURIComponent(accountId)}/rebind-email`);
+    const reason = String(result.rebind_error || result.rebind_message || '').trim() || '后台未返回具体失败原因';
+    const code = result.rebind_code || '未返回';
+    const status = result.rebind_status || '未换绑';
+    $('#rebindReasonSummaryV2').textContent = `错误代码：${code}\n失败原因：${reason}`;
+    $('#rebindReasonContentV2').textContent = [
+      `状态：${status}`,
+      `原邮箱：${result.rebind_old_email || account?.email || '-'}`,
+      `目标邮箱：${result.rebind_new_email || '-'}`,
+      `失败原因：${reason}`,
+      '',
+      '执行日志：',
+      result.log || '(暂无日志)',
+    ].join('\n');
+  } catch (err) {
+    $('#rebindReasonSummaryV2').textContent = '读取失败原因失败：' + err.message;
+    $('#rebindReasonContentV2').textContent = '请刷新资格号后重试。';
+  }
+}
+function renderRebindTrialAccountsV2() {
+  const body = $('#rebindTrialAccountsBodyV2');
+  const rows = REBIND_TRIAL_ACCOUNTS_V2 || [];
+  const eligible = $('#rebindTrialEligibleCountV2');
+  const checked = $('#rebindTrialCheckedCountV2');
+  const pending = $('#rebindTrialPendingCountV2');
+  if (eligible) eligible.textContent = rows.length;
+  if (checked) checked.textContent = Number(REBIND_TRIAL_META_V2.checked_count || 0);
+  if (pending) pending.textContent = Number(REBIND_TRIAL_META_V2.pending_count || 0);
+  if (!body) return;
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="6" class="rebind-trial-empty-v2">暂无试用资格号。请先到「账号管理」执行查套餐，确认 free 账号的 Plus 试用资格。</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(row => {
+    const busy = ['queued', 'running'].includes(row.rebind_status);
+    const checkedAt = row.plan_checked_at || row.plan_last_success_at || '-';
+    const title = row.plus_trial_title || 'Plus 试用资格';
+    const paymentMethods = Array.isArray(row.trial_payment_methods) ? row.trial_payment_methods : [];
+    const paymentText = paymentMethods.length
+      ? paymentMethods.map(item => `${item.status === 'supported' ? '✓' : item.status === 'unsupported' ? '—' : '?'} ${item.label || item.id}`).join(' · ')
+      : '未探测 Momo / PayPal / GoPay';
+    const hasReason = row.rebind_status === 'failed' || row.rebind_error || row.rebind_message || row.rebind_code;
+    const reasonButton = hasReason
+      ? `<button type="button" class="rebind-trial-reason-v2" data-trial-rebind-reason="${esc(row.id)}">查看原因</button>`
+      : '';
+    const button = busy
+      ? '<button type="button" class="rebind-trial-action-v2" disabled>换绑中…</button>'
+      : `<button type="button" class="rebind-trial-action-v2" data-trial-rebind="${esc(row.id)}">自动换绑</button>`;
+    return `<tr>
+      <td><span class="rebind-trial-account-id-v2">#${esc(row.id)}</span><div class="rebind-trial-sub-v2">free</div></td>
+      <td><span class="rebind-trial-email-v2">${esc(row.email || '-')}</span></td>
+      <td><span class="pill status-success" title="${esc(row.plus_trial_summary || '')}">${esc(title)}</span><div class="rebind-trial-sub-v2">可用试用资格</div><div class="rebind-trial-sub-v2">${esc(paymentText)}</div></td>
+      <td class="muted">${esc(checkedAt)}</td>
+      <td>${rebindTrialStatusV2(row)}</td>
+      <td><div class="rebind-trial-actions-v2">${reasonButton}${button}</div></td>
+    </tr>`;
+  }).join('');
+}
+function rebindCompletedTextV2() {
+  return (REBIND_COMPLETED_V2 || [])
+    .map(row => String(row.new_email || '').trim())
+    .filter(Boolean)
+    .join('\n');
+}
+function renderRebindCompletedV2() {
+  const rows = REBIND_COMPLETED_V2 || [];
+  const count = $('#rebindCompletedCountV2');
+  const output = $('#rebindCompletedOutputV2');
+  const body = $('#rebindCompletedBodyV2');
+  const copy = $('#btnCopyRebindCompletedV2');
+  const download = $('#btnDownloadRebindCompletedV2');
+  const text = rebindCompletedTextV2();
+  if (count) count.textContent = `${rows.length} 个`;
+  if (output) output.value = text;
+  if (copy) copy.disabled = !text;
+  if (download) download.disabled = !text;
+  if (!body) return;
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="5" class="rebind-trial-empty-v2">暂无已完成换绑。成功记录会在这里单独输出。</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(row => `<tr>
+    <td><span class="rebind-trial-account-id-v2">#${esc(row.id || '-')}</span></td>
+    <td><span class="rebind-trial-email-v2">${esc(row.old_email || '-')}</span></td>
+    <td><span class="rebind-trial-email-v2">${esc(row.new_email || '-')}</span></td>
+    <td class="muted">${esc(row.completed_at || '-')}</td>
+    <td><span class="pill status-success">换绑完成</span></td>
+  </tr>`).join('');
+}
+async function loadRebindCompletedV2() {
+  try {
+    const res = await api('/api/rebind/completed');
+    REBIND_COMPLETED_V2 = Array.isArray(res.items) ? res.items : [];
+    renderRebindCompletedV2();
+  } catch (err) {
+    REBIND_COMPLETED_V2 = [];
+    renderRebindCompletedV2();
+    setRebindStatusV2('换绑完成列表加载失败：' + err.message, 'error');
+  }
+}
+async function copyRebindCompletedV2() {
+  const text = rebindCompletedTextV2();
+  if (!text) { showToast('暂无已完成换绑邮箱'); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(`已复制 ${text.split('\n').length} 个完成邮箱`);
+  } catch (err) {
+    const output = $('#rebindCompletedOutputV2');
+    if (output) { output.focus(); output.select(); }
+    showToast('复制失败，请手动复制输出框内容');
+  }
+}
+function downloadRebindCompletedV2() {
+  const text = rebindCompletedTextV2();
+  if (!text) { showToast('暂无已完成换绑邮箱'); return; }
+  const blob = new Blob([text + '\n'], {type: 'text/plain;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `rebind-completed-${new Date().toISOString().slice(0, 10)}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function scheduleRebindTrialRefreshV2() {
+  clearTimeout(rebindTrialTimerV2);
+  if ((REBIND_TRIAL_ACCOUNTS_V2 || []).some(row => ['queued', 'running'].includes(row.rebind_status))) {
+    rebindTrialTimerV2 = setTimeout(loadRebindTrialAccountsV2, 4000);
+  }
+}
+async function loadRebindTrialAccountsV2() {
+  try {
+    const res = await api('/api/rebind/accounts?eligible=1');
+    REBIND_TRIAL_ACCOUNTS_V2 = res.items || [];
+    REBIND_TRIAL_META_V2 = res || {checked_count: 0, pending_count: 0};
+    renderRebindTrialAccountsV2();
+    await loadRebindCompletedV2();
+    scheduleRebindTrialRefreshV2();
+  } catch (err) {
+    REBIND_TRIAL_ACCOUNTS_V2 = [];
+    renderRebindTrialAccountsV2();
+    setRebindStatusV2('试用资格号加载失败：' + err.message, 'error');
+  }
+}
+function renderRebindResourceOptionsV2() {
+  const select = $('#rebindProviderV2');
+  if (!select) return;
+  const resources = REBIND_RESOURCES_V2.resources || [];
+  const selectedLabel = rebindResourceLabelV2(REBIND_RESOURCES_V2.selected);
+  const ready = resources.filter(item => item.ready);
+  select.innerHTML = `<option value="auto">自动识别（${esc(selectedLabel)}）</option>` + ready
+    .filter(item => item.source !== REBIND_RESOURCES_V2.selected)
+    .map(item => `<option value="${esc(item.source)}">${esc(item.label)}</option>`).join('');
+  const detected = $('#rebindDetectedV2');
+  const help = $('#rebindResourceHelpV2');
+  if (detected) {
+    detected.textContent = REBIND_RESOURCES_V2.selected ? `已识别：${selectedLabel}` : '未识别到可用资源';
+    detected.classList.toggle('is-empty', !REBIND_RESOURCES_V2.selected);
+  }
+  if (help) {
+    const lines = resources.map(item => {
+      const domains = item.domains?.length ? `（${item.domains.join('、')}）` : '';
+      return `${item.ready ? '✓' : '·'} ${item.label}${domains}：${item.message || ''}`;
+    });
+    help.textContent = lines.join('\n') || '没有检测到邮箱资源';
+  }
+}
+async function loadRebindPageV2() {
+  try {
+    const res = await api('/api/rebind/resources');
+    REBIND_RESOURCES_V2 = res || {selected: '', resources: []};
+    renderRebindResourceOptionsV2();
+    await loadRebindTrialAccountsV2();
+  } catch (err) {
+    setRebindStatusV2('邮箱资源识别失败：' + err.message, 'error');
+  }
+}
+async function startResourceRebindV2(accountId) {
+  const account = REBIND_TRIAL_ACCOUNTS_V2.find(row => String(row.id) === String(accountId));
+  const provider = $('#rebindProviderV2')?.value || 'auto';
+  const timeout = Number($('#rebindTimeoutV2')?.value || 120);
+  if (!account) { showToast('试用资格号不存在或已刷新'); return; }
+  if (!Number.isFinite(timeout) || timeout < 5 || timeout > 900) { showToast('等待秒数必须在 5-900 之间'); return; }
+  const resource = rebindResourceBySourceV2(provider === 'auto' ? REBIND_RESOURCES_V2.selected : provider);
+  if (!resource?.ready) { setRebindStatusV2('当前没有可用的邮箱资源', 'error'); return; }
+  const label = provider === 'auto' ? rebindResourceLabelV2(REBIND_RESOURCES_V2.selected) : rebindResourceLabelV2(provider);
+  if (!confirm(`将为 #${account.id}（${account.email || '-'}）使用${label}自动创建新邮箱并收取验证码，确认开始换绑吗？`)) return;
+  setRebindStatusV2(`正在提交 #${account.id} 的换绑任务…`);
+  try {
+    const res = await api(`/api/accounts/${encodeURIComponent(accountId)}/rebind-email`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({provider, mail_timeout: timeout}),
+    });
+    showToast(res.message || '邮箱换绑任务已入队');
+    setRebindStatusV2(`#${account.id} 已入队：${res.new_email || '自动分配邮箱'} · ${label}`);
+    await loadRebindTrialAccountsV2();
+  } catch (err) {
+    setRebindStatusV2('提交换绑失败：' + err.message, 'error');
+  }
+}
+(function bindRebindResourceV2() {
+  const refresh = $('#btnRefreshRebindResourcesV2');
+  const trialRefresh = $('#btnRefreshRebindTrialV2');
+  const completedRefresh = $('#btnRefreshRebindCompletedV2');
+  const completedCopy = $('#btnCopyRebindCompletedV2');
+  const completedDownload = $('#btnDownloadRebindCompletedV2');
+  const body = $('#rebindTrialAccountsBodyV2');
+  if (refresh) refresh.addEventListener('click', loadRebindPageV2);
+  if (trialRefresh) trialRefresh.addEventListener('click', loadRebindTrialAccountsV2);
+  if (completedRefresh) completedRefresh.addEventListener('click', loadRebindCompletedV2);
+  if (completedCopy) completedCopy.addEventListener('click', copyRebindCompletedV2);
+  if (completedDownload) completedDownload.addEventListener('click', downloadRebindCompletedV2);
+  if (body) body.addEventListener('click', (event) => {
+    const reasonButton = event.target.closest('[data-trial-rebind-reason]');
+    if (reasonButton) {
+      openRebindReasonV2(reasonButton.dataset.trialRebindReason);
+      return;
+    }
+    const button = event.target.closest('[data-trial-rebind]');
+    if (button) startResourceRebindV2(button.dataset.trialRebind);
+  });
+})();
+
 function getPoolSource() {
   const v2 = document.getElementById('poolSourceV2');
   return (v2 && v2.value) || 'all';
@@ -4931,7 +5966,7 @@ function getOutlookQuery() {
   const el = document.getElementById('qOutlookV2');
   return (el ? el.value : '').trim();
 }
-function poolKey(r) { return `${r.source || getPoolSource() || 'all'}|${r.email || ''}`; }
+function poolKey(r) { return `${r.source || getPoolSource() || 'outlook'}|${r.email || ''}`; }
 function poolLabel(src) {
   return ({outlook:'Outlook', generic_api:'通用API', cloudflare_domain:'域名邮箱'})[src] || src || '-';
 }
@@ -4975,7 +6010,7 @@ function _outlookTokenCell(r) {
   return `<span class="acc-v2-token-none">无Token</span>`;
 }
 function _outlookMoreMenu(r) {
-  const src = esc(r.source || getPoolSource() || 'all');
+  const src = esc(r.source || 'outlook');
   const email = esc(r.email);
   const items = [
     cbtn('复制Token', r.access_token, 'good'),
@@ -4992,7 +6027,7 @@ function renderOutlook() {
   const bodyV2 = $('#outlookBodyV2');
   if (!bodyV2) return;
   bodyV2.innerHTML = rows.map(r => {
-      const src = esc(r.source || getPoolSource() || 'all');
+      const src = esc(r.source || 'outlook');
       const email = esc(r.email);
       return `
     <tr>
@@ -5092,11 +6127,7 @@ async function onOutlookBodyClick(e) {
   try {
     if (poolAct === 'delete') {
       if (!confirm(`确定从邮箱池删除 ${email}？此操作不可撤销。`)) return;
-      const r = await api('/api/outlook/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, source}) });
-      if (!r.deleted) {
-        showToast('删除失败：邮箱不存在或来源不匹配');
-        return;
-      }
+      await api('/api/outlook/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, source}) });
       OUTLOOK_SELECTED.delete(`${source}|${email}`);
       showToast('已删除');
     } else {
@@ -5251,7 +6282,7 @@ async function doImportOutlook() {
   if (submitBtn) submitBtn.disabled = true;
   try {
     const source = sourceEl ? sourceEl.value : 'outlook';
-    const as_registered = registeredEl ? !!registeredEl.checked : false;
+    const as_registered = registeredEl ? !!registeredEl.checked : true;
     const r = await api('/api/outlook/import', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, source, as_registered}) });
     const mode = r.as_registered ? '已注册账号' : '邮箱池素材';
     const msg = `按 ${mode} 导入：解析 ${r.parsed} 行，新增 ${r.inserted}，跳过 ${r.skipped}${r.as_registered ? '；可到“账号”页选择后批量补跑 Codex' : ''}`;
@@ -5428,7 +6459,7 @@ function renderCodex() {
       <td class="col-time" title="${esc(r.expired || '-')}">${esc(r.expired || '-')}</td>
       <td class="col-actions">
         <div class="acc-v2-actions">
-          <button type="button" class="primary" data-codex-download="${esc(r.filename)}" title="从 SQLite 下载 JSON/回执">下载凭证</button>
+          <button type="button" class="primary" data-codex-download="${esc(r.filename)}" title="下载本地 codex_accounts/ 中的 JSON/回执">本地下载</button>
           <button type="button" class="danger" data-codex-delete="${esc(r.filename)}" title="删除本地 Codex JSON 凭证文件">删除</button>
           <div class="acc-v2-more">
             <button type="button" class="acc-v2-more-btn" data-codex-more-toggle aria-haspopup="true">更多</button>
@@ -5653,7 +6684,7 @@ async function codexDownloadBulkCpa() {
 async function codexDeleteBulk() {
   if (CODEX_SELECTED.size === 0) return;
   const filenames = Array.from(CODEX_SELECTED);
-  if (!confirm(`确定删除选中的 ${filenames.length} 个 Codex 凭证吗？\n\n会删除 SQLite 中的凭证记录。此操作不可撤销。`)) return;
+  if (!confirm(`确定删除选中的 ${filenames.length} 个 Codex 凭证吗？\n\n会删除本地 codex_accounts/ 下的 JSON 文件，并清理导出标记。此操作不可撤销。`)) return;
   const btn = $('#btnCodexDeleteBulkV2');
   if (btn) btn.disabled = true;
   try {
@@ -5711,7 +6742,46 @@ async function codexDeleteBulk() {
 let CONFIG_EMAIL_ACTIVE_SECTION_V2 = '通用邮箱 / OTP';
 let CONFIG_SMS_ACTIVE_SECTION_V2 = '通用接码';
 let CONFIG_CODEX_ACTIVE_SECTION_V2 = '基础配置';
+let CONFIG_DISPLAY_MODE_V2 = 'advanced';
 const CONFIG_PENDING_UPDATES = {};
+
+const BASIC_CONFIG_GROUPS_V2 = new Set(['功能开关', '注册方式', '邮箱 / OTP', '内置代理', '代理池', 'Codex', 'WebUI 授权']);
+
+function configGroupSearchText(name, fields) {
+  return [name, configGroupDisplayName(name), configSectionIntro(name), ...(fields || []).flatMap(f => [f.key, f.label, f.help])]
+    .filter(Boolean).join(' ').toLocaleLowerCase();
+}
+
+function filterConfigSections() {
+  const search = String($('#configSearchV2')?.value || '').trim().toLocaleLowerCase();
+  const groups = configGroups();
+  const names = Object.keys(groups);
+  const visibleNames = names.filter(name => {
+    if (search) return configGroupSearchText(name, groups[name]).includes(search);
+    return CONFIG_DISPLAY_MODE_V2 === 'advanced' || BASIC_CONFIG_GROUPS_V2.has(name);
+  });
+  const visibleSet = new Set(visibleNames);
+  $$('#configSectionsV2 .config-section-v2').forEach(section => {
+    section.classList.toggle('hidden', !visibleSet.has(section.dataset.configSection));
+  });
+  $$('#configNavV2 [data-config-nav]').forEach(button => {
+    button.classList.toggle('hidden', !visibleSet.has(button.dataset.configNav));
+  });
+  $$('[data-config-mode]').forEach(button => {
+    const active = button.dataset.configMode === CONFIG_DISPLAY_MODE_V2;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  const count = visibleNames.length;
+  const status = $('#configFilterStatusV2');
+  if (status) status.textContent = search ? `找到 ${count} 个相关分组` : `显示 ${count} / ${names.length} 个配置分组`;
+  const modeLabel = $('#configModeLabelV2');
+  if (modeLabel) modeLabel.textContent = CONFIG_DISPLAY_MODE_V2 === 'advanced' ? '高级' : '基础';
+  const visibleCount = $('#configVisibleGroupsV2');
+  if (visibleCount) visibleCount.textContent = String(count);
+  const pendingCount = $('#configPendingCountV2');
+  if (pendingCount) pendingCount.textContent = String(Object.keys(CONFIG_PENDING_UPDATES).length);
+}
 
 function configGroups() {
   const groups = {};
@@ -5726,7 +6796,6 @@ function emailConfigSectionForKey(key) {
   if (key.startsWith('GPTMAIL_')) return ['GPTMail', 'GPTMail 临时邮箱 API 配置'];
   if (key.startsWith('MAIL_NEST_')) return ['MailNest', 'MailNest / 迈巢临时邮箱 API 配置'];
   if (key.startsWith('CLOUDMAIL_')) return ['CloudMail', 'CloudMail 域名随机邮箱、Token 和收信 API 配置'];
-  if (key.startsWith('REMAIL_')) return ['Remail', 'Remail 开放 API、项目下单和取件配置'];
   if (key.startsWith('OUTLOOK_')) return ['Outlook 邮箱池', 'Outlook 邮箱池和取件模式配置'];
   if (key.startsWith('CLOUDFLARE_')) return ['Cloudflare 临时邮箱', 'Cloudflare Worker 临时邮箱 API、鉴权与路径配置'];
   if (['EMAIL_DOMAIN','QQ_EMAIL','QQ_IMAP_PASSWORD'].includes(key)) return ['Cloudflare 域名邮箱', 'Cloudflare 转发到 QQ 邮箱后的 IMAP 收信配置'];
@@ -5791,7 +6860,7 @@ function bindRoxyWorkspaceToolsV2() {
   if (!loadBtn || !saveBtn || !sel) return;
   if (loadBtn.dataset.bound) return;
   loadBtn.dataset.bound = '1';
-  sel.addEventListener('change', () => { saveBtn.disabled = !sel.value; });
+  sel.addEventListener('change', () => syncRoxyWorkspaceSaveStateV2());
   loadBtn.addEventListener('click', () => loadRoxyWorkspaces());
   saveBtn.addEventListener('click', () => saveRoxyWorkspaceSelection());
 }
@@ -5838,8 +6907,8 @@ function configSectionIntro(name) {
   if (name === '邮箱 / OTP') return '邮箱来源、OTP 等待与各邮箱服务商参数。';
   if (name === '接码平台') return '接码通道、国家代码与本地取号服务参数。';
   if (name === '人工节奏') return '注册流程中的随机停顿节奏。';
-  if (name === '浏览器画像') return '浏览器语言、时区、出口 IP 画像与注册省流量设置。';
-  if (name === '代理池') return '代理列表与套餐/Agent 网络模式。';
+  if (name === '浏览器画像') return '浏览器语言、时区与出口 IP 画像。';
+  if (name === '代理池' || name === '内置代理') return '只使用已配置的内置代理平台；在这里填写账号密码并测试连通后保存。';
   if (name === '提链') return '提链服务地址、CDK 与并发参数。';
   return '';
 }
@@ -5936,6 +7005,7 @@ function setRegistrationDriverValue(value) {
   if (sectionMount) renderRegistrationEpSelect(sectionMount, 'configRegistrationSelectV2');
   bindRoxyWorkspaceToolsV2();
   bindCloudMailToolsV2();
+  filterConfigSections();
 }
 function renderRegistrationEpSelect(mount, wrapId) {
   if (!mount) return;
@@ -6001,24 +7071,6 @@ function renderFeatureSwitchField(f, opts = {}) {
     </div>
   `;
 }
-function renderConfigExternalLink(f) {
-  const url = String(f.external_url || '').trim();
-  if (!/^https?:\/\//i.test(url)) return '';
-  const label = String(f.external_label || '打开官网');
-  return `<a class="config-external-link" href="${attrEsc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
-}
-function renderConfigRecommendedLinks(f) {
-  const links = Array.isArray(f.recommended_links) ? f.recommended_links : [];
-  const items = links.map(item => {
-    const url = String(item?.url || '').trim();
-    if (!/^https?:\/\//i.test(url)) return '';
-    const label = String(item?.label || url);
-    const description = String(item?.description || '').trim();
-    return `<span class="config-recommendations-item"><a href="${attrEsc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>${description ? `：${esc(description)}` : ''}</span>`;
-  }).filter(Boolean).join('');
-  if (!items) return '';
-  return `<div class="config-recommendations" role="note"><span class="config-recommendations-title">推荐家宽</span>${items}</div>`;
-}
 function renderConfigPlainFieldV2(f) {
   const fv = Object.prototype.hasOwnProperty.call(CONFIG_PENDING_UPDATES, f.key) ? CONFIG_PENDING_UPDATES[f.key] : f.value;
   let control = '';
@@ -6029,22 +7081,235 @@ function renderConfigPlainFieldV2(f) {
   } else if (f.type === 'list_str_multiline') {
     control = `<textarea data-key="${attrEsc(f.key)}" placeholder="每行一条，可留空">${attrEsc((fv || []).join('\n'))}</textarea>`;
   } else {
-    const shown = isPlaceholderEmpty(fv) ? '' : fv;
+    const shown = f.secret && f.configured ? '' : (isPlaceholderEmpty(fv) ? '' : fv);
     const inputType = f.secret ? 'password' : 'text';
-    const ph = f.secret ? '保存在 .env，可留空' : '可留空';
+    const ph = f.secret ? (f.configured ? '已保存，留空保持不变' : '保存在 .env，可留空') : '可留空';
     control = `<input type="${inputType}" data-key="${attrEsc(f.key)}" value="${attrEsc(shown)}" placeholder="${ph}" autocomplete="off" spellcheck="false">`;
   }
-  const field = `
+  return `
     <label class="fld">
       ${esc(f.label)}
       <span class="hint">${esc(f.help || '')}</span>
       ${control}
     </label>
   `;
-  const decorated = f.external_url
-    ? `<div class="config-field-wrap">${field}${renderConfigExternalLink(f)}</div>`
-    : field;
-  return decorated + renderConfigRecommendedLinks(f);
+}
+function builtinProxyFieldValueV2(f, fallback = '') {
+  if (!f) return fallback;
+  return Object.prototype.hasOwnProperty.call(CONFIG_PENDING_UPDATES, f.key)
+    ? CONFIG_PENDING_UPDATES[f.key]
+    : (f.value == null ? fallback : f.value);
+}
+function builtinProxyFieldV2(fields, key) {
+  return (fields || []).find(f => f.key === key) || null;
+}
+function renderBuiltinProxyTextFieldV2(f) {
+  if (!f) return '';
+  const value = builtinProxyFieldValueV2(f, '');
+  let control = '';
+  if (f.type === 'int') {
+    control = `<input type="number" data-key="${attrEsc(f.key)}" data-proxy-input="${attrEsc(f.key)}" value="${attrEsc(isPlaceholderEmpty(value) ? '' : value)}" autocomplete="off">`;
+  } else if (f.type === 'float') {
+    control = `<input type="number" step="0.1" data-key="${attrEsc(f.key)}" data-proxy-input="${attrEsc(f.key)}" value="${attrEsc(isPlaceholderEmpty(value) ? '' : value)}" autocomplete="off">`;
+  } else {
+    const inputType = f.secret ? 'password' : 'text';
+    const shown = f.secret && f.configured ? '' : (isPlaceholderEmpty(value) ? '' : value);
+    const placeholder = f.secret ? (f.configured ? '已保存，留空保持不变' : '请输入账号/密码') : '可留空使用默认值';
+    control = `<input type="${inputType}" data-key="${attrEsc(f.key)}" data-proxy-input="${attrEsc(f.key)}" value="${attrEsc(shown)}" placeholder="${attrEsc(placeholder)}" autocomplete="off" spellcheck="false">`;
+  }
+  return `
+    <label class="fld">
+      ${esc(f.label)}
+      <span class="hint">${esc(f.help || '')}</span>
+      ${control}
+    </label>
+  `;
+}
+function renderBuiltinProxyCountryFieldV2(f, fallback = 'ID') {
+  if (!f) return '';
+  const value = String(builtinProxyFieldValueV2(f, fallback) || fallback).trim().toUpperCase();
+  const options = proxyCountryCatalogV2();
+  const known = options.some(x => String(x.value || '').toUpperCase() === value);
+  const list = known || !value ? options : [{value, label: value}, ...options];
+  return `
+    <label class="fld">
+      ${esc(f.label)}
+      <span class="hint">${esc(f.help || '')}</span>
+      <select data-key="${attrEsc(f.key)}" data-proxy-input="${attrEsc(f.key)}" aria-label="${attrEsc(f.label)}">
+        ${list.map(item => {
+          const code = String(item.value || '').toUpperCase();
+          return `<option value="${attrEsc(code)}"${code === value ? ' selected' : ''}>${attrEsc(code)} · ${esc(item.label || code)}</option>`;
+        }).join('')}
+      </select>
+    </label>
+  `;
+}
+function renderBuiltinProxyCardV2(provider, fields) {
+  const isCli = provider === 'cliproxy_traffic';
+  const prefix = isCli ? 'CLIPROXY' : 'IPROYAL';
+  const label = isCli ? 'CliProxy' : 'IPRoyal';
+  const account = builtinProxyFieldV2(fields, `${prefix}_PROXY_USERNAME`);
+  const password = builtinProxyFieldV2(fields, `${prefix}_PROXY_PASSWORD`);
+  const host = builtinProxyFieldV2(fields, `${prefix}_FORWARD_HOST`);
+  const port = builtinProxyFieldV2(fields, `${prefix}_FORWARD_PORT`);
+  const sticky = builtinProxyFieldV2(fields, `${prefix}_STICKY_MINUTES`);
+  const country = builtinProxyFieldV2(fields, `${prefix}_PROXY_COUNTRY`);
+  const accountReady = !!account && (account.configured || !isPlaceholderEmpty(builtinProxyFieldValueV2(account, '')));
+  const passwordReady = !!password && (password.configured || !isPlaceholderEmpty(builtinProxyFieldValueV2(password, '')));
+  const testButton = isCli
+    ? `<button type="button" class="btn primary" data-proxy-test-save="cliproxy_traffic">测试连通并保存</button>`
+    : `<button type="button" class="btn primary" data-proxy-test-save="iproyal_traffic">测试连通并保存</button>`;
+  return `
+    <div class="builtin-proxy-card-v2${getBuiltinProxyProviderV2() === provider ? ' is-active' : ''}" data-proxy-card="${attrEsc(provider)}">
+      <div class="builtin-proxy-card-v2-head">
+        <div class="builtin-proxy-card-v2-title">${esc(label)} 内置代理</div>
+        <span class="builtin-proxy-card-v2-badge">${accountReady && passwordReady ? '账号密码已填写' : '等待账号密码'}</span>
+      </div>
+      <div class="builtin-proxy-card-v2-grid">
+        ${renderBuiltinProxyTextFieldV2(account)}
+        ${renderBuiltinProxyTextFieldV2(password)}
+        ${renderBuiltinProxyCountryFieldV2(country)}
+      </div>
+      <details class="builtin-proxy-advanced-v2">
+        <summary>连接参数（通常不需要修改）</summary>
+        <div class="config-section-v2-body">
+          ${renderBuiltinProxyTextFieldV2(host)}
+          ${renderBuiltinProxyTextFieldV2(port)}
+          ${renderBuiltinProxyTextFieldV2(sticky)}
+        </div>
+      </details>
+      <div class="builtin-proxy-test-row-v2">
+        <span class="builtin-proxy-test-status-v2" data-proxy-test-status="${attrEsc(provider)}">未测试；点击后会先测试，成功才保存到 .env</span>
+        ${testButton}
+      </div>
+    </div>
+  `;
+}
+function getBuiltinProxyProviderV2() {
+  const f = builtinProxyFieldV2(CONFIG, 'PROXY_PROVIDER');
+  const value = String(builtinProxyFieldValueV2(f, 'cliproxy_traffic') || 'cliproxy_traffic').trim().toLowerCase();
+  return ['cliproxy_traffic', 'iproyal_traffic'].includes(value) ? value : 'cliproxy_traffic';
+}
+function renderBuiltinProxySectionV2(fields) {
+  const provider = getBuiltinProxyProviderV2();
+  const choices = [
+    {value: 'cliproxy_traffic', label: 'CliProxy'},
+    {value: 'iproyal_traffic', label: 'IPRoyal'},
+  ];
+  const providerField = builtinProxyFieldV2(fields, 'PROXY_PROVIDER');
+  return `
+    <section class="config-section-v2" id="${esc(configGroupSlug('内置代理'))}" data-config-section="内置代理">
+      ${renderConfigSectionHead('内置代理', '只保留 CliProxy 和 IPRoyal；手动代理列表已从界面移除。')}
+      <div class="builtin-proxy-section-v2">
+        <div class="builtin-proxy-section-v2-head">
+          <div>
+            <div class="builtin-proxy-section-v2-title">平台账号快速连接</div>
+            <div class="builtin-proxy-section-v2-help">输入平台账号和密码，选择出口国家，点击“测试连通并保存”。主机、端口和 sticky 会话参数有默认值，通常不用再填。</div>
+          </div>
+        </div>
+        <div class="builtin-proxy-provider-row">
+          <label class="fld">默认代理平台
+            <span class="hint">任务中心会默认使用这里选择的平台，也可以按批次临时选择。</span>
+            <select id="proxyProviderV2" data-key="PROXY_PROVIDER" data-proxy-provider-select>
+              ${choices.map(item => `<option value="${attrEsc(item.value)}"${item.value === provider ? ' selected' : ''}>${esc(item.label)}</option>`).join('')}
+            </select>
+          </label>
+          <div class="builtin-proxy-section-v2-help">连通测试通过后会同步设置“创建环境使用内置代理”，新任务按所选平台和国家生成独立会话。</div>
+        </div>
+        <div class="builtin-proxy-cards-v2">
+          ${renderBuiltinProxyCardV2('cliproxy_traffic', fields)}
+          ${renderBuiltinProxyCardV2('iproyal_traffic', fields)}
+        </div>
+        <div class="builtin-proxy-note-v2">配置保存位置：项目根目录 <span class="mono">.env</span>。页面和任务记录只展示平台、国家与状态，不展示认证代理地址。</div>
+      </div>
+      <div class="config-section-v2-actions">
+        <button type="button" class="btn primary" data-save-config-v2>保存当前参数</button>
+      </div>
+    </section>
+  `;
+}
+function updateBuiltinProxyCardsV2() {
+  const provider = getBuiltinProxyProviderV2();
+  $$('#configSectionsV2 [data-proxy-card]').forEach(card => {
+    card.classList.toggle('is-active', card.dataset.proxyCard === provider);
+  });
+}
+function proxyTestInputValueV2(card, key) {
+  const el = card ? card.querySelector(`[data-proxy-input="${CSS.escape(key)}"]`) : null;
+  return el ? String(el.value || '').trim() : '';
+}
+async function testAndSaveProxyV2(provider) {
+  const card = document.querySelector(`[data-proxy-card="${CSS.escape(provider)}"]`);
+  const button = document.querySelector(`[data-proxy-test-save="${CSS.escape(provider)}"]`);
+  const status = card ? card.querySelector('[data-proxy-test-status]') : null;
+  if (!card || !button) return;
+  const prefix = provider === 'cliproxy_traffic' ? 'CLIPROXY' : 'IPROYAL';
+  const values = {
+    username: proxyTestInputValueV2(card, `${prefix}_PROXY_USERNAME`),
+    password: proxyTestInputValueV2(card, `${prefix}_PROXY_PASSWORD`),
+    host: proxyTestInputValueV2(card, `${prefix}_FORWARD_HOST`),
+    port: proxyTestInputValueV2(card, `${prefix}_FORWARD_PORT`),
+    sticky_minutes: proxyTestInputValueV2(card, `${prefix}_STICKY_MINUTES`),
+    country: proxyTestInputValueV2(card, `${prefix}_PROXY_COUNTRY`),
+  };
+  button.disabled = true;
+  if (status) {
+    status.classList.remove('is-ready', 'is-error');
+    status.textContent = '正在测试代理连通性，成功后写入 .env…';
+  }
+  try {
+    const result = await api('/api/proxy/test', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({provider, country: values.country, values}),
+    });
+    Object.keys(values).forEach(key => {
+      const configKey = key === 'username' ? `${prefix}_PROXY_USERNAME`
+        : key === 'password' ? `${prefix}_PROXY_PASSWORD`
+        : key === 'host' ? `${prefix}_FORWARD_HOST`
+        : key === 'port' ? `${prefix}_FORWARD_PORT`
+        : key === 'sticky_minutes' ? `${prefix}_STICKY_MINUTES`
+        : `${prefix}_PROXY_COUNTRY`;
+      delete CONFIG_PENDING_UPDATES[configKey];
+    });
+    delete CONFIG_PENDING_UPDATES.PROXY_PROVIDER;
+    if (status) {
+      status.classList.add('is-ready');
+      status.textContent = `✅ ${result.message || '测试通过，配置已保存'}（${result.country || values.country}）`;
+    }
+    showToast(`${result.provider_label || proxyProviderLabelV2(provider)} 配置已保存`);
+    await loadConfig();
+    const freshStatus = document.querySelector(`[data-proxy-card="${CSS.escape(provider)}"] [data-proxy-test-status]`);
+    if (freshStatus) {
+      freshStatus.classList.add('is-ready');
+      freshStatus.textContent = `✅ 已测试并保存 · ${result.country || values.country}`;
+    }
+  } catch (e) {
+    if (status) {
+      status.classList.add('is-error');
+      status.textContent = `测试失败：${e.message}`;
+    }
+  } finally {
+    const freshButton = document.querySelector(`[data-proxy-test-save="${CSS.escape(provider)}"]`);
+    if (freshButton) freshButton.disabled = false;
+  }
+}
+function bindProxyToolsV2() {
+  const providerSelect = $('#proxyProviderV2');
+  if (providerSelect && !providerSelect.dataset.bound) {
+    providerSelect.dataset.bound = '1';
+    providerSelect.addEventListener('change', () => {
+      CONFIG_PENDING_UPDATES.PROXY_PROVIDER = providerSelect.value;
+      updateBuiltinProxyCardsV2();
+      filterConfigSections();
+    });
+  }
+  $$('[data-proxy-test-save]').forEach(button => {
+    if (button.dataset.bound) return;
+    button.dataset.bound = '1';
+    button.addEventListener('click', () => testAndSaveProxyV2(button.dataset.proxyTestSave));
+  });
+  updateBuiltinProxyCardsV2();
 }
 function renderMixedConfigSectionV2(name, fields, intro) {
   const slug = configGroupSlug(name);
@@ -6089,7 +7354,7 @@ function setCodexOauthDriverValue(value) {
   const cur = String(value || 'protocol').trim().toLowerCase() || 'protocol';
   CONFIG_PENDING_UPDATES.CODEX_OAUTH_DRIVER = cur;
   closeConfigEpSelects();
-  renderConfigLayoutV2();
+  rerenderConfigLayoutV2();
 }
 function renderCodexOauthDriverField() {
   const cur = getCodexOauthDriverValue();
@@ -6133,12 +7398,6 @@ function renderSectionedConfigSectionV2(name, fields, sectionForKey, preferred, 
   const current = bySection[active] || { help: '', fields: [] };
   const switches = current.fields.filter(f => f.type === 'bool');
   const inputs = current.fields.filter(f => f.type !== 'bool');
-  const promo = name === '邮箱 / OTP' && active === 'Remail'
-    ? '<span class="remail-promo-notice" role="note">通过作者卡网购买积分9折优惠</span>'
-    : '';
-  const sectionHelp = current.help
-    ? `<p class="config-section-v2-subhelp">${esc(current.help)}${promo}</p>`
-    : promo;
   let extra = '';
   if (name === '邮箱 / OTP' && active === 'CloudMail') {
     extra = renderCloudMailTokenToolsV2();
@@ -6153,7 +7412,7 @@ function renderSectionedConfigSectionV2(name, fields, sectionForKey, preferred, 
           </button>
         `).join('')}
       </div>
-      ${sectionHelp}
+      ${current.help ? `<p class="config-section-v2-subhelp">${esc(current.help)}</p>` : ''}
       ${switches.length ? `<div class="config-switches-v2">${switches.map(f => renderFeatureSwitchField(f, { withIcon: false })).join('')}</div>` : ''}
       ${inputs.length ? `<div class="config-section-v2-body">${inputs.map(renderConfigPlainFieldV2).join('')}</div>` : ''}
       ${extra}
@@ -6218,6 +7477,7 @@ async function genCloudMailTokenV2() {
     status.innerHTML = `✅ ${esc(r.message || 'Token 已生成并保存')}`;
     showToast('CloudMail Token 已生成');
     await loadConfig();
+    freshCloudMailToolStateV2(`✅ ${r.message || 'Token 已生成并保存'}`);
   } catch(e) {
     status.innerHTML = `<span style="color:var(--red);">生成失败：${esc(e.message)}</span>`;
   } finally {
@@ -6245,11 +7505,21 @@ async function loadCloudMailDomainsV2() {
     status.innerHTML = `✅ ${esc(r.message || '域名已获取')}：<span class="mono">${esc(domains.join(', '))}</span>`;
     showToast(`CloudMail 已获取 ${domains.length} 个域名`);
     await loadConfig();
+    freshCloudMailToolStateV2(`✅ ${r.message || '域名已获取'}：${domains.join(', ')}`);
   } catch(e) {
     status.innerHTML = `<span style="color:var(--red);">获取域名失败：${esc(e.message)}</span>`;
   } finally {
     btn.disabled = false;
   }
+}
+
+function freshCloudMailToolStateV2(message) {
+  const freshStatus = $('#cloudMailTokenStatusV2');
+  if (freshStatus) freshStatus.textContent = message;
+  const freshGen = $('#btnGenCloudMailTokenV2');
+  const freshDomains = $('#btnLoadCloudMailDomainsV2');
+  if (freshGen) freshGen.disabled = false;
+  if (freshDomains) freshDomains.disabled = false;
 }
 
 function renderCodexSectionV2(fields) {
@@ -6342,6 +7612,9 @@ function renderConfigSectionV2(name, fields) {
       </section>
     `;
   }
+  if (name === '内置代理' || name === '代理池') {
+    return renderBuiltinProxySectionV2(fields);
+  }
   if (name === 'Codex') {
     return renderCodexSectionV2(fields);
   }
@@ -6350,7 +7623,7 @@ function renderConfigSectionV2(name, fields) {
       name,
       fields,
       emailConfigSectionForKey,
-      ['通用邮箱 / OTP', 'GPTMail', 'MailNest', 'CloudMail', 'Remail', 'Outlook 邮箱池', 'Cloudflare 临时邮箱', 'Cloudflare 域名邮箱', '其他邮箱配置'],
+      ['通用邮箱 / OTP', 'GPTMail', 'MailNest', 'CloudMail', 'Outlook 邮箱池', 'Cloudflare 临时邮箱', 'Cloudflare 域名邮箱', '其他邮箱配置'],
       { get: () => CONFIG_EMAIL_ACTIVE_SECTION_V2, set: v => { CONFIG_EMAIL_ACTIVE_SECTION_V2 = v; } },
       'email-section-v2'
     );
@@ -6390,6 +7663,22 @@ function renderConfigLayoutV2() {
   if (sectionMount) renderRegistrationEpSelect(sectionMount, 'configRegistrationSelectV2');
   bindRoxyWorkspaceToolsV2();
   bindCloudMailToolsV2();
+  bindProxyToolsV2();
+}
+function rerenderConfigLayoutV2() {
+  const activeButton = document.querySelector('#configNavV2 .config-nav-v2-item.is-active');
+  const activeTarget = activeButton ? activeButton.dataset.configTarget : '';
+  renderConfigLayoutV2();
+  filterConfigSections();
+  const sameButton = activeTarget
+    ? document.querySelector(`#configNavV2 [data-config-target="${CSS.escape(activeTarget)}"]`)
+    : null;
+  if (sameButton && !sameButton.classList.contains('hidden')) {
+    setActiveConfigNav(activeTarget);
+    return;
+  }
+  const firstVisible = document.querySelector('#configNavV2 .config-nav-v2-item:not(.hidden)');
+  if (firstVisible) setActiveConfigNav(firstVisible.dataset.configTarget || '');
 }
 function scrollToConfigSection(slug) {
   const el = document.getElementById(slug);
@@ -6420,21 +7709,21 @@ function bindConfigLayoutV2() {
       if (codexTab) {
         e.preventDefault();
         CONFIG_CODEX_ACTIVE_SECTION_V2 = codexTab.dataset.codexSectionV2;
-        renderConfigLayoutV2();
+        rerenderConfigLayoutV2();
         return;
       }
       const emailTab = e.target.closest('[data-email-section-v2]');
       if (emailTab) {
         e.preventDefault();
         CONFIG_EMAIL_ACTIVE_SECTION_V2 = emailTab.dataset.emailSectionV2;
-        renderConfigLayoutV2();
+        rerenderConfigLayoutV2();
         return;
       }
       const smsTab = e.target.closest('[data-sms-section-v2]');
       if (smsTab) {
         e.preventDefault();
         CONFIG_SMS_ACTIVE_SECTION_V2 = smsTab.dataset.smsSectionV2;
-        renderConfigLayoutV2();
+        rerenderConfigLayoutV2();
         return;
       }
       const toggle = e.target.closest('[data-ep-toggle]');
@@ -6485,6 +7774,7 @@ async function loadConfig() {
     CONFIG = await api('/api/config');
     renderConfigLayoutV2();
     bindConfigLayoutV2();
+    filterConfigSections();
   } catch(e) {
     showToast('加载配置失败: ' + e.message);
   }
@@ -6514,7 +7804,7 @@ async function loadRoxyWorkspaces() {
         const selected = String(x.id)===String(current) && String(x.projectId || '')===String(currentProject);
         return `<option value="${esc(value)}" data-workspace-id="${esc(x.id)}" data-project-id="${esc(x.projectId || '')}"${selected?' selected':''}>${esc(x.label || (x.name + ' (' + x.id + ')'))}</option>`;
       }).join('');
-    if (saveBtn) saveBtn.disabled = !sel.value;
+    syncRoxyWorkspaceSaveStateV2();
     status.innerHTML = `已获取 ${items.length} 个团队/项目，接口：<span class="mono">${esc(r.method || '')} ${esc(r.path || '')}</span>`;
   } catch(e) {
     status.innerHTML = `<span style="color:var(--red);">获取失败：${esc(e.message)}</span>`;
@@ -6523,28 +7813,52 @@ async function loadRoxyWorkspaces() {
   }
 }
 
+function syncRoxyWorkspaceSaveStateV2() {
+  const sel = $('#roxyWorkspaceSelectV2');
+  const saveBtn = $('#btnSaveRoxyWorkspaceV2');
+  if (!sel || !saveBtn) return;
+  const opt = sel.selectedOptions[0];
+  const workspaceId = opt ? String(opt.dataset.workspaceId || '') : '';
+  const projectId = opt ? String(opt.dataset.projectId || '') : '';
+  const currentWorkspace = String((CONFIG.find(f => f.key === 'ROXY_WORKSPACE_ID') || {}).value || '');
+  const currentProject = String((CONFIG.find(f => f.key === 'ROXY_PROJECT_ID') || {}).value || '');
+  saveBtn.disabled = !workspaceId || (workspaceId === currentWorkspace && projectId === currentProject);
+}
+
+function syncSavedConfigValueV2(key, value) {
+  const field = CONFIG.find(item => item.key === key);
+  if (field) field.value = value;
+  delete CONFIG_PENDING_UPDATES[key];
+  document.querySelectorAll(`#configSectionsV2 [data-key="${CSS.escape(key)}"]`).forEach(el => {
+    if (el.type === 'checkbox') el.checked = !!value;
+    else el.value = value == null ? '' : String(value);
+  });
+}
+
 async function saveRoxyWorkspaceSelection() {
   const sel = $('#roxyWorkspaceSelectV2');
   const status = $('#roxyWorkspaceStatusV2');
+  const saveBtn = $('#btnSaveRoxyWorkspaceV2');
   const opt = sel ? sel.selectedOptions[0] : null;
   const workspaceId = opt ? (opt.dataset.workspaceId || '') : '';
   const projectId = opt ? (opt.dataset.projectId || '') : '';
   if (!workspaceId) return;
+  if (saveBtn) saveBtn.disabled = true;
   try {
     const r = await api('/api/config', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({updates: {ROXY_WORKSPACE_ID: workspaceId, ROXY_PROJECT_ID: projectId}}),
     });
-    const fw = CONFIG.find(x => x.key === 'ROXY_WORKSPACE_ID');
-    const fp = CONFIG.find(x => x.key === 'ROXY_PROJECT_ID');
-    if (fw) fw.value = workspaceId;
-    if (fp) fp.value = projectId;
+    syncSavedConfigValueV2('ROXY_WORKSPACE_ID', workspaceId);
+    syncSavedConfigValueV2('ROXY_PROJECT_ID', projectId);
     if (status) status.innerHTML = `✅ 已保存团队 ID：<span class="mono">${esc(workspaceId)}</span>，项目 ID：<span class="mono">${esc(projectId || '未设置')}</span>`;
     showToast(r.reloaded ? 'Roxy 团队/项目已保存并生效' : 'Roxy 团队/项目已保存');
-    renderConfigLayoutV2();
+    syncRoxyWorkspaceSaveStateV2();
+    filterConfigSections();
   } catch(e) {
     if (status) status.innerHTML = `<span style="color:var(--red);">保存失败：${esc(e.message)}</span>`;
+    syncRoxyWorkspaceSaveStateV2();
   }
 }
 
@@ -6568,14 +7882,21 @@ function trackConfigFieldChange(e) {
   if (!f) return;
   CONFIG_PENDING_UPDATES[f.key] = readConfigElementValue(el, f);
   if (f.key === 'AUTO_PLAN_CHECK_AFTER_REGISTER') renderRegistrationDriverCard();
+  filterConfigSections();
 }
 $('#tab-config').addEventListener('input', trackConfigFieldChange);
 $('#tab-config').addEventListener('change', trackConfigFieldChange);
+$('#configSearchV2').addEventListener('input', debounce(filterConfigSections, 120));
+$$('[data-config-mode]').forEach(button => button.addEventListener('click', () => {
+  CONFIG_DISPLAY_MODE_V2 = button.dataset.configMode === 'advanced' ? 'advanced' : 'basic';
+  filterConfigSections();
+}));
 
 async function saveConfigUpdates(triggerBtn) {
   const updates = {...CONFIG_PENDING_UPDATES};
   const seen = new Set();
-  $$('#configCardsV2 [data-key], #configSectionsV2 [data-key]').forEach(el => {
+  const scope = triggerBtn?.closest('.config-section-v2') || $('#configSectionsV2');
+  Array.from(scope?.querySelectorAll('[data-key]') || []).forEach(el => {
     const f = CONFIG.find(x => x.key === el.dataset.key);
     if (!f || seen.has(f.key)) return;
     seen.add(f.key);
@@ -6586,10 +7907,17 @@ async function saveConfigUpdates(triggerBtn) {
   try {
     const r = await api('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({updates}) });
     for (const [k, v] of Object.entries(updates)) { const f = CONFIG.find(x => x.key === k); if (f) f.value = v; delete CONFIG_PENDING_UPDATES[k]; }
-    renderConfigLayoutV2();
+    if (Object.prototype.hasOwnProperty.call(updates, 'ENABLE_CODEX_AUTO')) {
+      CODEX_AUTHORIZATION_ENABLED = !!updates.ENABLE_CODEX_AUTO;
+      renderAccounts();
+    }
+    rerenderConfigLayoutV2();
     showToast(r.reloaded ? '配置已生效' : '配置已保存（需重启）');
   } catch(e) { showToast('保存失败: ' + e.message); }
-  finally { buttons.forEach(btn => { btn.disabled = false; }); }
+  finally {
+    buttons.forEach(btn => { btn.disabled = false; });
+    $$('#tab-config [data-save-config-v2]').forEach(btn => { btn.disabled = false; });
+  }
 }
 $('#tab-config').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-save-config-v2]');
@@ -6606,9 +7934,11 @@ document.addEventListener('click', (e) => {
 
 // ---------- 初始化 ----------
 loadSummary();
-activateTab(localStorage.getItem('gpt_console_active_tab') || 'register', false);
+loadProxyOptions();
+activateTab(localStorage.getItem('gpt_console_active_tab') || 'dashboard', false);
 jobsTimer = setInterval(() => { if (!$('#tab-register').classList.contains('hidden')) refreshJobs(); }, 10000);
 setInterval(loadSummary, 30000);
+setInterval(() => { if (!$('#tab-dashboard').classList.contains('hidden')) loadWorkbench(); }, 30000);
 setInterval(() => { if (!$('#tab-accounts').classList.contains('hidden')) pollAccountPlanStatuses(); }, 10000);
 </script>
 </body>

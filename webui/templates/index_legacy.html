@@ -39,6 +39,21 @@
       background: rgba(37,99,235,.18); cursor: pointer; font: inherit; line-height: 1.4;
     }
     .header-links a:hover, .header-links button:hover { color: #fff; background: rgba(37,99,235,.36); }
+    .contact-links {
+      display: inline-flex; align-items: center; gap: 7px; margin-right: 2px;
+      color: #b8c7d9; font-size: 12px; font-weight: 800;
+    }
+    .contact-label { margin-right: 1px; color: #b8c7d9; }
+    .contact-link {
+      width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid rgba(219,234,254,.28); border-radius: 8px;
+      background: rgba(37,99,235,.18); color: #dbeafe; text-decoration: none;
+      transition: color .15s ease, background .15s ease, border-color .15s ease, transform .15s ease;
+    }
+    .contact-link:hover { color: #fff; background: rgba(37,99,235,.36); border-color: rgba(219,234,254,.55); transform: translateY(-1px); }
+    .contact-icon { width: 16px; height: 16px; fill: currentColor; }
+    .contact-icon.qq { fill: none; stroke: currentColor; stroke-width: 1.7; }
+    .contact-icon.qq text { fill: currentColor; stroke: none; font-size: 7px; font-weight: 800; }
     .stats { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
     .stat {
       min-width: 96px; padding: 8px 12px; border: 1px solid rgba(255,255,255,.16);
@@ -119,7 +134,6 @@
     .col-plan { width: 82px; }
     .col-account { width: 180px; }
     .col-time { width: 168px; }
-    .col-traffic { width: 120px; white-space: nowrap; }
     .col-expire { width: 168px; }
     .col-error { width: 320px; }
     .col-actions { width: 220px; }
@@ -151,6 +165,31 @@
     .status-partial_success { color: #9a6700; background: #fff7d6; }
     .status-running { color: var(--amber); background: #fff7e6; }
     .status-success { color: var(--green); background: #e9f7ef; }
+    .rebind-trial-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .rebind-trial-stat { padding: 10px 12px; border: 1px solid #d9e8f6; border-radius: 8px; background: #f8fbff; }
+    .rebind-trial-stat span { display: block; color: var(--muted); font-size: 12px; }
+    .rebind-trial-stat strong { display: block; margin-top: 4px; color: var(--blue); font-size: 22px; line-height: 1.1; }
+    .rebind-trial-table-wrap { overflow: auto; }
+    .rebind-trial-table th, .rebind-trial-table td { vertical-align: middle; }
+    .rebind-trial-table .col-trial-account { width: 90px; }
+    .rebind-trial-table .col-trial-email { width: 250px; }
+    .rebind-trial-table .col-trial-qualification { width: 180px; }
+    .rebind-trial-table .col-trial-time { width: 180px; }
+    .rebind-trial-table .col-trial-status { width: 180px; }
+    .rebind-trial-table .col-trial-actions { width: 220px; }
+    .rebind-trial-account-id { color: var(--blue); font-weight: 800; }
+    .rebind-trial-email { font-weight: 800; }
+    .rebind-trial-sub { margin-top: 3px; color: #98a2b3; font-size: 11px; }
+    .rebind-trial-empty { padding: 34px 18px !important; color: #98a2b3; text-align: center !important; white-space: normal !important; }
+    .rebind-trial-action { min-height: 30px; border: 1px solid var(--blue); border-radius: 6px; background: var(--blue); color: #fff; padding: 0 11px; font-size: 12px; font-weight: 800; cursor: pointer; }
+    .rebind-trial-action:disabled { color: #98a2b3; cursor: not-allowed; background: #f2f4f7; border-color: var(--line); }
+    .rebind-trial-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .rebind-trial-reason {
+      min-height: 30px; border: 1px solid #e7a3a0; border-radius: 6px; background: #fff7f6;
+      color: #b42318; padding: 0 10px; font-size: 12px; font-weight: 800; cursor: pointer;
+    }
+    .rebind-trial-reason:hover { background: #ffeceb; border-color: #d97770; }
+    @media (max-width: 620px) { .rebind-trial-stats { grid-template-columns: 1fr; } }
     .extract-link-cell {
       display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
       margin-top: 4px; max-width: 100%;
@@ -215,7 +254,7 @@
       grid-template-columns: 1fr;
     }
     .accounts-topbar { display: flex; gap: 12px; align-items: center; justify-content: flex-start; min-width: 0; flex-wrap: wrap; }
-    .accounts-toolbar .search { flex: 0 1 400px; min-width: 240px; max-width: 400px; }
+    .accounts-toolbar .search { flex: 1 1 520px; min-width: 280px; max-width: 620px; }
     .account-filter-strip { display: inline-flex; align-items: center; justify-content: flex-start; gap: 8px; flex-wrap: wrap; }
     .selected-hint { font-size: 12px; font-weight: 800; padding: 0 6px; white-space: nowrap; }
     .accounts-actionbar {
@@ -289,8 +328,8 @@
       width: 100%; max-width: 100%; min-width: 0;
       max-height: 320px; overflow: auto; line-height: 1.5;
     }
-    #logPanel, #retryLogPanel, #liveLogPanel, #totpLogPanel, #qrPanel { min-width: 0; max-width: 100%; overflow-x: hidden; }
-    #logPanel:not(.hidden), #retryLogPanel:not(.hidden), #liveLogPanel:not(.hidden), #totpLogPanel:not(.hidden), #qrPanel:not(.hidden) {
+    #logPanel, #retryLogPanel, #liveLogPanel, #totpLogPanel, #qrPanel, #rebindReasonPanel { min-width: 0; max-width: 100%; overflow-x: hidden; }
+    #logPanel:not(.hidden), #retryLogPanel:not(.hidden), #liveLogPanel:not(.hidden), #totpLogPanel:not(.hidden), #qrPanel:not(.hidden), #rebindReasonPanel:not(.hidden) {
       position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
       z-index: 1000; display: block; width: min(1100px, calc(100vw - 48px));
       max-height: min(760px, calc(100vh - 48px)); overflow: hidden;
@@ -298,9 +337,11 @@
       background: var(--surface); box-shadow: 0 0 0 9999px rgba(15,23,42,.45), 0 24px 70px rgba(15,23,42,.34);
     }
     #qrPanel:not(.hidden) { width: min(520px, calc(100vw - 48px)); text-align: center; }
-    #logPanel h3, #retryLogPanel h3, #liveLogPanel h3, #totpLogPanel h3, #qrPanel h3 { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
-    #logPanel h3 .btn, #retryLogPanel h3 .btn, #liveLogPanel h3 .btn, #totpLogPanel h3 .btn, #qrPanel h3 .btn { margin-left:auto; float:none !important; }
-    #logPanel .log, #retryLogPanel .log, #liveLogPanel .log, #totpLogPanel .log { max-height: calc(min(760px, calc(100vh - 48px)) - 74px); margin-top:0; }
+    #rebindReasonPanel:not(.hidden) { width: min(760px, calc(100vw - 48px)); }
+    #logPanel h3, #retryLogPanel h3, #liveLogPanel h3, #totpLogPanel h3, #qrPanel h3, #rebindReasonPanel h3 { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+    #logPanel h3 .btn, #retryLogPanel h3 .btn, #liveLogPanel h3 .btn, #totpLogPanel h3 .btn, #qrPanel h3 .btn, #rebindReasonPanel h3 .btn { margin-left:auto; float:none !important; }
+    #logPanel .log, #retryLogPanel .log, #liveLogPanel .log, #totpLogPanel .log, #rebindReasonPanel .log { max-height: calc(min(760px, calc(100vh - 48px)) - 74px); margin-top:0; }
+    #rebindReasonSummary { white-space: pre-wrap; margin: 0 0 10px; }
     #qrPanel img { display:block; max-width:min(360px, calc(100vw - 96px)); max-height:420px; margin:12px auto; border:1px solid var(--line); border-radius:10px; background:#fff; }
     #qrPanel .qr-link { display:block; word-break:break-all; white-space:normal; font-size:12px; color:var(--muted); margin-top:8px; }
     .hidden { display: none !important; }
@@ -345,14 +386,6 @@
       background: var(--soft); font-size: 13px; font-weight: 900;
     }
     .config-subhead .hint { display:block; margin-top:3px; color:var(--muted); font-size:12px; font-weight:400; line-height:1.45; }
-    .config-subhead.remail-subhead .hint { display: inline; }
-    .config-subhead .remail-promo-notice {
-      display: inline-flex; align-items: center; width: fit-content;
-      margin: 0 0 0 10px; padding: 7px 11px;
-      color: #b42318; background: #fff1f0; border: 1px solid #fecdca;
-      border-radius: 7px; font-size: 12px; font-weight: 800; line-height: 1.4;
-      vertical-align: middle; white-space: nowrap;
-    }
     .config-subtabs {
       grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap;
       padding: 8px; border: 1px solid #edf1f5; border-radius: 8px; background: #fbfcfe;
@@ -380,22 +413,6 @@
     .config-panel label.fld .hint .mono {
       white-space: normal; overflow-wrap: anywhere; word-break: break-all;
     }
-    .config-field-wrap { min-width: 0; }
-    .config-field-wrap > label.fld { margin-bottom: 0; }
-    .config-external-link {
-      display: inline-flex; align-items: center; gap: 4px; margin-top: 7px;
-      color: var(--blue); font-size: 12px; font-weight: 700; text-decoration: none;
-    }
-    .config-external-link:hover { text-decoration: underline; }
-    .config-recommendations {
-      margin-top: 9px; padding: 10px 12px;
-      border: 1px solid #c3d4fb; border-radius: 8px; background: #f4f8ff;
-      font-size: 12px; line-height: 1.55; color: var(--muted);
-    }
-    .config-recommendations-title { color: var(--text); font-weight: 700; }
-    .config-recommendations-item { display: block; margin-top: 4px; }
-    .config-recommendations-item a { color: var(--blue); font-weight: 700; text-decoration: none; }
-    .config-recommendations-item a:hover { text-decoration: underline; }
     .config-count { opacity: .72; font-weight: 700; margin-left: 4px; }
     .roxy-workspace-box {
       grid-column: 1 / -1; border: 1px solid #c3d4fb; background: #eef4ff;
@@ -417,7 +434,22 @@
       <h1>GPT 注册控制台</h1>
       <p class="meta">本地 Web 控制台 · 数据更新于 <span id="updatedAt">-</span></p>
       <div class="header-links">
-        <a href="https://t.me/+gu_cvEKq_vcyZWRl" target="_blank" rel="noopener noreferrer">TG 交流群</a>
+        <div class="contact-links" aria-label="联系方式">
+          <span class="contact-label">ai交流资源群 · QQ群：952990450</span>
+          <a class="contact-link" href="https://t.me/mzaijlq" target="_blank" rel="noopener noreferrer" aria-label="Telegram 交流群" title="Telegram 交流群">
+            <svg class="contact-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M21.7 3.4 2.9 10.8c-1.3.5-1.3 1.2-.2 1.6l4.8 1.5 1.8 5.7c.2.7.6.8 1.1.3l2.5-2.4 4.8 3.5c.9.5 1.5.2 1.7-.8l3.1-14.7c.3-1.3-.5-1.9-1.6-1.4ZM9.4 13.5l8.9-6.2-7.1 7.8-.3 2.7-1.5-4.3Z"/>
+            </svg>
+          </a>
+          <a class="contact-link" href="https://qm.qq.com/cgi-bin/qm/qr?group_code=952990450" target="_blank" rel="noopener noreferrer" aria-label="QQ 交流群 952990450" title="加入 QQ 群 952990450">
+            <svg class="contact-icon qq" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7.4 13.9c-.9 1.2-1.4 2.3-1.4 3.1 0 .8.8 1.2 1.8 1.4-.1.3-.2.6-.2.9 0 .8 1 1.3 2.1 1.3h4.6c1.1 0 2.1-.5 2.1-1.3 0-.3-.1-.6-.2-.9 1-.2 1.8-.6 1.8-1.4 0-.8-.5-1.9-1.4-3.1"/>
+              <path d="M8.1 12.8c-.3-.7-.5-1.5-.5-2.3C7.6 7.7 9.5 5.4 12 5.4s4.4 2.3 4.4 5.1c0 .8-.2 1.6-.5 2.3"/>
+              <path d="M8.7 14.8c.9.6 2 .9 3.3.9s2.4-.3 3.3-.9"/>
+              <text x="12" y="11.9" text-anchor="middle">QQ</text>
+            </svg>
+          </a>
+        </div>
         <a href="/?ui=modern" title="切换到新版侧边栏 UI">切换新 UI</a>
         <form method="post" action="/logout"><button type="submit">退出</button></form>
       </div>
@@ -438,6 +470,7 @@
     <button data-tab="accounts">账号</button>
     <button data-tab="codex">Codex 授权</button>
     <button data-tab="outlook">邮箱池</button>
+    <button data-tab="rebind">邮箱换绑</button>
     <button data-tab="config">配置</button>
   </div>
 </nav>
@@ -481,11 +514,11 @@
         <table class="jobs-table">
           <colgroup>
             <col class="col-check"><col class="col-id"><col class="col-status"><col class="col-email">
-            <col class="col-time"><col class="col-time"><col class="col-traffic"><col class="col-error"><col class="col-actions">
+            <col class="col-time"><col class="col-time"><col class="col-error"><col class="col-actions">
           </colgroup>
           <thead><tr>
             <th><input type="checkbox" id="jobsSelectAll" title="全选/取消全选当前页可删除任务"></th>
-            <th>ID</th><th>状态</th><th>邮箱</th><th>开始</th><th>完成</th><th>流量</th><th class="wrap">错误</th><th>操作</th>
+            <th>ID</th><th>状态</th><th>邮箱</th><th>开始</th><th>完成</th><th class="wrap">错误</th><th>操作</th>
           </tr></thead>
           <tbody id="jobsBody"></tbody>
         </table>
@@ -515,9 +548,6 @@
             <label class="inline-num" title="只查询/显示已开通 Plus 的账号">
               <input id="showPlusAccountsOnly" type="checkbox" style="width:auto;min-height:auto;"> 已开通Plus
             </label>
-            <label class="inline-num" title="只查询/显示当前为 free 且可试用 Plus 的账号">
-              <input id="showPlusTrialAccountsOnly" type="checkbox" style="width:auto;min-height:auto;"> 可试用Plus
-            </label>
             <label class="inline-num" title="按账号状态筛选账号">
               状态
               <select id="codexStatusFilter" style="width:auto;min-height:auto;">
@@ -530,17 +560,8 @@
                 <option value="deactivated">账号废号</option>
               </select>
             </label>
-            <label class="inline-num" title="按账号 2FA/TOTP 状态筛选账号">
-              2FA
-              <select id="totpStatusFilter" style="width:auto;min-height:auto;">
-                <option value="">全部</option>
-                <option value="enabled">已开启</option>
-                <option value="disabled">未开启</option>
-                <option value="pending">设置中</option>
-                <option value="failed">设置失败</option>
-              </select>
-            </label>
             <button class="btn" id="btnRefreshAccounts" title="重新加载当前筛选条件和当前页账号列表">刷新账号</button>
+            <button class="btn primary" id="btnCheckSelectedLiveTop" data-live-check-selected="1" title="重新登录选中账号；成功且未封号则标记正常，并刷新最新 AT/accessToken">查活</button>
           </div>
         </div>
         <div class="accounts-actionbar">
@@ -548,6 +569,7 @@
             <span class="btn-group-title">套餐/提链</span>
             <button class="btn primary" id="btnCheckSelectedLive" data-live-check-selected="1" title="重新登录选中账号；成功且未封号则标记正常，并刷新最新 AT/accessToken">查活</button>
             <button class="btn primary" id="btnCheckSelectedPlans" disabled title="查询选中账号当前套餐；free 账号会检查 Plus 试用资格">查套餐</button>
+            <button class="btn good" id="btnCheckSelectedTrialPayments" disabled title="逐项探测 Momo、PayPal、GoPay；只创建 checkout 预览，不确认支付">查试用支付</button>
             <button class="btn good" id="btnExtractSelectedLinks" disabled title="给选中的 free(可Plus试用) 账号批量提链，类型按配置 PIX/UPI/KAKAO_PAY/IDEAL">提链</button>
           </div>
           <div class="btn-group">
@@ -558,7 +580,6 @@
           </div>
           <div class="btn-group">
             <span class="btn-group-title">批量</span>
-            <button class="btn primary" id="btnSetupSelectedTotp" disabled title="给选中的账号批量开启 2FA，并在完成后写回 TOTP 密钥">批量开2FA</button>
             <button class="btn good" id="btnNoteSelectedAccounts" disabled title="给选中的账号统一设置备注，留空可清空备注">备注</button>
             <button class="btn good" id="btnCopySelectedLines" disabled title="复制选中账号的完整整行，每个账号一行">复制行</button>
             <button class="btn good" id="btnCopySelectedTokens" disabled title="复制选中账号的 Token，每个账号一行">复制Token</button>
@@ -659,7 +680,7 @@
   <!-- ============ 邮箱池 ============ -->
   <div id="tab-outlook" class="hidden">
     <section class="card">
-      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址（---- 或 ==== 分隔均可）。勾选下方选项后按“已注册成功账号”导入，方便直接在账号页补跑 Codex 授权。</p></div>
+      <div class="head"><h2>导入邮箱素材</h2><p>Outlook：邮箱----密码----clientId----refreshToken；通用API：邮箱----取码地址（---- 或 ==== 分隔均可）。默认按“已注册成功账号”导入，方便直接在账号页补跑 Codex 授权。</p></div>
       <div class="body">
         <div id="importResult"></div>
         <label class="fld">导入类型
@@ -714,6 +735,49 @@
     </section>
   </div>
 
+  <!-- ============ 邮箱换绑 ============ -->
+  <div id="tab-rebind" class="hidden">
+    <section class="card" id="rebindResourcePanel">
+      <div class="head"><h2>邮箱换绑</h2><p>这里显示已查出试用资格的账号；直接调用换绑项目的纯协议功能完成邮箱更换。</p></div>
+      <div class="body">
+        <div class="row" style="align-items:end;gap:10px;">
+          <label class="fld" style="flex:1;min-width:220px;">邮箱资源
+            <select id="rebindProvider"><option value="auto">自动识别</option></select>
+          </label>
+          <label class="fld" style="width:150px;">验证码等待（秒）
+            <input id="rebindTimeout" type="number" min="5" max="900" value="120">
+          </label>
+          <div class="action-cell" style="display:flex;gap:8px;">
+            <button class="btn" id="btnRefreshRebindResources">重新识别资源</button>
+            <button class="btn" id="btnRefreshRebindTrial">刷新资格号</button>
+          </div>
+        </div>
+        <div class="hint" id="rebindDetected" style="margin-top:9px;white-space:pre-wrap;">正在读取已经接入的邮箱资源…</div>
+        <div class="hint" id="rebindStatus" aria-live="polite" style="margin-top:8px;white-space:pre-wrap;"></div>
+      </div>
+    </section>
+    <section class="card">
+      <div class="head"><h2>试用资格号</h2><p>只显示套餐查询结果为 free 且确认拥有 Plus 试用资格的账号。</p></div>
+      <div class="body">
+        <div class="rebind-trial-stats">
+          <div class="rebind-trial-stat"><span>可换绑资格号</span><strong id="rebindTrialEligibleCount">0</strong></div>
+          <div class="rebind-trial-stat"><span>已查套餐账号</span><strong id="rebindTrialCheckedCount">0</strong></div>
+          <div class="rebind-trial-stat"><span>套餐查询中</span><strong id="rebindTrialPendingCount">0</strong></div>
+        </div>
+        <div class="rebind-trial-table-wrap">
+          <table class="rebind-trial-table">
+            <colgroup>
+              <col class="col-trial-account"><col class="col-trial-email"><col class="col-trial-qualification">
+              <col class="col-trial-time"><col class="col-trial-status"><col class="col-trial-actions">
+            </colgroup>
+            <thead><tr><th>资格号</th><th>当前邮箱</th><th>资格信息</th><th>查询时间</th><th>换绑状态</th><th>操作</th></tr></thead>
+            <tbody id="rebindTrialAccountsBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+
   <!-- ============ 配置 ============ -->
   <div id="tab-config" class="hidden">
     <section class="card">
@@ -729,6 +793,13 @@
 </main>
 
 <div id="toast"></div>
+<div class="body hidden" id="rebindReasonPanel" role="dialog" aria-modal="true" aria-labelledby="rebindReasonTitle">
+  <h3 id="rebindReasonTitle">换绑失败原因：<span id="rebindReasonAccount" style="font-size:13px;font-weight:400;color:var(--muted);"></span>
+    <button class="btn" id="btnCloseRebindReason" style="float:right;min-height:28px;">关闭</button>
+  </h3>
+  <div class="banner warn" id="rebindReasonSummary">加载中…</div>
+  <div class="log" id="rebindReasonContent">加载中…</div>
+</div>
 <div id="qrPanel" class="body hidden">
   <h3>支付二维码 <button class="btn" onclick="closeQrModal()">关闭</button></h3>
   <img id="qrImage" alt="支付二维码">
@@ -741,12 +812,12 @@ const $$ = (s) => Array.from(document.querySelectorAll(s));
 let copySeq = 0;
 const copyStore = new Map();
 let ACCOUNTS = [], OUTLOOK = [], CONFIG = [];
+let CODEX_AUTHORIZATION_ENABLED = true;
 let ACCOUNTS_TOTAL = 0;
 const TOTP_CODE_CACHE = new Map();
 let OUTLOOK_TOTAL = 0;
 let SHOW_ARCHIVED_ACCOUNTS = false;
 let SHOW_PLUS_ACCOUNTS_ONLY = false;
-let SHOW_PLUS_TRIAL_ACCOUNTS_ONLY = false;
 const ACCOUNT_SELECTED = new Set();
 const OUTLOOK_SELECTED = new Set();
 let JOBS = [];
@@ -809,19 +880,6 @@ function isPlaceholderEmpty(v) {
   return !s || ['-', '—', '无', '空', 'none', 'null', 'n/a', 'na'].includes(s.toLowerCase());
 }
 function short(v, n=40) { const s = v || ''; return s.length > n ? s.slice(0,n)+'…' : s; }
-function formatTraffic(t) {
-  if (!t || !t.available) return '-';
-  const n = (v) => Number.isFinite(Number(v)) ? Math.max(0, Number(v)) : 0;
-  const fmt = (v) => {
-    v = n(v);
-    if (v < 1024) return `${Math.round(v)} B`;
-    if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KiB`;
-    return `${(v / 1024 / 1024).toFixed(2)} MiB`;
-  };
-  const j = t.js_coverage;
-  const jsHint = j && j.enabled ? `，JS脚本 ${n(j.script_count)}（执行 ${n(j.executed_script_count)}，候选 ${n(j.candidate_script_count)}）` : '';
-  return `<span title="上传 ${fmt(t.upload_bytes)}，下载 ${fmt(t.download_bytes)}，${n(t.request_count)} 个请求${jsHint}">${fmt(t.total_bytes)}</span>`;
-}
 function copyId(v) { if (!v) return ''; const id = 'c'+(++copySeq); copyStore.set(id, v); return id; }
 function cbtn(label, value, cls='') { const id = copyId(value); return `<button class="${cls}" data-copy-id="${id}" ${id?'':'disabled'}>${label}</button>`; }
 function pill(status) {
@@ -850,7 +908,7 @@ function debounce(fn, wait=250) {
 
 // ---------- Tab 切换 ----------
 function activateTab(tab, persist=true) {
-  const allowed = ['register','accounts','codex','outlook','config'];
+  const allowed = ['register','accounts','codex','outlook','rebind','config'];
   if (!allowed.includes(tab)) tab = 'register';
   $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === tab));
   allowed.forEach(t => $('#tab-'+t).classList.toggle('hidden', t !== tab));
@@ -858,6 +916,7 @@ function activateTab(tab, persist=true) {
   if (tab === 'accounts') loadAccounts();
   if (tab === 'codex') loadCodex();
   if (tab === 'outlook') loadOutlook();
+  if (tab === 'rebind') loadRebindPage();
   if (tab === 'config') loadConfig();
   if (tab === 'register') refreshJobs();
 }
@@ -933,7 +992,6 @@ function renderJobs() {
       <td title="${esc(j.email || '-')}">${esc(j.email || '-')}</td>
       <td class="muted" title="${esc(j.started_at || '-')}">${esc(j.started_at || '-')}</td>
       <td class="muted" title="${esc(j.completed_at || '-')}">${esc(j.completed_at || '-')}</td>
-      <td>${formatTraffic(j.network_traffic)}</td>
       <td class="muted wrap" title="${esc(j.error_message || '')}">${esc(short(j.error_message || '', 90))}</td>
       <td class="actions-cell">
         <div class="actions job-actions">
@@ -947,7 +1005,7 @@ function renderJobs() {
           <button class="danger" data-delete-job="${esc(j.id)}" ${['running','stopping'].includes(j.status) ? 'disabled title="运行中的任务不能删除；如需删除请先停止"' : ''}>删除</button>
         </div>
       </td>
-    </tr>`).join('') || '<tr><td colspan="9" class="muted">暂无任务</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="8" class="muted">暂无任务</td></tr>';
   updateJobsSelectionUi(rows);
   _renderPager('jobs', total);
 }
@@ -995,7 +1053,7 @@ async function refreshJobs() {
 
 let modalScrollY = 0;
 function updateModalScrollLock() {
-  const opened = !$('#logPanel').classList.contains('hidden') || !$('#retryLogPanel').classList.contains('hidden') || !$('#liveLogPanel').classList.contains('hidden') || !$('#qrPanel').classList.contains('hidden');
+  const opened = !$('#logPanel').classList.contains('hidden') || !$('#retryLogPanel').classList.contains('hidden') || !$('#liveLogPanel').classList.contains('hidden') || !$('#qrPanel').classList.contains('hidden') || !$('#rebindReasonPanel').classList.contains('hidden');
   const locked = document.body.classList.contains('modal-open');
   if (opened && !locked) {
     modalScrollY = window.scrollY || document.documentElement.scrollTop || 0;
@@ -1013,6 +1071,10 @@ function closeLogModal() {
   activeLogJob = null;
   clearInterval(logTimer);
   $('#logPanel').classList.add('hidden');
+  updateModalScrollLock();
+}
+function closeRebindReason() {
+  $('#rebindReasonPanel').classList.add('hidden');
   updateModalScrollLock();
 }
 function closeRetryLogModal() {
@@ -1110,6 +1172,7 @@ $('#jobsBody').addEventListener('change', (e) => {
   updateJobsSelectionUi();
 });
 $('#btnCloseLog').addEventListener('click', closeLogModal);
+$('#btnCloseRebindReason').addEventListener('click', closeRebindReason);
 
 async function stopJob(jobId, btn) {
   const job = JOBS.find(j => Number(j.id) === Number(jobId));
@@ -1249,28 +1312,21 @@ function getAccountsCodexFilter() {
   const el = $('#codexStatusFilter');
   return (el ? el.value : '').trim();
 }
-function getAccountsTotpFilter() {
-  const el = $('#totpStatusFilter');
-  return (el ? el.value : '').trim();
-}
-function getAccountsPlanFilter() {
-  if (SHOW_PLUS_ACCOUNTS_ONLY) return 'plus';
-  if (SHOW_PLUS_TRIAL_ACCOUNTS_ONLY) return 'plus_trial';
-  return '';
-}
 async function loadAccounts() {
   if (accountsLoading) return;
   accountsLoading = true;
   try {
     const archived = SHOW_ARCHIVED_ACCOUNTS ? 'only' : '0';
-    const plan = getAccountsPlanFilter();
+    const plan = SHOW_PLUS_ACCOUNTS_ONLY ? 'plus' : '';
     const codex = getAccountsCodexFilter();
-    const totp = getAccountsTotpFilter();
     const q = $('#qAccounts') ? $('#qAccounts').value.trim() : '';
     const p = PAGERS.accounts;
-    const res = await api(`/api/accounts?paged=1&page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}&codex_status=${encodeURIComponent(codex)}&totp_status=${encodeURIComponent(totp)}&q=${encodeURIComponent(q)}`);
+    const res = await api(`/api/accounts?paged=1&page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}&codex_status=${encodeURIComponent(codex)}&q=${encodeURIComponent(q)}`);
     ACCOUNTS = res.items || [];
     ACCOUNTS_TOTAL = Number(res.total || ACCOUNTS.length || 0);
+    if (typeof res.codex_authorization_enabled === 'boolean') {
+      CODEX_AUTHORIZATION_ENABLED = res.codex_authorization_enabled;
+    }
     const totalPages = Math.max(1, Math.ceil(ACCOUNTS_TOTAL / p.size));
     if (p.page > totalPages) { p.page = totalPages; accountsLoading = false; return loadAccounts(); }
     renderAccounts();
@@ -1282,12 +1338,11 @@ async function pollAccountPlanStatuses() {
   planStatusLoading = true;
   try {
     const archived = SHOW_ARCHIVED_ACCOUNTS ? 'only' : '0';
-    const plan = getAccountsPlanFilter();
+    const plan = SHOW_PLUS_ACCOUNTS_ONLY ? 'plus' : '';
     const codex = getAccountsCodexFilter();
-    const totp = getAccountsTotpFilter();
     const q = $('#qAccounts') ? $('#qAccounts').value.trim() : '';
     const p = PAGERS.accounts;
-    const snapshot = await api(`/api/accounts/plan-check-status?page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}&codex_status=${encodeURIComponent(codex)}&totp_status=${encodeURIComponent(totp)}&q=${encodeURIComponent(q)}`);
+    const snapshot = await api(`/api/accounts/plan-check-status?page=${encodeURIComponent(p.page)}&page_size=${encodeURIComponent(p.size)}&archived=${encodeURIComponent(archived)}&plan=${encodeURIComponent(plan)}&codex_status=${encodeURIComponent(codex)}&q=${encodeURIComponent(q)}`);
     const items = snapshot.items || [];
     const accountById = new Map(ACCOUNTS.map(r => [Number(r.id), r]));
     const hasUnknown = items.some(item => !accountById.has(Number(item.id)));
@@ -1306,9 +1361,12 @@ async function pollAccountPlanStatuses() {
         const isExtracting = ['queued', 'running'].includes(item.extract_link_status);
         const wasAgenting = ['queued', 'running'].includes(account?.codex_agent_status);
         const isAgenting = ['queued', 'running'].includes(item.codex_agent_status);
+        const wasTrialPayment = ['queued', 'running'].includes(account?.trial_payment_probe_status);
+        const isTrialPayment = ['queued', 'running'].includes(item.trial_payment_probe_status);
         if (wasChecking && !isChecking) needsFullReload = true;
         if (wasExtracting && !isExtracting) needsFullReload = true;
         if (wasAgenting && !isAgenting) needsFullReload = true;
+        if (wasTrialPayment && !isTrialPayment) needsFullReload = true;
         Object.assign(account, item);
       });
       planStatusRevision = snapshot.revision || '';
@@ -1415,7 +1473,7 @@ function _planCell(r) {
     const text = r.plus_trial_eligible ? 'free(可Plus试用)' : 'free';
     const cls = r.plus_trial_eligible ? 'status-success' : 'status-used';
     const t = r.plus_trial_eligible ? `${title}；Plus 试用资格可用` : title;
-    return `<span class="pill ${cls}" title="${t}">${esc(text)}</span>`;
+    return `<span class="pill ${cls}" title="${t}">${esc(text)}</span>${_trialPaymentCell(r)}`;
   }
 
   const isPaid = lower.includes('plus') || lower.includes('pro') || lower.includes('team') || lower.includes('go');
@@ -1435,7 +1493,21 @@ function _planCell(r) {
   if (r.plan_renews_at) detail.push(`续费时间: ${r.plan_renews_at}`);
   if (r.discount_expires_at) detail.push(`折扣结束: ${r.discount_expires_at}`);
   if (r.discount_promo_campaign_id) detail.push(`优惠: ${r.discount_promo_campaign_id}`);
-  return `<span class="pill ${cls}" title="${esc(detail.join('；'))}">${esc(text)}</span>`;
+  return `<span class="pill ${cls}" title="${esc(detail.join('；'))}">${esc(text)}</span>${_trialPaymentCell(r)}`;
+}
+function _trialPaymentCell(r) {
+  const status = String(r.trial_payment_probe_status || '').toLowerCase();
+  const methods = Array.isArray(r.trial_payment_methods) ? r.trial_payment_methods : [];
+  if (['queued','running'].includes(status)) return `<div class="sub-cell" style="color:#e6a23c">支付方式查询中…</div>`;
+  if (status === 'failed') return `<div class="sub-cell" style="color:#f56c6c" title="${esc(r.trial_payment_probe_error || '')}">支付方式失败</div>`;
+  if (!methods.length) return '';
+  const text = methods.map(item => {
+    const id = String(item.id || '').toLowerCase();
+    const label = item.label || ({momo:'Momo', paypal:'PayPal', gopay:'GoPay'}[id] || id);
+    const state = item.status === 'supported' ? '✓' : item.status === 'unsupported' ? '—' : '?';
+    return `${state} ${label}`;
+  }).join(' · ');
+  return `<div class="sub-cell" title="${esc(methods.map(x => x.detail || '').filter(Boolean).join('；'))}">试用支付：${esc(text)}</div>`;
 }
 function _planAction(r) {
   if (['queued','running'].includes(r.plan_check_status)) {
@@ -1444,7 +1516,11 @@ function _planAction(r) {
     const label = automatic ? (queued ? '自动查询排队中…' : '自动查询中…') : (queued ? '查询排队中…' : '查询中…');
     return `<button data-plan-check="${esc(r.id)}" disabled title="套餐查询正在执行，完成后可再次查询">${label}</button>`;
   }
-  return `<button data-plan-check="${esc(r.id)}" title="查询当前套餐；free 账号会检查 Plus 试用资格">查套餐</button>`;
+  const status = String(r.trial_payment_probe_status || '').toLowerCase();
+  const trial = ['queued','running'].includes(status)
+    ? `<button data-trial-payment-check="${esc(r.id)}" disabled>支付查询中…</button>`
+    : `<button data-trial-payment-check="${esc(r.id)}" title="逐项探测 Momo、PayPal、GoPay；只创建 checkout 预览，不确认支付">查试用支付</button>`;
+  return `<button data-plan-check="${esc(r.id)}" title="查询当前套餐；free 账号会检查 Plus 试用资格">查套餐</button>${trial}`;
 }
 function _fmtExtractExpire(v) {
   if (!v) return '';
@@ -1495,6 +1571,9 @@ function _codexAction(r) {
     return `<button class="danger" data-codex-stop="${esc(r.email)}" title="停止该账号正在进行的 Codex 补跑">停止补跑</button> <button data-codex-reset-retrying="${esc(r.email)}" title="只重置状态；不会向运行线程发送停止信号">重置状态</button>`;
   }
   if (s === 'deactivated') return '';
+  if (!CODEX_AUTHORIZATION_ENABLED) {
+    return `<span class="muted" title="Codex 授权已关闭，开启设置后可手动补跑">Codex 已关闭</span>`;
+  }
   const label = s === 'success' ? '重新补跑 Codex' : '补跑 Codex';
   return `<button data-codex-retry="${esc(r.email)}" title="重新跑一次 Codex 授权（会消耗 1 封邮箱 OTP + 1 个接码短信）">${label}</button>`;
 }
@@ -1566,24 +1645,25 @@ function updateAccountSelectionUi(pageRows = null) {
   const downloadCpaBtn = $('#btnDownloadSelectedCpa');
   const extractLinksBtn = $('#btnExtractSelectedLinks');
   const checkPlanBtn = $('#btnCheckSelectedPlans');
+  const checkTrialPaymentsBtn = $('#btnCheckSelectedTrialPayments');
   const copySelectedBtn = $('#btnCopySelectedLines');
   const copySelectedTokensBtn = $('#btnCopySelectedTokens');
   const downloadTxtBtn = $('#btnDownloadSelectedTxt');
   const noteSelectedBtn = $('#btnNoteSelectedAccounts');
   const archiveSelectedBtn = $('#btnArchiveSelectedAccounts');
-  const setupTotpBtn = $('#btnSetupSelectedTotp');
   if (hint) hint.textContent = `已选 ${ACCOUNT_SELECTED.size}`;
   if (bulkBtn) bulkBtn.disabled = ACCOUNT_SELECTED.size === 0;
-  if (retryBulkBtn) retryBulkBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  if (retryBulkBtn) retryBulkBtn.disabled = ACCOUNT_SELECTED.size === 0 || !CODEX_AUTHORIZATION_ENABLED;
+  if (retryBulkBtn && !CODEX_AUTHORIZATION_ENABLED) retryBulkBtn.title = 'Codex 授权已关闭，开启设置后可手动补跑';
   if (stopCodexBulkBtn) stopCodexBulkBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (downloadCpaBtn) downloadCpaBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (extractLinksBtn) extractLinksBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (checkPlanBtn) checkPlanBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  if (checkTrialPaymentsBtn) checkTrialPaymentsBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (copySelectedBtn) copySelectedBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (copySelectedTokensBtn) copySelectedTokensBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (downloadTxtBtn) downloadTxtBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (noteSelectedBtn) noteSelectedBtn.disabled = ACCOUNT_SELECTED.size === 0;
-  if (setupTotpBtn) setupTotpBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (archiveSelectedBtn) {
     archiveSelectedBtn.disabled = ACCOUNT_SELECTED.size === 0;
     archiveSelectedBtn.textContent = SHOW_ARCHIVED_ACCOUNTS ? '恢复选中' : '归档选中';
@@ -1761,6 +1841,12 @@ $('#accountsBody').addEventListener('click', async (e) => {
     return;
   }
 
+  const trialPaymentBtn = e.target.closest('[data-trial-payment-check]');
+  if (trialPaymentBtn) {
+    await checkOneTrialPayments(Number(trialPaymentBtn.dataset.trialPaymentCheck), trialPaymentBtn);
+    return;
+  }
+
   const liveBtn = e.target.closest('[data-account-live-check]');
   if (liveBtn) {
     await checkSelectedLive([Number(liveBtn.dataset.accountLiveCheck)], liveBtn);
@@ -1918,12 +2004,12 @@ $('#btnCopySelectedLines').addEventListener('click', copySelectedAccountLines);
 $('#btnCopySelectedTokens').addEventListener('click', copySelectedAccountTokens);
 $('#btnDownloadSelectedTxt').addEventListener('click', downloadSelectedAccountTxt);
 $('#btnNoteSelectedAccounts').addEventListener('click', noteSelectedAccounts);
-$('#btnSetupSelectedTotp').addEventListener('click', setupSelectedTotp);
 $('#btnExtractSelectedLinks').addEventListener('click', extractSelectedLinks);
 $('#btnRetrySelectedCodex').addEventListener('click', retrySelectedCodex);
 $('#btnDownloadSelectedCpa').addEventListener('click', downloadSelectedCpa);
 $('#btnStopSelectedCodex').addEventListener('click', stopSelectedCodex);
 $('#btnCheckSelectedPlans').addEventListener('click', checkSelectedPlans);
+$('#btnCheckSelectedTrialPayments').addEventListener('click', checkSelectedTrialPayments);
 $('#showArchivedAccounts').addEventListener('change', async (e) => {
   SHOW_ARCHIVED_ACCOUNTS = !!e.target.checked;
   ACCOUNT_SELECTED.clear();
@@ -1933,21 +2019,6 @@ $('#showArchivedAccounts').addEventListener('change', async (e) => {
 });
 $('#showPlusAccountsOnly').addEventListener('change', async (e) => {
   SHOW_PLUS_ACCOUNTS_ONLY = !!e.target.checked;
-  if (SHOW_PLUS_ACCOUNTS_ONLY) {
-    SHOW_PLUS_TRIAL_ACCOUNTS_ONLY = false;
-    $('#showPlusTrialAccountsOnly').checked = false;
-  }
-  ACCOUNT_SELECTED.clear();
-  PAGERS.accounts.page = 1;
-  await loadAccounts();
-  await pollAccountPlanStatuses();
-});
-$('#showPlusTrialAccountsOnly').addEventListener('change', async (e) => {
-  SHOW_PLUS_TRIAL_ACCOUNTS_ONLY = !!e.target.checked;
-  if (SHOW_PLUS_TRIAL_ACCOUNTS_ONLY) {
-    SHOW_PLUS_ACCOUNTS_ONLY = false;
-    $('#showPlusAccountsOnly').checked = false;
-  }
   ACCOUNT_SELECTED.clear();
   PAGERS.accounts.page = 1;
   await loadAccounts();
@@ -2026,42 +2097,6 @@ async function setupAccountTotp(id, btn) {
     showToast('开启 2FA 失败: ' + err.message);
   } finally {
     if (btn) btn.disabled = false;
-  }
-}
-
-async function setupSelectedTotp() {
-  const ids = Array.from(ACCOUNT_SELECTED).map(Number);
-  if (!ids.length) { showToast('请先选择账号'); return; }
-  if (!confirm(`确定为选中的 ${ids.length} 个账号批量开启 2FA？\n\n任务会在后台排队执行，完成后自动把 TOTP 密钥写回账号信息。\n已经开启、没有 Token 或正在设置中的账号会自动跳过。`)) return;
-
-  const btn = $('#btnSetupSelectedTotp');
-  if (!btn) return;
-  const oldText = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '入队中…';
-  try {
-    const r = await api('/api/accounts/totp-setup-bulk', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({account_ids: ids}),
-    });
-    (r.started || []).forEach(item => ACCOUNT_SELECTED.delete(Number(item.id)));
-    const skippedCount = Number(r.skipped_count ?? (r.skipped || []).length) || 0;
-    const busyCount = Number(r.busy_count ?? (r.busy || []).length) || 0;
-    const failedCount = Number(r.failed_count ?? (r.failed || []).length) || 0;
-    const details = [];
-    if (skippedCount) details.push(`跳过 ${skippedCount} 个`);
-    if (busyCount) details.push(`进行中 ${busyCount} 个`);
-    if (failedCount) details.push(`失败 ${failedCount} 个`);
-    showToast(`已入队 ${r.started_count || 0} 个${details.length ? '，' + details.join('，') : ''}`);
-    planStatusRevision = '';
-    await loadAccounts();
-    await pollAccountPlanStatuses();
-  } catch (err) {
-    showToast('批量开启 2FA 失败: ' + err.message);
-  } finally {
-    btn.textContent = oldText;
-    updateAccountSelectionUi();
   }
 }
 
@@ -2163,6 +2198,24 @@ async function checkOnePlan(id, btn) {
     await pollAccountPlanStatuses();
   } catch(err) {
     showToast(err.message);
+    await pollAccountPlanStatuses();
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+async function checkOneTrialPayments(id, btn) {
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '查询中…';
+  try {
+    const r = await api('/api/accounts/check-trial-payments', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({account_id: id}),
+    });
+    showToast(r.message || '试用支付方式探测已入队（仅预览，不会扣款）');
+    await pollAccountPlanStatuses();
+  } catch(err) {
+    showToast('试用支付查询失败: ' + err.message);
     await pollAccountPlanStatuses();
     btn.disabled = false;
     btn.textContent = old;
@@ -2413,6 +2466,29 @@ async function checkSelectedPlans() {
   }
 }
 
+async function checkSelectedTrialPayments() {
+  const ids = Array.from(ACCOUNT_SELECTED);
+  if (!ids.length) { showToast('请先选择账号'); return; }
+  const btn = $('#btnCheckSelectedTrialPayments');
+  if (!btn) return;
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = '查询中…';
+  try {
+    const r = await api('/api/accounts/check-trial-payments-bulk', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({account_ids: ids}),
+    });
+    const skipped = Number(r.skipped_count || 0) + Number(r.busy_count || 0) + Number(r.failed_count || 0);
+    showToast(`已入队 ${r.started_count || 0} 个试用支付探测${skipped ? `，跳过/失败 ${skipped} 个` : ''}`);
+    await pollAccountPlanStatuses();
+  } catch(err) {
+    showToast('批量试用支付查询失败: ' + err.message);
+    updateAccountSelectionUi();
+  } finally {
+    btn.textContent = old;
+  }
+}
+
 async function checkSelectedLive(idsArg = null, btnArg = null) {
   const ids = idsArg || Array.from(ACCOUNT_SELECTED);
   if (ids.length === 0) { showToast('请先选择账号'); return; }
@@ -2424,7 +2500,7 @@ async function checkSelectedLive(idsArg = null, btnArg = null) {
 并发线程数：${workers}`;
   if (!confirm(msg)) return;
   const firstAcc = ACCOUNTS.find(a => Number(a.id) === Number(ids[0]));
-  const btn = btnArg || $('#btnCheckSelectedLive');
+  const btn = btnArg || $('#btnCheckSelectedLive') || $('#btnCheckSelectedLiveTop');
   const old = btn ? btn.textContent : '';
   if (btn) {
     btn.disabled = true;
@@ -2612,6 +2688,7 @@ async function stopSelectedCodex() {
 }
 
 async function retrySelectedCodex() {
+  if (!CODEX_AUTHORIZATION_ENABLED) { showToast('Codex 授权已关闭，已跳过手动补跑'); return; }
   const ids = Array.from(ACCOUNT_SELECTED);
   if (ids.length === 0) { showToast('请先选择账号'); return; }
   const workersEl = $('#codexBulkWorkers');
@@ -2652,7 +2729,6 @@ async function retrySelectedCodex() {
 
 $('#qAccounts').addEventListener('input', debounce(() => { ACCOUNT_SELECTED.clear(); PAGERS.accounts.page = 1; loadAccounts(); }, 250));
 $('#codexStatusFilter').addEventListener('change', () => { ACCOUNT_SELECTED.clear(); PAGERS.accounts.page = 1; loadAccounts(); });
-$('#totpStatusFilter').addEventListener('change', () => { ACCOUNT_SELECTED.clear(); PAGERS.accounts.page = 1; loadAccounts(); });
 $('#copyAllTokens').addEventListener('click', async () => {
   const ids = ACCOUNTS.filter(r => r.has_access_token).map(r => Number(r.id));
   if (!ids.length) { showToast('当前页没有 Token'); return; }
@@ -2665,7 +2741,172 @@ $('#copyAllLines').addEventListener('click', async () => {
 });
 
 // ---------- 邮箱池 ----------
-function poolKey(r) { return `${r.source || $('#poolSource')?.value || 'all'}|${r.email || ''}`; }
+let REBIND_RESOURCES = {selected: '', resources: []};
+let REBIND_TRIAL_ACCOUNTS = [];
+let REBIND_TRIAL_META = {checked_count: 0, pending_count: 0};
+let REBIND_TRIAL_TIMER = null;
+function rebindResource(source) {
+  return (REBIND_RESOURCES.resources || []).find(item => item.source === source) || null;
+}
+function rebindResourceLabel(source) {
+  return rebindResource(source)?.label || source || '自动识别';
+}
+function setRebindStatus(text, color = '') {
+  const el = $('#rebindStatus');
+  if (!el) return;
+  el.textContent = text || '';
+  el.style.color = color || '';
+}
+function rebindTrialStatus(row) {
+  const status = row.rebind_status || '';
+  const labels = {queued: '排队中', running: '执行中', success: '已完成', failed: '失败', stopped: '已停止'};
+  const label = labels[status] || '未换绑';
+  const target = row.rebind_new_email ? ` → ${esc(row.rebind_new_email)}` : '';
+  const detail = row.rebind_error || row.rebind_message || '';
+  const cls = status === 'success' ? 'status-success' : status === 'failed' ? 'status-failed' : status === 'queued' || status === 'running' ? 'status-running' : 'status-used';
+  return `<span class="pill ${cls}" title="${esc(detail)}">${label}</span><span class="rebind-trial-sub">${target}${detail ? ` · ${esc(short(detail, 100))}` : ''}</span>`;
+}
+async function openRebindReason(accountId) {
+  const panel = $('#rebindReasonPanel');
+  const account = REBIND_TRIAL_ACCOUNTS.find(row => String(row.id) === String(accountId));
+  if (!panel) return;
+  $('#rebindReasonAccount').textContent = '#' + accountId + (account?.email ? ' · ' + account.email : '');
+  $('#rebindReasonSummary').textContent = '正在读取完整失败原因…';
+  $('#rebindReasonContent').textContent = '加载中…';
+  panel.classList.remove('hidden');
+  updateModalScrollLock();
+  try {
+    const result = await api('/api/accounts/' + encodeURIComponent(accountId) + '/rebind-email');
+    const reason = String(result.rebind_error || result.rebind_message || '').trim() || '后台未返回具体失败原因';
+    const code = result.rebind_code || '未返回';
+    const status = result.rebind_status || '未换绑';
+    $('#rebindReasonSummary').textContent = '错误代码：' + code + '\n失败原因：' + reason;
+    $('#rebindReasonContent').textContent = [
+      '状态：' + status,
+      '原邮箱：' + (result.rebind_old_email || account?.email || '-'),
+      '目标邮箱：' + (result.rebind_new_email || '-'),
+      '失败原因：' + reason,
+      '',
+      '执行日志：',
+      result.log || '(暂无日志)',
+    ].join('\n');
+  } catch (err) {
+    $('#rebindReasonSummary').textContent = '读取失败原因失败：' + err.message;
+    $('#rebindReasonContent').textContent = '请刷新资格号后重试。';
+  }
+}
+function renderRebindTrialAccounts() {
+  const body = $('#rebindTrialAccountsBody');
+  const rows = REBIND_TRIAL_ACCOUNTS || [];
+  const eligible = $('#rebindTrialEligibleCount');
+  const checked = $('#rebindTrialCheckedCount');
+  const pending = $('#rebindTrialPendingCount');
+  if (eligible) eligible.textContent = rows.length;
+  if (checked) checked.textContent = Number(REBIND_TRIAL_META.checked_count || 0);
+  if (pending) pending.textContent = Number(REBIND_TRIAL_META.pending_count || 0);
+  if (!body) return;
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="6" class="rebind-trial-empty">暂无试用资格号。请先到「账号」执行查套餐，确认 free 账号的 Plus 试用资格。</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(row => {
+    const busy = ['queued', 'running'].includes(row.rebind_status);
+    const checkedAt = row.plan_checked_at || row.plan_last_success_at || '-';
+    const title = row.plus_trial_title || 'Plus 试用资格';
+    const hasReason = row.rebind_status === 'failed' || row.rebind_error || row.rebind_message || row.rebind_code;
+    const reasonButton = hasReason
+      ? '<button type="button" class="rebind-trial-reason" data-trial-rebind-reason="' + esc(row.id) + '">查看原因</button>'
+      : '';
+    const button = busy
+      ? '<button type="button" class="rebind-trial-action" disabled>换绑中…</button>'
+      : `<button type="button" class="rebind-trial-action" data-trial-rebind="${esc(row.id)}">自动换绑</button>`;
+    return `<tr>
+      <td><span class="rebind-trial-account-id">#${esc(row.id)}</span><div class="rebind-trial-sub">free</div></td>
+      <td><span class="rebind-trial-email">${esc(row.email || '-')}</span></td>
+      <td><span class="pill status-success">${esc(title)}</span><div class="rebind-trial-sub">可用试用资格</div></td>
+      <td class="muted">${esc(checkedAt)}</td>
+      <td>${rebindTrialStatus(row)}</td>
+      <td><div class="rebind-trial-actions">${reasonButton}${button}</div></td>
+    </tr>`;
+  }).join('');
+}
+function scheduleRebindTrialRefresh() {
+  clearTimeout(REBIND_TRIAL_TIMER);
+  if ((REBIND_TRIAL_ACCOUNTS || []).some(row => ['queued', 'running'].includes(row.rebind_status))) {
+    REBIND_TRIAL_TIMER = setTimeout(loadRebindTrialAccounts, 4000);
+  }
+}
+async function loadRebindTrialAccounts() {
+  try {
+    const res = await api('/api/rebind/accounts?eligible=1');
+    REBIND_TRIAL_ACCOUNTS = res.items || [];
+    REBIND_TRIAL_META = res || {checked_count: 0, pending_count: 0};
+    renderRebindTrialAccounts();
+    scheduleRebindTrialRefresh();
+  } catch (err) {
+    REBIND_TRIAL_ACCOUNTS = [];
+    renderRebindTrialAccounts();
+    setRebindStatus('试用资格号加载失败：' + err.message, 'var(--red)');
+  }
+}
+function renderRebindResources() {
+  const select = $('#rebindProvider');
+  if (!select) return;
+  const resources = REBIND_RESOURCES.resources || [];
+  const ready = resources.filter(item => item.ready);
+  select.innerHTML = '<option value="auto">自动识别（' + esc(rebindResourceLabel(REBIND_RESOURCES.selected)) + '）</option>' + ready
+    .filter(item => item.source !== REBIND_RESOURCES.selected)
+    .map(item => '<option value="' + esc(item.source) + '">' + esc(item.label) + '</option>').join('');
+  const detected = $('#rebindDetected');
+  if (detected) detected.textContent = resources.map(item =>
+    (item.ready ? '✓' : '·') + ' ' + item.label + (item.domains?.length ? '（' + item.domains.join('、') + '）' : '') + '：' + (item.message || '')
+  ).join('\n') || '没有检测到邮箱资源';
+}
+async function loadRebindPage() {
+  try {
+    REBIND_RESOURCES = await api('/api/rebind/resources');
+    renderRebindResources();
+    await loadRebindTrialAccounts();
+  } catch (err) {
+    setRebindStatus('邮箱资源识别失败：' + err.message, 'var(--red)');
+  }
+}
+async function startResourceRebind(accountId) {
+  const account = REBIND_TRIAL_ACCOUNTS.find(row => String(row.id) === String(accountId));
+  const provider = $('#rebindProvider')?.value || 'auto';
+  const timeout = Number($('#rebindTimeout')?.value || 120);
+  if (!account) { showToast('试用资格号不存在或已刷新'); return; }
+  if (!Number.isFinite(timeout) || timeout < 5 || timeout > 900) { showToast('等待秒数必须在 5-900 之间'); return; }
+  const resource = rebindResource(provider === 'auto' ? REBIND_RESOURCES.selected : provider);
+  if (!resource?.ready) { setRebindStatus('当前没有可用的邮箱资源', 'var(--red)'); return; }
+  const label = provider === 'auto' ? rebindResourceLabel(REBIND_RESOURCES.selected) : rebindResourceLabel(provider);
+  if (!confirm('将为 #' + account.id + '（' + (account.email || '-') + '）使用' + label + '自动创建新邮箱并收取验证码，确认开始换绑吗？')) return;
+  setRebindStatus('正在提交 #' + account.id + ' 的换绑任务…');
+  try {
+    const res = await api('/api/accounts/' + encodeURIComponent(accountId) + '/rebind-email', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({provider, mail_timeout: timeout}),
+    });
+    showToast(res.message || '邮箱换绑任务已入队');
+    setRebindStatus('#' + account.id + ' 已入队：' + (res.new_email || '自动分配邮箱') + ' · ' + label);
+    await loadRebindTrialAccounts();
+  } catch (err) {
+    setRebindStatus('提交换绑失败：' + err.message, 'var(--red)');
+  }
+}
+$('#btnRefreshRebindResources')?.addEventListener('click', loadRebindPage);
+$('#btnRefreshRebindTrial')?.addEventListener('click', loadRebindTrialAccounts);
+$('#rebindTrialAccountsBody')?.addEventListener('click', (event) => {
+  const reasonButton = event.target.closest('[data-trial-rebind-reason]');
+  if (reasonButton) {
+    openRebindReason(reasonButton.dataset.trialRebindReason);
+    return;
+  }
+  const button = event.target.closest('[data-trial-rebind]');
+  if (button) startResourceRebind(button.dataset.trialRebind);
+});
+
+function poolKey(r) { return `${r.source || $('#poolSource')?.value || 'outlook'}|${r.email || ''}`; }
 function poolLabel(src) {
   return ({outlook:'Outlook', generic_api:'通用API', cloudflare_domain:'域名邮箱'})[src] || src || '-';
 }
@@ -2687,7 +2928,7 @@ function renderOutlook() {
   const rows = OUTLOOK;
   $('#outlookBody').innerHTML = rows.map(r => `
     <tr>
-      <td><input type="checkbox" class="outlook-row-check" data-email="${esc(r.email)}" data-source="${esc(r.source || $('#poolSource')?.value || 'all')}" ${OUTLOOK_SELECTED.has(poolKey(r)) ? 'checked' : ''}></td>
+      <td><input type="checkbox" class="outlook-row-check" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}" ${OUTLOOK_SELECTED.has(poolKey(r)) ? 'checked' : ''}></td>
       <td><div class="main-cell">${esc(r.email)}</div><div class="sub-cell mono">${esc(short(r.copy_line, 70))}</div></td>
       <td>${esc(poolLabel(r.source))}</td>
       <td>${pill(r.status)}</td>
@@ -2697,15 +2938,15 @@ function renderOutlook() {
       <td class="actions">
         ${cbtn('复制邮箱', r.copy_line)} ${cbtn('复制Token', r.access_token, 'primary')} ${cbtn('复制整行', r.account_copy_line, 'good')}
         ${r.status !== 'available'
-          ? `<button data-pool-act="available" data-email="${esc(r.email)}" data-source="${esc(r.source || $('#poolSource')?.value || 'all')}">恢复可用</button>`
+          ? `<button data-pool-act="available" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}">恢复可用</button>`
           : ''}
         ${r.status !== 'disabled'
-          ? `<button data-pool-act="disabled" data-email="${esc(r.email)}" data-source="${esc(r.source || $('#poolSource')?.value || 'all')}">停用</button>`
+          ? `<button data-pool-act="disabled" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}">停用</button>`
           : ''}
         ${r.status !== 'failed'
-          ? `<button data-pool-act="failed" data-email="${esc(r.email)}" data-source="${esc(r.source || $('#poolSource')?.value || 'all')}">标失败</button>`
+          ? `<button data-pool-act="failed" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}">标失败</button>`
           : ''}
-        <button data-pool-act="delete" data-email="${esc(r.email)}" data-source="${esc(r.source || $('#poolSource')?.value || 'all')}" style="border-color:#e7a3a0;color:#b3261e;">删除</button>
+        <button data-pool-act="delete" data-email="${esc(r.email)}" data-source="${esc(r.source || 'outlook')}" style="border-color:#e7a3a0;color:#b3261e;">删除</button>
       </td>
     </tr>`).join('') || '<tr><td colspan="8" class="muted">邮箱池为空</td></tr>';
   updateOutlookSelectionUi(rows);
@@ -2766,11 +3007,7 @@ $('#outlookBody').addEventListener('click', async (e) => {
   try {
     if (poolAct === 'delete') {
       if (!confirm(`确定从邮箱池删除 ${email}？此操作不可撤销。`)) return;
-      const r = await api('/api/outlook/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, source}) });
-      if (!r.deleted) {
-        showToast('删除失败：邮箱不存在或来源不匹配');
-        return;
-      }
+      await api('/api/outlook/delete', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email, source}) });
       OUTLOOK_SELECTED.delete(`${source}|${email}`);
       showToast('已删除');
     } else {
@@ -2848,7 +3085,7 @@ $('#btnImport').addEventListener('click', async () => {
   $('#btnImport').disabled = true;
   try {
     const source = $('#importSource').value;
-    const as_registered = $('#importAsRegistered')?.checked ?? false;
+    const as_registered = $('#importAsRegistered')?.checked ?? true;
     const r = await api('/api/outlook/import', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, source, as_registered}) });
     const mode = r.as_registered ? '已注册账号' : '邮箱池素材';
     $('#importResult').innerHTML = `<div class="banner info">按 ${mode} 导入：解析 ${r.parsed} 行，新增 ${r.inserted}，跳过 ${r.skipped}${r.as_registered ? '；可到“账号”页选择后批量补跑 Codex' : ''}</div>`;
@@ -2905,7 +3142,7 @@ function renderCodex() {
       <td class="muted">${esc(r.mtime || '-')}</td>
       <td class="muted">${esc(r.expired || '-')}</td>
       <td class="actions">
-        <button class="primary" data-codex-download="${esc(r.filename)}" title="从 SQLite 下载 JSON/回执">下载凭证</button>
+        <button class="primary" data-codex-download="${esc(r.filename)}" title="下载本地 codex_accounts/ 中的 JSON/回执">本地下载</button>
         <button class="good" data-codex-download-cpa="${esc(r.filename)}" title="按邮箱从 CPA auth-files 下载真实 Codex JSON">从CPA下载</button>
         ${exported ? `<button data-codex-reset="${esc(r.filename)}" title="重新标记为未导出">重置标记</button>` : ''}
         <button class="danger" data-codex-delete="${esc(r.filename)}" title="删除本地 Codex JSON 凭证文件">删除</button>
@@ -3025,7 +3262,7 @@ $('#btnCodexDownloadBulkCpa').addEventListener('click', async () => {
 $('#btnCodexDeleteBulk').addEventListener('click', async () => {
   if (CODEX_SELECTED.size === 0) return;
   const filenames = Array.from(CODEX_SELECTED);
-  if (!confirm(`确定删除选中的 ${filenames.length} 个 Codex 凭证吗？\n\n会删除 SQLite 中的凭证记录。此操作不可撤销。`)) return;
+  if (!confirm(`确定删除选中的 ${filenames.length} 个 Codex 凭证吗？\n\n会删除本地 codex_accounts/ 下的 JSON 文件，并清理导出标记。此操作不可撤销。`)) return;
   $('#btnCodexDeleteBulk').disabled = true;
   try {
     const r = await api('/api/codex/delete-bulk', {
@@ -3137,39 +3374,11 @@ function renderConfigField(f) {
     const ph = f.secret ? '保存在 .env，可留空' : '可留空';
     html += `<input type="${inputType}" data-key="${attrEsc(f.key)}" value="${attrEsc(shown)}" placeholder="${ph}" autocomplete="off" spellcheck="false">`;
   }
-  const field = html + `</label>`;
-  const decorated = f.external_url
-    ? `<div class="config-field-wrap">${field}${renderConfigExternalLink(f)}</div>`
-    : field;
-  return decorated + renderConfigRecommendedLinks(f);
-}
-
-function renderConfigExternalLink(f) {
-  const url = String(f.external_url || '').trim();
-  if (!/^https?:\/\//i.test(url)) return '';
-  const label = String(f.external_label || '打开官网');
-  return `<a class="config-external-link" href="${attrEsc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
-}
-function renderConfigRecommendedLinks(f) {
-  const links = Array.isArray(f.recommended_links) ? f.recommended_links : [];
-  const items = links.map(item => {
-    const url = String(item?.url || '').trim();
-    if (!/^https?:\/\//i.test(url)) return '';
-    const label = String(item?.label || url);
-    const description = String(item?.description || '').trim();
-    return `<span class="config-recommendations-item"><a href="${attrEsc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>${description ? `：${esc(description)}` : ''}</span>`;
-  }).filter(Boolean).join('');
-  if (!items) return '';
-  return `<div class="config-recommendations" role="note"><span class="config-recommendations-title">推荐家宽</span>${items}</div>`;
+  return html + `</label>`;
 }
 
 function configSubhead(title, help = '') {
-  const subheadClass = title === 'Remail' ? 'config-subhead remail-subhead' : 'config-subhead';
-  const titleHtml = title === 'Remail' ? `<div class="remail-subhead-title">${esc(title)}</div>` : esc(title);
-  const promo = title === 'Remail'
-    ? `<span class="remail-promo-notice" role="note">通过作者卡网购买积分9折优惠</span>`
-    : '';
-  return `<div class="${subheadClass}">${titleHtml}${help ? `<span class="hint">${esc(help)}</span>` : ''}${promo}</div>`;
+  return `<div class="config-subhead">${esc(title)}${help ? `<span class="hint">${esc(help)}</span>` : ''}</div>`;
 }
 
 function emailConfigSectionForKey(key) {
@@ -3179,7 +3388,6 @@ function emailConfigSectionForKey(key) {
   if (key.startsWith('GPTMAIL_')) return ['GPTMail', 'GPTMail 临时邮箱 API 配置'];
   if (key.startsWith('MAIL_NEST_')) return ['MailNest', 'MailNest / 迈巢临时邮箱 API 配置'];
   if (key.startsWith('CLOUDMAIL_')) return ['CloudMail', 'CloudMail 域名随机邮箱、Token 和收信 API 配置'];
-  if (key.startsWith('REMAIL_')) return ['Remail', 'Remail 开放 API、项目下单和取件配置'];
   if (key.startsWith('OUTLOOK_')) return ['Outlook 邮箱池', 'Outlook 邮箱池和取件模式配置'];
   if (['EMAIL_DOMAIN','QQ_EMAIL','QQ_IMAP_PASSWORD'].includes(key)) return ['Cloudflare 域名邮箱', 'Cloudflare 转发到 QQ 邮箱后的 IMAP 收信配置'];
   return ['其他邮箱配置', ''];
@@ -3250,7 +3458,7 @@ function renderConfigFields(fields) {
       CONFIG_EMAIL_ACTIVE_SECTION,
       v => { CONFIG_EMAIL_ACTIVE_SECTION = v; },
       emailConfigSectionForKey,
-      ['通用邮箱 / OTP', 'GPTMail', 'MailNest', 'CloudMail', 'Remail', 'Outlook 邮箱池', 'Cloudflare 域名邮箱', '其他邮箱配置'],
+      ['通用邮箱 / OTP', 'GPTMail', 'MailNest', 'CloudMail', 'Outlook 邮箱池', 'Cloudflare 域名邮箱', '其他邮箱配置'],
       'email-config-section'
     );
   }
@@ -3566,6 +3774,10 @@ $('#btnSaveConfig').addEventListener('click', async () => {
       $('#configBanner').innerHTML = `已保存 ${r.updated.length} 项，但<b>热加载失败</b>（${esc(r.note||'')}），请重启 Web 服务后生效。`;
     }
     for (const [k, v] of Object.entries(updates)) { const f = CONFIG.find(x => x.key === k); if (f) f.value = v; delete CONFIG_PENDING_UPDATES[k]; }
+    if (Object.prototype.hasOwnProperty.call(updates, 'ENABLE_CODEX_AUTO')) {
+      CODEX_AUTHORIZATION_ENABLED = !!updates.ENABLE_CODEX_AUTO;
+      renderAccounts();
+    }
     showToast(r.reloaded ? '配置已生效' : '配置已保存（需重启）');
   } catch(e) { showToast('保存失败: ' + e.message); }
   finally { $('#btnSaveConfig').disabled = false; }

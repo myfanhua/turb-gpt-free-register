@@ -10,7 +10,8 @@ from pathlib import Path
 
 from core import db
 from core.account_liveness import check_account_liveness, log_path
-from core.chatgpt_plan import resolve_plan_check_route
+from core.chatgpt_plan import check_account_plan, resolve_plan_check_route
+from core.plan_check_service import resolve_account_plan_proxy
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,26 @@ def _append_log(email: str, line: str, *, clear: bool = False) -> None:
         f.write(f"{stamp} [INFO] {line}\n")
 
 
+def _needs_full_login(result: dict | None) -> bool:
+    result = result or {}
+    return bool(
+        result.get("needs_live_check")
+        or result.get("token_expired") is True
+        or result.get("http_status") == 401
+    )
+
+
+def _is_proxy_transport_failure(result: dict | None) -> bool:
+    result = result or {}
+    if result.get("ok") or str(result.get("status") or "").lower() == "deactivated":
+        return False
+    error = str(result.get("error") or "").lower()
+    return any(hint in error for hint in (
+        "403", "proxy", "socks", "ssl", "timeout", "timed out",
+        "connection", "closed", "reset", "dns",
+    ))
+
+
 def _run_live_check(*, account_id: int, email: str, proxy: str | None, trigger: str) -> dict:
     try:
         with _LOCK:
@@ -45,18 +66,51 @@ def _run_live_check(*, account_id: int, email: str, proxy: str | None, trigger: 
         if not db.mark_account_live_check_running(account_id):
             _append_log(email, "[查活] 账号已删除或查活状态已被重置，取消执行")
             return {"ok": False, "status": "failed", "error": "账号已删除或查活状态已被重置"}
-        route = resolve_plan_check_route(explicit_proxy=proxy)
+
+        account = db.get_account(account_id) or {}
+        saved_token = str(account.get("access_token") or "").strip()
+        selected_proxy, proxy_context = resolve_account_plan_proxy(
+            account_id=account_id,
+            email=email,
+            proxy=proxy,
+        )
+        if saved_token:
+            _append_log(email, "[查活] 优先验证账号已保存 AT，不重新触发邮箱登录")
+            token_result = check_account_plan(saved_token, proxy=selected_proxy)
+            if token_result.get("ok"):
+                result = {
+                    "ok": True,
+                    "status": "live",
+                    "source": "stored_at",
+                    "checked_at": token_result.get("checked_at") or datetime.now().isoformat(timespec="seconds"),
+                    "access_token": saved_token,
+                    "http_status": token_result.get("http_status"),
+                    "network_route": token_result.get("network_route"),
+                    "proxy_used": token_result.get("proxy_used"),
+                    "proxy_fallback_reason": token_result.get("proxy_fallback_reason"),
+                    "plan_check_proxy_provider": token_result.get("plan_check_proxy_provider")
+                    or (proxy_context or {}).get("proxy_provider"),
+                    "plan_check_proxy_country": token_result.get("plan_check_proxy_country")
+                    or (proxy_context or {}).get("proxy_country"),
+                }
+                db.update_account_liveness(account_id, result)
+                _append_log(email, "[查活] 完成：保存 AT 有效，账号正常")
+                return result
+            if not _needs_full_login(token_result):
+                result = {
+                    **token_result,
+                    "ok": False,
+                    "status": "failed",
+                    "source": "stored_at",
+                    "error": f"保存 AT 验证失败：{token_result.get('error') or '未知网络错误'}",
+                }
+                db.update_account_liveness(account_id, result)
+                _append_log(email, f"[查活] 完成：失败 {result['error']}")
+                return result
+            _append_log(email, "[查活] 保存 AT 已失效，继续完整登录刷新 AT")
+
+        route = resolve_plan_check_route(explicit_proxy=selected_proxy)
         selected_proxy = route.get("proxy")
-        # 查活必须沿用账号注册时记录的邮箱来源。不能只调用
-        # resolve_email_source(email)：Remail 等临时邮箱的上下文只在领取进程
-        # 内存中存在，服务重启后按当前 EMAIL_SOURCE 推断会把来源判错。
-        try:
-            account = db.get_account(account_id) or {}
-        except Exception:
-            account = {}
-        email_source = str(account.get("email_source") or "").strip() or None
-        if email_source:
-            _append_log(email, f"[查活] 使用注册时保存的邮箱来源：{email_source}")
         _append_log(
             email,
             "[查活] 开始后台执行 "
@@ -64,30 +118,19 @@ def _run_live_check(*, account_id: int, email: str, proxy: str | None, trigger: 
             f"proxy_mode={route.get('proxy_mode')} proxy_used={route.get('proxy_used') or '-'} "
             f"fallback_reason={route.get('proxy_fallback_reason') or '-'}"
         )
-        result = check_account_liveness(
-            email,
-            proxy=selected_proxy,
-            clear_log=False,
-            email_source=email_source,
-        )
-        # 认证链早期 403 通常是该出口被 CF 拦截，不代表账号死亡。
-        # auto/proxy 模式下如果用了代理，额外直连兜底一次，便于和套餐查询的 auto 语义保持接近。
-        err_text = str(result.get("error") or "")
+        result = check_account_liveness(email, proxy=selected_proxy, clear_log=False)
+        # auto 模式下代理若在 HTTP 响应前失败，则真实直连兜底一次。
+        # 显式 proxy 覆盖属于 request 模式，不改变调用方指定的网络路径。
         if (
             not result.get("ok")
             and result.get("status") == "failed"
-            and "403" in err_text
+            and _is_proxy_transport_failure(result)
             and selected_proxy
             and str(route.get("network_route") or "") == "proxy"
+            and str(route.get("proxy_mode") or "") == "auto"
         ):
-            _append_log(email, "[查活] 代理出口收到 403，尝试直连兜底一次")
-            # BrowserSession 约定：None=从代理池抽取，""=明确直连。
-            result = check_account_liveness(
-                email,
-                proxy="",
-                clear_log=False,
-                email_source=email_source,
-            )
+            _append_log(email, "[查活] 代理传输失败，auto 模式切换真实直连重试一次")
+            result = check_account_liveness(email, proxy="", clear_log=False)
         db.update_account_liveness(account_id, result)
         if result.get("ok"):
             _append_log(email, "[查活] 完成：账号正常，已刷新最新 AT/accessToken")

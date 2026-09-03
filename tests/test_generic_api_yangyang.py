@@ -1,8 +1,18 @@
 # -*- coding: utf-8 -*-
 import base64
 import unittest
+from unittest.mock import patch
 
-from core.generic_api_mail_client import _decode_data_uri, _fetch_yangyang_otp, _parse_yangyang_code_url
+from core.generic_api_mail_client import (
+    GenericApiEmailAccount,
+    _decode_data_uri,
+    _fetch_tibosb_otp,
+    _fetch_yangyang_otp,
+    _normalize_code_url,
+    _parse_tibosb_share_url,
+    _parse_yangyang_code_url,
+    fetch_latest_otp,
+)
 
 
 class FakeResponse:
@@ -60,7 +70,84 @@ Please ignore this email.</pre>
         """)
 
 
+class FakeTibosSession:
+    def __init__(self):
+        self.urls = []
+
+    def get(self, url, **kwargs):
+        self.urls.append(url)
+        if "/inbox?" in url:
+            return FakeResponse(data={
+                "success": True,
+                "data": {
+                    "messages": [
+                        {
+                            "id": "new-uid",
+                            "from": "noreply@openai.com",
+                            "subject": "Your temporary ChatGPT verification code",
+                            "date": "2026-09-02T18:30:00Z",
+                            "preview": "Open this message to see the code",
+                            "folder": "INBOX",
+                        }
+                    ]
+                },
+            })
+        if "/message?" in url:
+            return FakeResponse(data={
+                "success": True,
+                "data": {
+                    "id": "new-uid",
+                    "subject": "Your temporary ChatGPT verification code",
+                    "date": "2026-09-02T18:30:00Z",
+                    "body": "Your verification code is 654321",
+                },
+            })
+        return FakeResponse(status_code=404, text="not found")
+
+
 class GenericApiYangyangTests(unittest.TestCase):
+    def test_normalize_tibosb_share_page_to_public_api(self):
+        self.assertEqual(
+            _normalize_code_url("http://api.tibosb.cloud/share/token-123"),
+            "http://api.tibosb.cloud/api/public/share/token-123",
+        )
+
+    def test_fetch_latest_otp_uses_normalized_tibosb_api(self):
+        session = FakeTibosSession()
+        account = GenericApiEmailAccount(
+            email="fresh@example.com",
+            code_url="http://api.tibosb.cloud/share/token-123",
+        )
+
+        with patch("core.generic_api_mail_client.get_account_context", return_value=account), patch(
+            "core.generic_api_mail_client.requests.Session", return_value=session
+        ):
+            code = fetch_latest_otp(
+                account.email,
+                after_ts=0.0,
+                max_wait=5,
+                poll_interval=1,
+                settle_seconds=0,
+            )
+
+        self.assertEqual(code, "654321")
+        self.assertIn("/api/public/share/token-123/inbox?", session.urls[0])
+        self.assertTrue(any("/message?" in url for url in session.urls))
+
+    def test_fetch_tibosb_share_otp_uses_inbox_and_message(self):
+        self.assertEqual(
+            _parse_tibosb_share_url("http://api.tibosb.cloud/share/token-123"),
+            ("http://api.tibosb.cloud", "token-123"),
+        )
+        session = FakeTibosSession()
+        code, meta = _fetch_tibosb_otp(
+            session,
+            "http://api.tibosb.cloud/share/token-123",
+            {"User-Agent": "test"},
+        )
+        self.assertEqual(code, "654321")
+        self.assertEqual(meta["mail_id"], "new-uid")
+
     def test_parse_yangyang_url(self):
         self.assertEqual(
             _parse_yangyang_code_url("http://yangyang.website/messages/tok/a@icloud.com"),

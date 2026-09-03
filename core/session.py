@@ -74,12 +74,12 @@ class BrowserSession:
 
         Args:
             proxy: 代理地址，如 "socks5h://user:pass@host:port"。
-                   不传则从 config.PROXY_POOL 随机抽一个。
+                   不传则从当前内置代理平台生成一个。
                    显式传 "" 表示禁用代理。
             detect_exit_geo: 是否探测出口 IP 并自动选择语言/时区画像。
                              套餐查询等短请求可关闭，避免额外网络等待。
         """
-        # proxy=None  → 从池里随机抽（默认行为）
+        # proxy=None  → 按当前内置代理平台生成（默认行为）
         # proxy=""    → 禁用代理（直连）
         # proxy="..." → 使用指定代理
         if proxy is None:
@@ -141,6 +141,10 @@ class BrowserSession:
 
         # 创建 curl_cffi 会话
         self.session = Session(impersonate=IMPERSONATE)
+        # 只允许本类显式选出的代理进入请求。macOS/Codex 进程可能带有
+        # HTTP(S)_PROXY；若继续继承，proxy="" 会被错误标记为“直连”，
+        # 实际却仍经过环境代理并产生 SSL/SOCKS 异常。
+        self.session.trust_env = False
 
         # 设置代理
         if self.proxy:
@@ -608,15 +612,6 @@ class BrowserSession:
         if self.blocked_until and time.time() < self.blocked_until:
             remain = max(0, int(self.blocked_until - time.time()))
             raise RuntimeError(f"当前 BrowserSession 已熔断冷却（剩余 {remain}s）：{self.blocked_reason}")
-
-    def reset_circuit_breaker(self) -> None:
-        """清理一次可选预热产生的本地熔断状态。
-
-        某些 best-effort bootstrap 接口返回 403 时，不代表后续正式认证接口
-        不可用；调用方完成错误隔离后可显式恢复本会话继续执行。
-        """
-        self.blocked_until = 0.0
-        self.blocked_reason = ""
 
     @staticmethod
     def _parse_retry_after(value: str | None) -> int:

@@ -180,6 +180,20 @@ def run_worker(
             _RESERVED_AT[key] = time.time()
         check_stop_requested(email)
 
+        # Re-check after reservation so a setting change cannot let a manual
+        # retry start an OAuth flow while Codex authorization is disabled.
+        from core.registration_service import codex_authorization_enabled
+
+        if not codex_authorization_enabled():
+            result = {
+                "status": "skipped",
+                "ok": False,
+                "message": "Codex 授权已关闭，已跳过手动补跑",
+            }
+            db.update_account_codex_status(email, "skipped", result["message"])
+            logger.info("[Codex 补跑] %s：%s", email, result["message"])
+            return result
+
         from core.codex_oauth import run_codex_oauth
 
         path = Path(target_log_path) if target_log_path else log_path(email)
