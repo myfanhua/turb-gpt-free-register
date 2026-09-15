@@ -175,6 +175,13 @@ def _account_secret_value(row: dict, field: str) -> str:
     if field == "totp_code":
         secret = str(row.get("totp_secret") or "").strip()
         return pyotp.TOTP(secret).now() if secret else ""
+    if field == "login_credentials":
+        password = _account_secret_value(row, "password")
+        if password == "未设置":
+            password = ""
+        return "---".join((
+            str(row.get("email") or "").strip(), password, str(row.get("totp_secret") or "").strip(),
+        ))
     if field == "password":
         extra_raw = row.get("extra_json")
         extra = {}
@@ -186,7 +193,7 @@ def _account_secret_value(row: dict, field: str) -> str:
         elif isinstance(extra_raw, dict):
             extra = extra_raw
         return str(extra.get("registration_password") or row.get("registration_password") or "未设置")
-    raise ValueError("field 仅支持 access_token/copy_line/codex_agent_token/totp_secret/totp_code/password")
+    raise ValueError("field 仅支持 access_token/copy_line/codex_agent_token/totp_secret/totp_code/password/login_credentials")
 
 
 def _compact_job_for_list(row: dict) -> dict:
