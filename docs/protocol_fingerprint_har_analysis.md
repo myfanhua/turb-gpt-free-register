@@ -245,7 +245,8 @@ AUTO_BROWSER_LOCALE_FROM_IP="True"
 
 ### 12.2 当前推荐策略
 
-- 触发 403/429 后停止当前账号/代理会话，不在同一会话内连续重试。
+- authorize 触发 403 后立即停止当前账号/代理会话，不重复重放一次性的 OAuth state。
+- 429 按 `Retry-After` 冷却；TLS、超时、连接重置等网络故障才执行有限重试。
 - OTP 错误只按现有有限次数重发，不无限轮询。
 - 保持代理 GeoIP、语言、时区、`Accept-Language`、`navigator.language`、`Date/Intl` 在同一会话内一致。
 - 不强制模拟高频 Datadog RUM，避免引入大量非业务请求噪音。

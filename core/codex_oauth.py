@@ -41,6 +41,7 @@ from core.openai_auth import (
     _reset_retryable_circuit,
     _extract_error_code,
     detect_account_unusable_response_body,
+    detect_account_unusable_text,
     AccountUnusableError,
     request_sentinel_token,
     build_sentinel_header,
@@ -1069,6 +1070,19 @@ def _mfa_verify(session: BrowserSession, factor_id: str, code: str) -> dict:
         referer=f"https://auth.openai.com/mfa-challenge/{factor_id}",
     )
     if resp.status_code != 200:
+        # MFA 接口对已删除/停用账号有时只返回自然语言 message，
+        # 不带 account_deactivated 错误码；统一转换为不可恢复状态，
+        # 避免补跑服务继续重试这类账号。
+        error_code = _extract_error_code(resp)
+        if not error_code:
+            error_code = detect_account_unusable_response_body(resp.text or "")
+        if not error_code:
+            error_code = detect_account_unusable_text(resp.text or "")
+        if error_code:
+            raise AccountUnusableError(
+                f"[Codex] 账号已废（{error_code}）MFA status={resp.status_code}: {(resp.text or '')[:240]}",
+                error_code=error_code,
+            )
         raise RuntimeError(
             f"[Codex] MFA 验证失败 status={resp.status_code}: {(resp.text or '')[:300]}"
         )

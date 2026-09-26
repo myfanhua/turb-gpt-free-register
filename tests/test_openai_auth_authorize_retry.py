@@ -32,21 +32,21 @@ class _Session:
 
 
 class AuthorizeRetryTests(unittest.TestCase):
-    def test_403_retries_on_same_session_and_keeps_cookie_jar(self):
+    def test_403_stops_immediately_without_replaying_oauth_state(self):
         session = _Session()
         cookie_jar_identity = session.cookie_jar_identity
 
         with patch.object(openai_auth.time, "sleep") as sleep:
-            result = openai_auth.follow_authorize(
-                session,
-                "https://auth.openai.com/api/accounts/authorize?state=test",
-            )
+            with self.assertRaisesRegex(RuntimeError, "403"):
+                openai_auth.follow_authorize(
+                    session,
+                    "https://auth.openai.com/api/accounts/authorize?state=test",
+                )
 
-        self.assertEqual(result, "https://auth.openai.com/email-verification")
-        self.assertEqual(session.calls, 2)
-        self.assertEqual(session.reset_count, 1)
+        self.assertEqual(session.calls, 1)
+        self.assertEqual(session.reset_count, 0)
         self.assertIs(session.cookie_jar_identity, cookie_jar_identity)
-        sleep.assert_called_once_with(1.0)
+        sleep.assert_not_called()
 
 
 if __name__ == "__main__":
