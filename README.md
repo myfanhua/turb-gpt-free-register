@@ -1,4 +1,4 @@
-# Turb GPT Free Register
+# Turb GPT Register
 
 ChatGPT / OpenAI 账号自动注册与 Codex OAuth 授权工具。当前项目支持三套注册驱动：
 
