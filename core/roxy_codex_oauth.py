@@ -2,11 +2,15 @@
 """通过 RoxyBrowser 指纹浏览器执行 Codex OAuth 授权。"""
 from __future__ import annotations
 
+import json
 import logging
 import random
 import time
 from contextvars import ContextVar
 from urllib.parse import urlparse
+
+import phonenumbers
+from phonenumbers import geocoder as phone_geocoder
 
 from config import roxybrowser as _roxy_cfg
 from core.email_provider import wait_for_otp
@@ -91,14 +95,51 @@ logger = _CodexLogger(_base_logger)
 def _is_callback_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
+        return (
+            parsed.scheme in ("http", "https")
+            and parsed.hostname in ("localhost", "127.0.0.1")
+            and parsed.port == 1455
+            and parsed.path == "/auth/callback"
+        )
     except Exception:
         return False
-    return (
-        parsed.scheme in ("http", "https")
-        and parsed.hostname in ("localhost", "127.0.0.1")
-        and parsed.port == 1455
-        and parsed.path == "/auth/callback"
-    )
+
+
+def _extract_callback_url_from_performance_log(driver) -> str:
+    """从 Chrome performance log 捕获短暂的 localhost callback 请求。"""
+    try:
+        entries = driver.get_log("performance") or []
+    except Exception:
+        return ""
+    for entry in entries:
+        try:
+            raw_message = entry.get("message") if isinstance(entry, dict) else entry
+            outer = json.loads(raw_message) if isinstance(raw_message, str) else raw_message
+            message = outer.get("message") if isinstance(outer, dict) else None
+            if not isinstance(message, dict):
+                continue
+            method = str(message.get("method") or "")
+            params = message.get("params") or {}
+            if method == "Network.requestWillBeSent":
+                candidates = [
+                    (params.get("request") or {}).get("url"),
+                    (params.get("redirectResponse") or {}).get("url"),
+                ]
+            elif method == "Network.responseReceived":
+                candidates = [(params.get("response") or {}).get("url")]
+            else:
+                continue
+            for candidate in candidates:
+                candidate = str(candidate or "")
+                if _is_callback_url(candidate):
+                    logger.info(
+                        "[Codex][Browser] 从 Chrome performance log 捕获 callback URL：%s",
+                        candidate[:160],
+                    )
+                    return candidate
+        except Exception:
+            continue
+    return ""
 
 
 def _extract_callback_url_from_page(driver) -> str:
@@ -131,15 +172,25 @@ def _extract_callback_url_from_page(driver) -> str:
                 return str(url)
     except Exception as exc:
         logger.debug("[Codex][Browser] 从页面提取 callback URL 失败：%s", exc)
+    callback = _extract_callback_url_from_performance_log(driver)
+    if callback:
+        return callback
     return ""
 
 
 def _extract_callback_url_from_any_window(driver) -> str:
-    found = _extract_callback_url_from_page(driver)
-    if found:
-        return found
+    original_handle = None
     try:
+        original_handle = driver.current_window_handle
+    except Exception:
+        pass
+    try:
+        found = _extract_callback_url_from_page(driver)
+        if found:
+            return found
         for handle in list(getattr(driver, "window_handles", []) or []):
+            if handle == original_handle:
+                continue
             try:
                 driver.switch_to.window(handle)
                 found = _extract_callback_url_from_page(driver)
@@ -149,6 +200,12 @@ def _extract_callback_url_from_any_window(driver) -> str:
                 continue
     except Exception:
         pass
+    finally:
+        if original_handle is not None:
+            try:
+                driver.switch_to.window(original_handle)
+            except Exception:
+                pass
     return ""
 
 
@@ -825,6 +882,293 @@ def _ensure_add_phone_input(driver, *, reason: str = ""):
             )
 
 
+_PHONE_COUNTRY_NAME_ALIASES = {
+    "BN": ("Brunei Darussalam",),
+    "BO": ("Bolivia, Plurinational State of",),
+    "CD": ("Democratic Republic of the Congo", "Congo, The Democratic Republic of the"),
+    "CG": ("Republic of the Congo",),
+    "CI": ("Ivory Coast", "Cote d'Ivoire"),
+    "CV": ("Cabo Verde",),
+    "CZ": ("Czechia",),
+    "GB": ("UK", "Great Britain"),
+    "IR": ("Iran, Islamic Republic of",),
+    "KP": ("Korea, Democratic People's Republic of",),
+    "KR": ("Korea, Republic of", "Republic of Korea"),
+    "LA": ("Lao People's Democratic Republic",),
+    "MD": ("Moldova, Republic of",),
+    "MK": ("North Macedonia",),
+    "MM": ("Burma",),
+    "PS": ("Palestine, State of",),
+    "RU": ("Russian Federation",),
+    "SZ": ("Eswatini",),
+    "SY": ("Syrian Arab Republic",),
+    "TL": ("East Timor",),
+    "TR": ("Türkiye", "Turkiye"),
+    "TW": ("Taiwan, Province of China",),
+    "TZ": ("Tanzania, United Republic of",),
+    "US": ("USA", "United States of America"),
+    "VA": ("Vatican City", "Holy See"),
+    "VE": ("Venezuela, Bolivarian Republic of",),
+    "VN": ("Viet Nam",),
+    "XK": ("Kosovo",),
+}
+
+
+def _phone_country_identity(phone: str) -> dict:
+    """只根据 E.164 号码解析页面国家，不读取 IP、价格或供应商排序。"""
+    digits = ''.join(ch for ch in str(phone or '') if ch.isdigit())
+    if not digits:
+        raise RuntimeError("phone_country_sync_failed: 手机号缺少数字")
+    e164 = f"+{digits}"
+    try:
+        parsed = phonenumbers.parse(e164, None)
+    except phonenumbers.NumberParseException as exc:
+        raise RuntimeError(f"phone_country_sync_failed: E.164 号码解析失败 phone={e164}") from exc
+    if not phonenumbers.is_possible_number(parsed):
+        raise RuntimeError(f"phone_country_sync_failed: E.164 号码长度无效 phone={e164}")
+
+    regions = tuple(
+        region for region in phonenumbers.region_codes_for_country_code(parsed.country_code)
+        if region and region != "001"
+    )
+    region = str(phonenumbers.region_code_for_number(parsed) or "").upper()
+    if not region and len(regions) == 1:
+        region = regions[0]
+    if not region:
+        raise RuntimeError(f"phone_country_sync_failed: E.164 号码无法确定国家 phone={e164}")
+
+    names = [
+        phone_geocoder.country_name_for_number(parsed, "en"),
+        *_PHONE_COUNTRY_NAME_ALIASES.get(region, ()),
+        region,
+    ]
+    aliases = []
+    seen = set()
+    for value in names:
+        value = str(value or "").strip()
+        key = value.casefold()
+        if value and key not in seen:
+            seen.add(key)
+            aliases.append(value)
+    return {
+        "e164": e164,
+        "dialCode": str(parsed.country_code),
+        "region": region,
+        "countryName": str(names[0] or aliases[0]),
+        "aliases": aliases,
+        "allowCodeOnly": len(regions) <= 1,
+    }
+
+
+def _select_phone_country(driver, phone: str, *, timeout: int = 8) -> dict:
+    """同步 React-Aria 国家控件，并返回已选国家的拨号区号。"""
+    identity = _phone_country_identity(phone)
+    digits = identity["e164"].lstrip("+")
+    expected_dial_code = identity["dialCode"]
+    country_aliases = identity["aliases"]
+    allow_code_only = identity["allowCodeOnly"]
+
+    result = driver.execute_script(r"""
+    const digits = String(arguments[0] || '').replace(/\D+/g, '');
+    const expectedDialCode = String(arguments[1] || '').replace(/\D+/g, '');
+    const aliases = Array.isArray(arguments[2]) ? arguments[2].map(String).filter(Boolean) : [];
+    const allowCodeOnly = Boolean(arguments[3]);
+    const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length))
+      && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
+    const form = document.querySelector('form[action*="/add-phone" i]')
+      || [...document.querySelectorAll('form')].find(f => /add-phone/i.test(f.getAttribute('action') || ''));
+    if (!form) return {ok:false, error:'missing_add_phone_form'};
+    const meta = el => [
+      el?.textContent, el?.label, el?.value, el?.id, el?.getAttribute?.('name'),
+      el?.getAttribute?.('aria-label'), el?.getAttribute?.('data-key'),
+      el?.getAttribute?.('data-value'), el?.getAttribute?.('data-country-code'),
+      el?.getAttribute?.('data-dial-code'), ...Object.values(el?.dataset || {}),
+    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    const normalize = value => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+    const findCode = el => {
+      const match = meta(el).match(/\+(\d{1,4})\b/);
+      return match ? match[1] : '';
+    };
+    const findAlias = el => {
+      const text = normalize(meta(el));
+      const tokens = new Set(text.split(/\s+/).filter(Boolean));
+      return aliases.find(alias => {
+        const target = normalize(alias);
+        if (!target) return false;
+        if (target.length <= 3 && !target.includes(' ')) return tokens.has(target);
+        return text === target || text.startsWith(target + ' ') || text.endsWith(' ' + target)
+          || text.includes(' ' + target + ' ');
+      }) || '';
+    };
+    const selects = [...new Set([
+      ...form.querySelectorAll('[data-testid="hidden-select-container"] select, .react-aria-Select select, select'),
+      ...document.querySelectorAll('select[name*="country" i], select[id*="country" i], select[aria-label*="country" i], select[name*="dial" i], select[id*="dial" i]'),
+    ])].filter(el => !el.disabled);
+    const aliasMatches = [];
+    const codeMatches = [];
+    for (const select of selects) {
+      for (const option of [...select.options]) {
+        const code = findCode(option);
+        const alias = findAlias(option);
+        if (alias) aliasMatches.push({select, option, code:expectedDialCode, alias});
+        else if (allowCodeOnly && code && digits.startsWith(code)) codeMatches.push({select, option, code, alias:''});
+      }
+    }
+    const matches = aliasMatches.length ? aliasMatches : codeMatches.sort((a, b) => b.code.length - a.code.length);
+    if (matches.length) {
+      const {select, option, code, alias} = matches[0];
+      const changed = String(select.value) !== String(option.value);
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+      if (setter) setter.call(select, option.value); else select.value = option.value;
+      [...select.options].forEach(opt => { opt.selected = opt === option; });
+      select.dispatchEvent(new Event('input', {bubbles:true}));
+      select.dispatchEvent(new Event('change', {bubbles:true}));
+      select.blur?.();
+      return {
+        ok:true, mode:'native_select', dialCode:code || expectedDialCode, selectedText:meta(option),
+        selectedKey:String(option.value || option.getAttribute('data-key') || ''),
+        countryName:alias || '', selectedChanged:changed,
+      };
+    }
+
+    const triggers = [...form.querySelectorAll('[role="combobox"], [aria-haspopup="listbox"]')].filter(visible);
+    const score = el => {
+      const text = meta(el).toLowerCase();
+      return (/country|dial|calling|phone.*code|国家|国番号|電話番号/.test(text) ? 20 : 0)
+        + (el.getAttribute('aria-haspopup') === 'listbox' ? 5 : 0);
+    };
+    triggers.sort((a, b) => score(b) - score(a));
+    const trigger = triggers[0];
+    if (!trigger) return {ok:false, error:'missing_country_control'};
+    trigger.scrollIntoView({block:'center'});
+    trigger.focus?.();
+    trigger.click();
+    return {ok:false, opened:true, mode:'listbox', triggerText:meta(trigger)};
+    """, digits, expected_dial_code, country_aliases, allow_code_only) or {}
+
+    selected = dict(result) if result.get("ok") else None
+    if not selected:
+        if not result.get("opened"):
+            raise RuntimeError(f"phone_country_sync_failed: 找不到国家控件 result={result} state={_phone_page_state(driver)}")
+        end = time.time() + max(1, timeout)
+        while time.time() < end:
+            selected = driver.execute_script(r"""
+            const digits = String(arguments[0] || '').replace(/\D+/g, '');
+            const expectedDialCode = String(arguments[1] || '').replace(/\D+/g, '');
+            const aliases = Array.isArray(arguments[2]) ? arguments[2].map(String).filter(Boolean) : [];
+            const allowCodeOnly = Boolean(arguments[3]);
+            const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length))
+              && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
+            const meta = el => [
+              el?.textContent, el?.getAttribute?.('aria-label'), el?.getAttribute?.('data-key'),
+              el?.getAttribute?.('data-value'), el?.getAttribute?.('data-country-code'),
+              el?.getAttribute?.('data-dial-code'), ...Object.values(el?.dataset || {}),
+            ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+            const normalize = value => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+              .toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+            const findAlias = text => {
+              const normalized = normalize(text);
+              const tokens = new Set(normalized.split(/\s+/).filter(Boolean));
+              return aliases.find(alias => {
+                const target = normalize(alias);
+                if (!target) return false;
+                if (target.length <= 3 && !target.includes(' ')) return tokens.has(target);
+                return normalized === target || normalized.startsWith(target + ' ')
+                  || normalized.endsWith(' ' + target) || normalized.includes(' ' + target + ' ');
+              }) || '';
+            };
+            const items = [...document.querySelectorAll('[role="option"], [role="listbox"] li')]
+              .filter(visible).map(option => {
+                const text = meta(option);
+                const codes = [...text.matchAll(/\+(\d{1,4})\b/g)].map(m => m[1])
+                  .filter(code => digits.startsWith(code)).sort((a, b) => b.length - a.length);
+                return {option, text, code:codes[0] || '', alias:findAlias(text)};
+              });
+            const aliasMatches = items.filter(item => item.alias);
+            const codeMatches = allowCodeOnly
+              ? items.filter(item => item.code).sort((a, b) => b.code.length - a.code.length)
+              : [];
+            const matches = aliasMatches.length ? aliasMatches : codeMatches;
+            if (!matches.length) return null;
+            const target = matches[0];
+            target.option.scrollIntoView({block:'nearest'});
+            target.option.click();
+            return {
+              mode:'listbox', dialCode:target.code || expectedDialCode, selectedText:target.text,
+              selectedKey:String(target.option.getAttribute('data-key') || target.option.getAttribute('data-value') || target.option.id || ''),
+              countryName:target.alias || target.text.replace(/\s*\(\s*\+\d{1,4}[^)]*\).*$/, '').trim(),
+              selectedChanged:true,
+            };
+            """, digits, expected_dial_code, country_aliases, allow_code_only)
+            if selected:
+                break
+            time.sleep(0.2)
+        if not selected:
+            raise RuntimeError(
+                "phone_country_sync_failed: 国家列表中找不到号码对应国家 "
+                f"target={country_aliases} dial={expected_dial_code} state={_phone_page_state(driver)}"
+            )
+
+    time.sleep(0.35)
+    confirmed = driver.execute_script(r"""
+    const expectedCode = String(arguments[0] || '').replace(/\D+/g, '');
+    const aliases = Array.isArray(arguments[1]) ? arguments[1].map(String).filter(Boolean) : [];
+    const allowCodeOnly = Boolean(arguments[2]);
+    const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length))
+      && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
+    const form = document.querySelector('form[action*="/add-phone" i]')
+      || [...document.querySelectorAll('form')].find(f => /add-phone/i.test(f.getAttribute('action') || ''));
+    if (!form) return {ok:false, error:'missing_add_phone_form'};
+    const countrySelects = [...new Set([
+      ...form.querySelectorAll('select'),
+      ...document.querySelectorAll('select[name*="country" i], select[id*="country" i], select[aria-label*="country" i], select[name*="dial" i], select[id*="dial" i]'),
+    ])];
+    const selectedOptions = countrySelects
+      .map(select => select.selectedIndex >= 0 ? select.options[select.selectedIndex] : null).filter(Boolean);
+    const controls = [
+      ...selectedOptions,
+      ...[...form.querySelectorAll('[role="combobox"], [aria-haspopup="listbox"]')].filter(visible),
+    ];
+    const combined = controls.map(el => [
+      el.textContent, el.label, el.value, el.id, el.getAttribute?.('aria-label'),
+      el.getAttribute?.('data-key'), el.getAttribute?.('data-value'), ...Object.values(el.dataset || {}),
+    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()).join(' | ');
+    const normalize = value => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+    const normalized = normalize(combined);
+    const tokens = new Set(normalized.split(/\s+/).filter(Boolean));
+    const matchedAlias = aliases.find(alias => {
+      const target = normalize(alias);
+      if (!target) return false;
+      if (target.length <= 3 && !target.includes(' ')) return tokens.has(target);
+      return normalized === target || normalized.startsWith(target + ' ')
+        || normalized.endsWith(' ' + target) || normalized.includes(' ' + target + ' ');
+    }) || '';
+    const codes = [...combined.matchAll(/\+(\d{1,4})\b/g)].map(m => m[1]);
+    return {
+      ok:!!matchedAlias || (allowCodeOnly && codes.includes(expectedCode)),
+      combined, codes, matchedAlias,
+    };
+    """, expected_dial_code, country_aliases, allow_code_only) or {}
+    if not confirmed.get("ok"):
+        raise RuntimeError(
+            f"phone_country_sync_failed: 国家控件点击后未保持选中 selected={selected} confirmed={confirmed} "
+            f"state={_phone_page_state(driver)}"
+        )
+    return {
+        "ok": True,
+        "mode": str(selected.get("mode") or "listbox"),
+        "dialCode": str(selected.get("dialCode") or ""),
+        "selectedText": str(selected.get("selectedText") or confirmed.get("combined") or ""),
+        "selectedKey": str(selected.get("selectedKey") or ""),
+        "countryName": str(selected.get("countryName") or identity["countryName"]),
+        "region": identity["region"],
+        "countryAliases": list(country_aliases),
+        "selectedChanged": bool(selected.get("selectedChanged", True)),
+    }
+
+
 def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
     """按 FlowPilot 第 9 步逻辑填写 add-phone 表单。
 
@@ -836,8 +1180,16 @@ def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
     """
     if not _has_strict_add_phone_form(driver):
         raise RuntimeError(f"当前不是 add-phone 手机号输入页，不能填写手机号: state={_phone_page_state(driver)}")
+    country = _select_phone_country(driver, phone, timeout=min(timeout, 8))
+    expected_dial_code = ''.join(ch for ch in str(country.get("dialCode") or "") if ch.isdigit())
+    expected_digits = ''.join(ch for ch in str(phone or "") if ch.isdigit())
+    if not expected_dial_code or not expected_digits.startswith(expected_dial_code):
+        raise RuntimeError(
+            f"phone_country_mismatch: 号码前缀与国家控件不一致 phone={phone} country={country}"
+        )
     result = driver.execute_script(r"""
     const rawPhone = String(arguments[0] || '').trim();
+    const expectedDialCode = String(arguments[1] || '').replace(/\D+/g, '');
     const e164 = rawPhone.startsWith('+') ? rawPhone : ('+' + rawPhone.replace(/\D+/g, ''));
     const digits = e164.replace(/\D+/g, '');
     const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
@@ -853,62 +1205,32 @@ def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
     }
 
     const hiddenPhoneNumberInput = form.querySelector('input[name="phoneNumber"]');
-    const select = form.querySelector('select');
-    let dialCode = '';
-    let selectedText = '';
-    let selectedChanged = false;
-    const optionDialCode = (opt) => {
-      const text = String(opt?.textContent || opt?.label || opt?.value || '').replace(/\s+/g, ' ').trim();
-      const m = text.match(/\+(\d{1,4})\b/);
-      return m ? m[1] : '';
-    };
-    if (select) {
-      // 参考 FlowPilot ensureCountrySelected：按号码前缀选择对应国家/区号，避免默认国家与号码不一致。
-      const options = [...select.options];
-      const matched = options
-        .map(opt => ({opt, code: optionDialCode(opt)}))
-        .filter(x => x.code && digits.startsWith(x.code))
-        .sort((a, b) => b.code.length - a.code.length)[0];
-      if (matched && select.value !== matched.opt.value) {
-        select.value = matched.opt.value;
-        select.dispatchEvent(new Event('input', {bubbles:true}));
-        select.dispatchEvent(new Event('change', {bubbles:true}));
-        selectedChanged = true;
-      }
-      if (select.selectedIndex >= 0 && select.options[select.selectedIndex]) {
-        const opt = select.options[select.selectedIndex];
-        selectedText = String(opt.textContent || opt.label || opt.value || '').replace(/\s+/g, ' ').trim();
-        dialCode = optionDialCode(opt);
-      }
+    if (!expectedDialCode || !digits.startsWith(expectedDialCode)) {
+      return {ok:false, error:'phone_country_mismatch', e164, expectedDialCode, url:location.href};
     }
 
-    // FlowPilot：可见框一般填 national number；隐藏 phoneNumber 填完整 E.164。
-    // 若无法判断页面区号，则可见框填完整 +E164，避免丢国家码。
-    let visibleValue = e164;
-    if (dialCode && digits.startsWith(dialCode) && digits.length > dialCode.length + 3) {
-      visibleValue = digits.slice(dialCode.length);
-      if (!visibleValue) visibleValue = e164;
+    // 国家控件已经同步；可见框填 national number，隐藏字段填完整 E.164。
+    const visibleValue = digits.slice(expectedDialCode.length);
+    if (!visibleValue) {
+      return {ok:false, error:'missing_national_number', e164, expectedDialCode, url:location.href};
     }
 
-    const setNativeValue = (el, value) => {
+    const setNativeValue = (el, value, focus = false) => {
       const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-      el.focus();
+      if (focus) el.focus();
       if (setter) setter.call(el, ''); else el.value = '';
+      try { el.dispatchEvent(new InputEvent('beforeinput', {bubbles:true, inputType:'deleteContentBackward', data:null})); } catch (_) {}
       el.dispatchEvent(new Event('input', {bubbles:true}));
-      el.dispatchEvent(new Event('change', {bubbles:true}));
       if (setter) setter.call(el, value); else el.value = value;
+      try { el.dispatchEvent(new InputEvent('beforeinput', {bubbles:true, inputType:'insertText', data:value})); } catch (_) {}
       el.dispatchEvent(new Event('input', {bubbles:true}));
       el.dispatchEvent(new Event('change', {bubbles:true}));
     };
 
     phoneInput.scrollIntoView({block:'center'});
-    setNativeValue(phoneInput, visibleValue);
-    if (hiddenPhoneNumberInput) {
-      hiddenPhoneNumberInput.value = e164;
-      hiddenPhoneNumberInput.dispatchEvent(new Event('input', {bubbles:true}));
-      hiddenPhoneNumberInput.dispatchEvent(new Event('change', {bubbles:true}));
-    }
+    setNativeValue(phoneInput, visibleValue, true);
+    if (hiddenPhoneNumberInput) setNativeValue(hiddenPhoneNumberInput, e164);
     phoneInput.blur();
     document.body?.focus?.();
     return {
@@ -917,16 +1239,22 @@ def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
       visibleValue,
       actualVisible: phoneInput.value || '',
       hiddenValue: hiddenPhoneNumberInput ? (hiddenPhoneNumberInput.value || '') : '',
-      dialCode,
-      selectedText,
-      selectedChanged,
+      dialCode:expectedDialCode,
       inputName: phoneInput.getAttribute('name') || '',
       inputId: phoneInput.id || '',
       url: location.href,
     };
-    """, phone)
+    """, phone, expected_dial_code)
     if not result or not result.get("ok"):
-        raise RuntimeError(f"手机号写入失败 result={result} state={_phone_page_state(driver)}")
+        reason = "phone_country_mismatch" if (result or {}).get("error") == "phone_country_mismatch" else "phone_value_write_failed"
+        raise RuntimeError(f"{reason}: 手机号写入失败 result={result} state={_phone_page_state(driver)}")
+    result.update({
+        "countryMode": country.get("mode"),
+        "selectedText": country.get("selectedText"),
+        "selectedKey": country.get("selectedKey"),
+        "countryName": country.get("countryName"),
+        "selectedChanged": country.get("selectedChanged", False),
+    })
     actual = str(result.get("actualVisible") or "").strip()
     visible_value = str(result.get("visibleValue") or "").strip()
     hidden_value = str(result.get("hiddenValue") or "").strip()
@@ -937,9 +1265,16 @@ def _set_phone_value(driver, phone: str, *, timeout: int = 10) -> dict:
     visible_digits = ''.join(ch for ch in visible_value if ch.isdigit())
     e164_digits = ''.join(ch for ch in e164 if ch.isdigit())
     hidden_digits = ''.join(ch for ch in hidden_value if ch.isdigit())
-    expected_visible_ok = bool(actual_digits) and (actual_digits == visible_digits or actual_digits == e164_digits)
+    dial_digits = ''.join(ch for ch in str(result.get("dialCode") or expected_dial_code) if ch.isdigit())
+    expected_visible_ok = bool(actual_digits) and (
+        actual_digits == visible_digits
+        or actual_digits == e164_digits
+        or (dial_digits + actual_digits == e164_digits)
+    )
+    if not dial_digits or not e164_digits.startswith(dial_digits):
+        raise RuntimeError(f"phone_country_mismatch: 号码前缀与国家控件不一致 result={result} state={_phone_page_state(driver)}")
     if not expected_visible_ok:
-        raise RuntimeError(f"手机号可见输入框校验失败 expected_digits={visible_digits or e164_digits} actual={actual} result={result} state={_phone_page_state(driver)}")
+        raise RuntimeError(f"phone_value_mismatch: 手机号可见输入框校验失败 expected_digits={visible_digits or e164_digits} actual={actual} result={result} state={_phone_page_state(driver)}")
     if hidden_value and hidden_digits != e164_digits:
         raise RuntimeError(f"手机号隐藏字段校验失败 expected={e164} actual={hidden_value} result={result} state={_phone_page_state(driver)}")
     return result
@@ -961,10 +1296,24 @@ def _blur_active_input_and_wait(driver, *, label: str = "输入完成") -> None:
     time.sleep(seconds)
 
 
-def _verify_add_phone_value_before_submit(driver, expected_e164: str) -> dict:
+def _verify_add_phone_value_before_submit(
+    driver, expected_e164: str, expected_dial_code: str = ""
+) -> dict:
+    identity = _phone_country_identity(expected_e164)
+    resolved_dial_code = identity["dialCode"]
+    requested_dial_code = ''.join(ch for ch in str(expected_dial_code or "") if ch.isdigit())
+    if requested_dial_code and requested_dial_code != resolved_dial_code:
+        raise RuntimeError(
+            "phone_country_mismatch: 调用方区号与 E.164 号码不一致 "
+            f"phone={expected_e164} expected={requested_dial_code} resolved={resolved_dial_code}"
+        )
     result = driver.execute_script(r"""
     const expected = String(arguments[0] || '').trim();
-    const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+    const expectedDialCode = String(arguments[1] || '').replace(/\D+/g, '');
+    const aliases = Array.isArray(arguments[2]) ? arguments[2].map(String).filter(Boolean) : [];
+    const allowCodeOnly = Boolean(arguments[3]);
+    const visible = el => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length))
+      && getComputedStyle(el).visibility !== 'hidden' && getComputedStyle(el).display !== 'none';
     const form = document.querySelector('form[action*="/add-phone" i]')
       || [...document.querySelectorAll('form')].find(f => /add-phone/i.test(f.getAttribute('action') || ''));
     if (!form) return {ok:false, error:'missing_add_phone_form', url: location.href};
@@ -973,15 +1322,58 @@ def _verify_add_phone_value_before_submit(driver, expected_e164: str) -> dict:
     const visibleValue = String(input?.value || '').trim();
     const hiddenValue = String(hidden?.value || '').trim();
     const digits = value => String(value || '').replace(/\D+/g, '');
+    const expectedDigits = digits(expected);
     const visibleDigits = digits(visibleValue);
     const hiddenDigits = digits(hiddenValue);
-    const expectedDigits = digits(expected);
-    // 输入框可能被自动格式化，按数字比较；隐藏字段如果存在必须等于完整 E.164。
-    const ok = !!visibleDigits && visibleDigits === expectedDigits && (!hidden || hiddenDigits === expectedDigits);
-    return {ok, visibleValue, hiddenValue, expected, visibleDigits, hiddenDigits, expectedDigits, url: location.href};
-    """, expected_e164)
-    if not result or not result.get("ok"):
-        raise RuntimeError(f"手机号提交前校验失败 result={result} state={_phone_page_state(driver)}")
+    const selectedOptions = [...new Set([
+      ...form.querySelectorAll('select'),
+      ...document.querySelectorAll('select[name*="country" i], select[id*="country" i], select[aria-label*="country" i], select[name*="dial" i], select[id*="dial" i]'),
+    ])].map(select => select.selectedIndex >= 0 ? select.options[select.selectedIndex] : null).filter(Boolean);
+    const controls = [
+      ...selectedOptions,
+      ...[...form.querySelectorAll('[role="combobox"], [aria-haspopup="listbox"]')].filter(visible),
+    ];
+    const countryText = controls.map(el => [
+      el.textContent, el.label, el.value, el.id, el.getAttribute?.('name'),
+      el.getAttribute?.('aria-label'), el.getAttribute?.('data-key'),
+      el.getAttribute?.('data-value'), el.getAttribute?.('data-country-code'),
+      el.getAttribute?.('data-dial-code'), ...Object.values(el.dataset || {}),
+    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()).join(' | ');
+    const normalize = value => String(value || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim();
+    const normalizedCountry = normalize(countryText);
+    const countryTokens = new Set(normalizedCountry.split(/\s+/).filter(Boolean));
+    const matchedAlias = aliases.find(alias => {
+      const target = normalize(alias);
+      if (!target) return false;
+      if (target.length <= 3 && !target.includes(' ')) return countryTokens.has(target);
+      return normalizedCountry === target || normalizedCountry.startsWith(target + ' ')
+        || normalizedCountry.endsWith(' ' + target)
+        || normalizedCountry.includes(' ' + target + ' ');
+    }) || '';
+    const pageCodes = [...countryText.matchAll(/\+(\d{1,4})\b/g)].map(match => match[1])
+      .filter(code => expectedDigits.startsWith(code)).sort((a, b) => b.length - a.length);
+    const pageDialCode = pageCodes[0] || '';
+    const countryOk = !!matchedAlias || (allowCodeOnly && pageDialCode === expectedDialCode);
+    const visibleOk = !!visibleDigits && (
+      visibleDigits === expectedDigits || (expectedDialCode + visibleDigits === expectedDigits)
+    );
+    const hiddenOk = !hidden || hiddenDigits === expectedDigits;
+    const ok = countryOk && visibleOk && hiddenOk;
+    return {
+      ok, countryOk, visibleOk, hiddenOk, visibleValue, hiddenValue, expected,
+      visibleDigits, hiddenDigits, expectedDigits, expectedDialCode,
+      dialCode:expectedDialCode, pageDialCode, pageCodes, matchedAlias, countryText, url:location.href,
+    };
+    """, identity["e164"], resolved_dial_code, identity["aliases"], identity["allowCodeOnly"])
+    if not result or not result.get("countryOk"):
+        raise RuntimeError(
+            f"phone_country_mismatch: 提交前国家区号校验失败 result={result} state={_phone_page_state(driver)}"
+        )
+    if not result.get("ok"):
+        raise RuntimeError(
+            f"phone_value_mismatch: 手机号提交前校验失败 result={result} state={_phone_page_state(driver)}"
+        )
     return result
 
 
@@ -1140,8 +1532,8 @@ def _wait_after_phone_otp_submit(driver, timeout: int = 20) -> str:
     last = {}
     while time.time() < end:
         time.sleep(1)
-        current = str(getattr(driver, "current_url", "") or "")
-        if _is_callback_url(current):
+        callback = _extract_callback_url_from_any_window(driver)
+        if callback:
             return "callback"
         last = _phone_page_state(driver)
         # 已离开手机验证码/加手机号页面，说明验证码被接受，后续交给 consent/callback 流程。
@@ -1174,18 +1566,29 @@ def _wait_after_phone_otp_submit(driver, timeout: int = 20) -> str:
     return "unknown"
 
 
+def _phone_otp_outcome_accepted(outcome: str) -> bool:
+    """只有明确离开手机号流程或捕获 callback 才确认 OTP 成功。"""
+    return str(outcome or "") in ("callback", "left_phone_flow")
+
+
 def _classify_phone_page_failure(state: dict) -> str:
     if _is_phone_code_state(state):
         return ''
-    # WhatsApp 用 DOM radio value 判断；其它发送失败用服务端/页面错误文本兜底。
+    # 页面会同时展示 SMS/WhatsApp 文案；只有实际勾选或仅存在 WhatsApp 选项时才归因到 WhatsApp。
     radios = state.get('radios') or []
-    if any('whatsapp' in str(r.get('value','')).lower().replace(' ', '') and r.get('checked') for r in radios):
+    radio_values = [str(r.get('value', '')).lower().replace(' ', '') for r in radios]
+    if any('whatsapp' in value and radio.get('checked') for value, radio in zip(radio_values, radios)):
+        return 'whatsapp_channel'
+    if any('whatsapp' in value for value in radio_values) and not any('sms' in value for value in radio_values):
         return 'whatsapp_channel'
     text = str(state.get('bodyText') or '').lower()
     if 'invalid_auth_step' in text or 'invalid auth step' in text:
         return 'invalid_auth_step'
-    if 'whatsapp' in text or 'whats app' in text:
-        return 'whatsapp_channel'
+    if any(k in text for k in (
+        'phone number required', 'phone number is required', 'please enter a phone number',
+        '请输入手机号', '请输入手机号码', '手机号必填', '電話番号を入力',
+    )):
+        return 'phone_number_required'
     if any(k in text for k in ('invalid phone', 'not a valid phone', 'phone number is not valid', '号码无效', '手机号无效')):
         return 'invalid_phone'
     if any(k in text for k in (
@@ -1207,7 +1610,7 @@ def _sleep_before_phone_retry(attempt: int, max_retries: int, *, prefix: str = "
     time.sleep(seconds)
 
 
-def _do_phone_verification_if_present(driver) -> None:
+def _do_phone_verification_if_present(driver) -> dict | None:
     """如果页面要求手机号验证，则用当前 sms_provider 自动完成。"""
     provider = str(getattr(sms_provider._cfg, "SMS_PROVIDER", "") or "").strip().lower() if hasattr(sms_provider, "_cfg") else ""
     http = sms_provider._http()
@@ -1227,6 +1630,7 @@ def _do_phone_verification_if_present(driver) -> None:
             logger.info("[Codex][Browser] 未检测到手机号验证页，跳过手机步骤")
             return
 
+        sms_provider.preflight_sms_dependency(http=http)
         last_err = None
         for attempt in range(1, max_retries + 1):
             activation_id = None
@@ -1242,8 +1646,16 @@ def _do_phone_verification_if_present(driver) -> None:
                     phone_fill.get("dialCode") or "-", (str(phone_fill.get("selectedText") or "-") + (" [changed]" if phone_fill.get("selectedChanged") else "")),
                 )
                 _blur_active_input_and_wait(driver, label="手机号输入完成")
-                phone_verify = _verify_add_phone_value_before_submit(driver, str(phone_fill.get("e164") or f"+{phone}"))
-                logger.info("[Codex][Browser] 手机号提交前校验通过：visible=%s hidden=%s", phone_verify.get("visibleValue"), phone_verify.get("hiddenValue") or "-")
+                phone_verify = _verify_add_phone_value_before_submit(
+                    driver,
+                    str(phone_fill.get("e164") or f"+{phone}"),
+                    str(phone_fill.get("dialCode") or ""),
+                )
+                logger.info(
+                    "[Codex][Browser] 手机号提交前校验通过：visible=%s hidden=%s dialCode=%s country=%s",
+                    phone_verify.get("visibleValue"), phone_verify.get("hiddenValue") or "-",
+                    phone_verify.get("dialCode") or "-", phone_verify.get("countryText") or "-",
+                )
                 logger.info("[Codex][Browser] 检查并选择 SMS 短信通道")
                 _select_sms_channel_or_raise(driver)
                 _blur_active_input_and_wait(driver, label="短信通道确认完成")
@@ -1270,17 +1682,31 @@ def _do_phone_verification_if_present(driver) -> None:
                 logger.info("[Codex][Browser] 已提交手机 OTP，等待验证结果")
                 otp_outcome = _wait_after_phone_otp_submit(driver, timeout=25)
                 logger.info("[Codex][Browser] 手机 OTP 提交后状态：%s", otp_outcome)
-                sms_provider.complete(activation_id, http)
-                return
+                if not _phone_otp_outcome_accepted(otp_outcome):
+                    raise RuntimeError(f"phone_otp_not_accepted: state={otp_outcome}")
+                sms_provider.report_success(activation_id)
+                return sms_provider.complete(activation_id, http) or {}
+            except (
+                sms_provider.SmsNoBalanceError,
+                sms_provider.SmsProviderConfigurationError,
+                sms_provider.SmsNoNumbersError,
+            ) as exc:
+                last_err = exc
+                if activation_id:
+                    try:
+                        sms_provider.cancel_and_report_failure(activation_id, http, exc)
+                    except Exception as feedback_exc:
+                        logger.warning("[Codex][Browser] 释放号码或记录短信依赖失败反馈失败：%s", feedback_exc)
+                raise
             except Exception as exc:
                 last_err = exc
                 err_text = str(exc) or ""
-                logger.warning("[Codex][Browser] 手机验证尝试失败，换号：%s", err_text[:240])
+                logger.warning("[Codex][Browser] 手机验证尝试失败：%s", err_text[:240])
                 if activation_id:
                     try:
-                        sms_provider.cancel(activation_id, http)
-                    except Exception:
-                        pass
+                        sms_provider.cancel_and_report_failure(activation_id, http, exc)
+                    except Exception as feedback_exc:
+                        logger.warning("[Codex][Browser] 释放号码或记录短信失败反馈失败：%s", feedback_exc)
                 # 余额不足 / 无可用号码：重试多少次都不会成功，立即失败止损，
                 # 避免白等 N 轮换号重试（每轮还要刷新页面 + 随机等待）。
                 if any(k in err_text for k in (
@@ -1294,6 +1720,13 @@ def _do_phone_verification_if_present(driver) -> None:
                     raise RuntimeError(
                         "手机号流程进入 invalid_auth_step，说明授权状态还未从 email-verification 正常跳转或已失效；"
                         "已停止继续换号，避免继续消耗号码"
+                    ) from exc
+                if any(k in err_text for k in (
+                    "phone_country_sync_failed", "phone_country_mismatch",
+                    "phone_value_write_failed", "phone_value_mismatch", "phone_number_required",
+                )):
+                    raise RuntimeError(
+                        f"手机号页面国家/表单状态异常，已停止继续换号止损：{err_text[:180]}"
                     ) from exc
                 # 如果已经离开手机号/验证码相关页面，认为通过或不再需要；
                 # 如果仍在 phone-verification，则下一轮必须回 add-phone 重新填新号码再提交。
@@ -1445,7 +1878,7 @@ def _run_roxy_codex_oauth_once(
         _fill_email_and_otp(driver, email, otp_provider, auth_url)
         human_delay("api")
         logger.info("[Codex][Browser] 检查是否需要手机号验证")
-        _do_phone_verification_if_present(driver)
+        phone_activation = _do_phone_verification_if_present(driver) or {}
         logger.info("[Codex][Browser] 手机验证处理完成/无需处理，等待授权确认和 callback")
         callback_url = _finish_consent_workspace(driver)
         code = proto._extract_code(callback_url, state)
@@ -1468,6 +1901,7 @@ def _run_roxy_codex_oauth_once(
                 file_path=str(path) if path else None,
                 callback_url=callback_url,
                 message=f"{_codex_driver_name()}: {msg}",
+                phone_activation=phone_activation,
             )
 
         if auth_source == "sub2":
@@ -1491,6 +1925,7 @@ def _run_roxy_codex_oauth_once(
                 file_path=str(path) if path else None,
                 callback_url=callback_url,
                 message=f"{_codex_driver_name()}: {msg}",
+                phone_activation=phone_activation,
             )
 
         if not code_verifier:
@@ -1508,6 +1943,7 @@ def _run_roxy_codex_oauth_once(
             file_path=str(path),
             callback_url=callback_url,
             message=f"{_codex_driver_name()} plan={id_claims.get('plan_type') or 'unknown'}",
+            phone_activation=phone_activation,
         )
     except AccountUnusableError as exc:
         logger.warning("[Codex][Browser] 账号已废：%s，%s", email, exc.error_code)
@@ -1519,6 +1955,15 @@ def _run_roxy_codex_oauth_once(
     except Exception as exc:
         logger.warning("[Codex][Browser] 失败：%s，%s: %s", email, type(exc).__name__, str(exc)[:240])
         logger.debug("[Codex][Browser] 失败详情", exc_info=True)
+        if isinstance(exc, sms_provider.SmsProviderError):
+            sms_outcome = sms_provider.classify_sms_exception(exc)
+            return proto._codex_result(
+                status=sms_outcome["status"],
+                email=email,
+                error_code=sms_outcome["error_code"],
+                retryable=sms_outcome["retryable"],
+                message=sms_outcome["message"][:240],
+            )
         return proto._codex_result(status="failed", email=email, message=f"{type(exc).__name__}: {str(exc)[:220]}")
     finally:
         # 注册后复用窗口时，driver/profile 生命周期由注册流程统一清理，

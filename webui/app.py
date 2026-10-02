@@ -16,12 +16,13 @@ import json
 import threading
 import time
 import uuid
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import urlparse
 
 from flask import Flask, Response, jsonify, make_response, render_template, request
 import pyotp
 
-from core import codex_retry_service, db, plan_check_service, extract_link_service, codex_agent_service, live_check_service
+from core import codex_retry_service, db, plan_check_service, extract_link_service, codex_agent_service, live_check_service, codex_oauth_check_service, exchange_rates
 from webui.auth import init_auth, register_auth_routes
 from core import registration_service as svc
 from webui import config_editor
@@ -78,6 +79,81 @@ def _paginate_items(items: list[dict], *, page: int, page_size: int) -> dict:
     }
 
 
+def _codex_phone_region(phone: str, country: str = "") -> str:
+    try:
+        import phonenumbers
+        from phonenumbers import geocoder
+
+        parsed = phonenumbers.parse(phone, None)
+        region = geocoder.description_for_number(parsed, "zh")
+        if region:
+            return region
+    except Exception:
+        pass
+    country = str(country or "").strip()
+    return country if country and not country.isdigit() else "未知"
+
+
+def _format_codex_money(value: Decimal) -> str:
+    rounded = value.quantize(Decimal("0.000001"), rounding=ROUND_HALF_UP)
+    whole, _, fraction = format(rounded, "f").partition(".")
+    fraction = fraction.rstrip("0")
+    return whole + "." + fraction.ljust(2, "0")
+
+
+def _compact_codex_account_info(row: dict) -> dict:
+    """投影 Codex 成功账号的手机号、号码归属地和短信费用。"""
+    if str(row.get("codex_status") or "").strip().lower() != "success":
+        return {}
+    raw = row.get("extra_json")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            extra = json.loads(raw)
+        except (TypeError, ValueError):
+            extra = {}
+    elif isinstance(raw, dict):
+        extra = raw
+    else:
+        extra = {}
+    codex = extra.get("codex") if isinstance(extra, dict) else None
+    activation = codex.get("phone_activation") if isinstance(codex, dict) else None
+    if not isinstance(activation, dict):
+        return {}
+
+    phone = str(activation.get("phone_number") or "").strip()
+    if not phone:
+        return {}
+    info = {
+        "phone_number": phone,
+        "region": _codex_phone_region(phone, str(activation.get("country") or "")),
+    }
+    try:
+        amount = Decimal(str(activation.get("price_amount")))
+    except (InvalidOperation, TypeError, ValueError):
+        amount = None
+    currency = str(activation.get("price_currency") or "").strip().upper()
+    if amount is not None and amount.is_finite() and amount >= 0 and currency in ("USD", "CNY"):
+        if currency == "USD":
+            info["price_usd"] = _format_codex_money(amount)
+        else:
+            info["price_cny"] = _format_codex_money(amount)
+        try:
+            fx = exchange_rates.get_usd_cny_rate()
+        except Exception:
+            fx = None
+        if fx:
+            rate, rate_date = fx
+            if currency == "USD":
+                info["price_cny"] = _format_codex_money(amount * rate)
+            else:
+                info["price_usd"] = _format_codex_money(amount / rate)
+            info["rate_date"] = rate_date
+    source = str(activation.get("price_source") or "").strip()
+    if source:
+        info["price_source"] = source
+    return info
+
+
 def _compact_account_for_list(row: dict) -> dict:
     """账号列表轻量对象：只返回当前表格渲染和按钮判断必需字段。
 
@@ -117,13 +193,17 @@ def _compact_account_for_list(row: dict) -> dict:
         "plan_type", "current_plan_type", "plus_trial_eligible",
         "eligible_promo_campaigns", "plus_trial_discount_percentage",
         "plan_check_status", "codex_status", "codex_agent_status",
-        "totp_setup_status",
+        "codex_oauth_check_status", "totp_setup_status",
     ):
         if key in row:
             out[key] = row.get(key)
 
     if row.get("plan_check_status") in ("queued", "running") or row.get("plan_check_ok") is False:
         out["plan_check_ok"] = row.get("plan_check_ok")
+
+    codex_account_info = _compact_codex_account_info(row)
+    if codex_account_info:
+        out["codex_account_info"] = codex_account_info
 
     # 下面字段仅在有值时返回，避免每行堆满 null/空字符串/内部状态。
     optional_keys = (
@@ -140,7 +220,9 @@ def _compact_account_for_list(row: dict) -> dict:
         "extract_link_long_url", "extract_link_copy_paste", "extract_link_image_url_png",
         "extract_link_image_url_svg", "extract_link_expires_at",
         # Codex / Agent 状态提示。
-        "codex_error", "codex_agent_message", "codex_agent_runtime_id",
+        "codex_error", "codex_oauth_check_error", "codex_oauth_checked_at",
+        "codex_oauth_check_http_status", "codex_oauth_check_cpa_name",
+        "codex_agent_message", "codex_agent_runtime_id",
         "codex_agent_sub2api_url", "codex_agent_sub2api_mode", "codex_agent_sub2api_total",
         "totp_setup_error", "totp_setup_message", "totp_setup_started_at", "totp_setup_completed_at",
         "email_change_status", "email_change_error", "email_change_new_email",
@@ -213,7 +295,7 @@ def _compact_job_for_list(row: dict) -> dict:
     for key in (
         "parent_job_id", "retry_attempt", "email", "started_at", "completed_at",
         "display_status", "retryable", "retry_action", "retry_label",
-        "manual_otp_required",
+        "manual_otp_required", "phase", "error_code", "account_status", "codex_status",
     ):
         value = row.get(key)
         if value is not None and value != "" and value is not False:
@@ -334,6 +416,9 @@ def create_app(auth_code: str | None = None) -> Flask:
     recovered_live_checks = db.recover_interrupted_live_checks()
     if recovered_live_checks:
         logger.warning("已恢复 %s 个因 WebUI 重启中断的查活状态", recovered_live_checks)
+    recovered_codex_oauth_checks = db.recover_interrupted_codex_oauth_checks()
+    if recovered_codex_oauth_checks:
+        logger.warning("已恢复 %s 个因 WebUI 重启中断的 Codex OAuth 测活状态", recovered_codex_oauth_checks)
     recovered_codex_agents = db.recover_interrupted_codex_agents()
     if recovered_codex_agents:
         logger.warning("已恢复 %s 个因 WebUI 重启中断的 Codex Agent Token 状态", recovered_codex_agents)
@@ -890,6 +975,74 @@ def create_app(auth_code: str | None = None) -> Flask:
             "queue": live_check_service.queue_settings(),
         }), 202
 
+    @app.post("/api/accounts/check-codex-oauth-bulk")
+    def api_accounts_check_codex_oauth_bulk():
+        """批量验证 CPA 中的 Codex OAuth 凭证；只读请求 usage 接口。"""
+        data = request.get_json(silent=True) or {}
+        ids = data.get("account_ids") or data.get("ids") or []
+        if not isinstance(ids, list) or not ids:
+            return jsonify({"ok": False, "error": "account_ids 必须是非空数组"}), 400
+        if len(ids) > 500:
+            return jsonify({"ok": False, "error": "单次最多检测 500 个账号"}), 400
+
+        accounts = []
+        skipped = []
+        seen = set()
+        for raw in ids:
+            try:
+                acc_id = int(raw)
+            except (TypeError, ValueError):
+                skipped.append({"id": raw, "reason": "ID 非法"})
+                continue
+            if acc_id in seen:
+                continue
+            seen.add(acc_id)
+            acc = db.get_account(acc_id)
+            if not acc:
+                skipped.append({"id": acc_id, "reason": "账号不存在"})
+                continue
+            email = str(acc.get("email") or "").strip()
+            if not email:
+                skipped.append({"id": acc_id, "reason": "邮箱为空"})
+                continue
+            accounts.append({"id": acc_id, "email": email})
+
+        started = []
+        busy_count = 0
+        failed = []
+        for acc in accounts:
+            queued = codex_oauth_check_service.enqueue_account_codex_oauth_check(
+                account_id=acc["id"],
+                email=acc["email"],
+                trigger="manual",
+            )
+            if queued.get("accepted"):
+                started.append({"id": acc["id"], "email": acc["email"], "status": "queued"})
+            elif queued.get("busy"):
+                busy_count += 1
+                skipped.append({
+                    "id": acc["id"],
+                    "email": acc["email"],
+                    "reason": queued.get("error") or "正在检测 Codex OAuth",
+                })
+            else:
+                failed.append({
+                    "id": acc["id"],
+                    "email": acc["email"],
+                    "error": queued.get("error") or "入队失败",
+                })
+
+        return jsonify({
+            "ok": True,
+            "message": f"已入队 {len(started)} 个 Codex OAuth 测活任务",
+            "started": started,
+            "started_count": len(started),
+            "busy_count": busy_count,
+            "failed": failed,
+            "failed_count": len(failed),
+            "skipped": skipped,
+            "queue": codex_oauth_check_service.queue_settings(),
+        }), 202
 
     @app.post("/api/accounts/check-plan")
     def api_account_check_plan():
@@ -2508,7 +2661,9 @@ def create_app(auth_code: str | None = None) -> Flask:
             )
             rows = result.get("items") or []
             for row in rows:
-                row["manual_otp_required"] = manual_otp_required
+                row["manual_otp_required"] = (
+                    manual_otp_required and row.get("email_source_mode") != "specific"
+                )
                 row.update(svc.get_retry_info(row))
             result.update({"ok": True, "page": page, "page_size": page_size})
             result["items"] = [_compact_job_for_list(r) for r in rows]
@@ -2517,13 +2672,57 @@ def create_app(auth_code: str | None = None) -> Flask:
             return jsonify(result)
         rows = db.list_jobs(limit=max(1, int(limit or 1)))
         for row in rows:
-            row["manual_otp_required"] = manual_otp_required
+            row["manual_otp_required"] = (
+                manual_otp_required and row.get("email_source_mode") != "specific"
+            )
             row.update(svc.get_retry_info(row))
         return jsonify(rows)
 
+    @app.get("/api/registration/email-sources")
+    def api_registration_email_sources():
+        from core.email_provider import EMAIL_SOURCE_TYPES, parse_email_sources
+        from config import email as _email_cfg
+
+        labels = {
+            "outlook": "Outlook",
+            "generic_api": "通用 API",
+            "imap": "通用 IMAP",
+            "cloudflare_domain": "域名邮箱",
+            "cloudflare": "Cloudflare 临时邮箱",
+            "gptmail": "GPTMail",
+            "mailnest": "MailNest",
+            "cloudmail": "CloudMail",
+            "remail": "Remail",
+        }
+        sources = parse_email_sources(_email_cfg.EMAIL_SOURCE)
+        pool_readers = {
+            "outlook": db.outlook_pool_summary,
+            "generic_api": db.generic_api_email_pool_summary,
+            "imap": db.imap_email_pool_summary,
+            "cloudflare_domain": db.domain_email_pool_summary,
+        }
+        available = {}
+        for source, read_summary in pool_readers.items():
+            try:
+                available[source] = int(read_summary().get("available", 0) or 0)
+            except Exception:
+                available[source] = 0
+        for source in ("outlook", "generic_api", "imap", "cloudflare_domain"):
+            if source not in sources:
+                sources.append(source)
+        options = [{"value": "auto", "label": "自动（按配置顺序）"}]
+        for source in sources:
+            if source not in EMAIL_SOURCE_TYPES:
+                continue
+            label = labels.get(source, source)
+            if source in available:
+                label = f"{label}（可用 {available[source]}）"
+            options.append({"value": source, "label": label})
+        return jsonify({"ok": True, "options": options})
+
     @app.post("/api/jobs")
     def api_jobs_create():
-        """启动批量注册：body {count, workers}。"""
+        """启动批量注册：body {count, workers, email_source}。"""
         data = request.get_json(silent=True) or {}
         try:
             count = int(data.get("count", 1))
@@ -2541,8 +2740,13 @@ def create_app(auth_code: str | None = None) -> Flask:
         # 提交前先确认池里有足够可用邮箱，给前端一个温和提示（不阻断）
         from config import email as _email_cfg
         from config import register as _register_cfg
-        from core.email_provider import parse_email_sources
-        if not bool(getattr(_email_cfg, "USE_EMAIL_SERVICE", True)):
+        from core.email_provider import EMAIL_SOURCE_TYPES, parse_email_sources
+        requested_source = str(data.get("email_source") or "auto").strip().lower()
+        if requested_source != "auto" and requested_source not in EMAIL_SOURCE_TYPES:
+            return jsonify({"ok": False, "error": "email_source 不受支持"}), 400
+        force_email_source = requested_source != "auto"
+        sources = [requested_source] if force_email_source else parse_email_sources(_email_cfg.EMAIL_SOURCE)
+        if not bool(getattr(_email_cfg, "USE_EMAIL_SERVICE", True)) and not force_email_source:
             reg_email = str(getattr(_register_cfg, "REGISTER_EMAIL", "") or "").strip()
             if not reg_email:
                 return jsonify({
@@ -2562,7 +2766,6 @@ def create_app(auth_code: str | None = None) -> Flask:
                 "warning": f"手动 OTP 模式：将使用 {reg_email}；验证码请在任务页提交",
                 "workers": workers,
             })
-        sources = parse_email_sources(_email_cfg.EMAIL_SOURCE)
         if "gptmail" in sources:
             api_key = str(getattr(_email_cfg, "GPTMAIL_API_KEY", "") or "").strip()
             if not api_key:
@@ -2680,7 +2883,10 @@ def create_app(auth_code: str | None = None) -> Flask:
             warning = ""
             if pool.get("available", 0) < count:
                 warning = f"可用邮箱仅 {pool.get('available', 0)} 个，少于任务数 {count}，不足的会失败"
-        jobs = svc.submit_registration(count=count, workers=workers)
+        if force_email_source:
+            jobs = svc.submit_registration(count=count, email_source=requested_source, workers=workers)
+        else:
+            jobs = svc.submit_registration(count=count, workers=workers)
         return jsonify({"ok": True, "submitted": len(jobs), "jobs": jobs, "warning": warning, "workers": workers})
 
     @app.get("/api/manual-otp/waiting")

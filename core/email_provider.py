@@ -16,11 +16,36 @@ EMAIL_SOURCE 支持单个或多个来源：
     ["outlook", "generic_api", "mailnest", "cloudmail", "remail"]  # 也兼容列表写法
 """
 import logging
-from typing import Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Iterable, Iterator
 
 logger = logging.getLogger(__name__)
 
-_VALID_SOURCES = ("outlook", "generic_api", "imap", "cloudflare_domain", "cloudflare", "gptmail", "mailnest", "cloudmail", "remail")
+EMAIL_SOURCE_TYPES = ("outlook", "generic_api", "imap", "cloudflare_domain", "cloudflare", "gptmail", "mailnest", "cloudmail", "remail")
+_VALID_SOURCES = EMAIL_SOURCE_TYPES
+_EMAIL_SOURCE_OVERRIDE: ContextVar[str | None] = ContextVar("email_source_override", default=None)
+
+
+def is_supported_email_source(source: str | None) -> bool:
+    return str(source or "").strip().lower() in _VALID_SOURCES
+
+
+def has_email_source_override() -> bool:
+    return _EMAIL_SOURCE_OVERRIDE.get() is not None
+
+
+@contextmanager
+def email_source_context(source: str | None) -> Iterator[None]:
+    """为当前任务覆盖邮箱来源；ContextVar 不会污染并发任务。"""
+    normalized = str(source or "").strip().lower() or None
+    if normalized is not None and normalized not in _VALID_SOURCES:
+        raise ValueError(f"不支持的邮箱来源: {normalized}")
+    token = _EMAIL_SOURCE_OVERRIDE.set(normalized)
+    try:
+        yield
+    finally:
+        _EMAIL_SOURCE_OVERRIDE.reset(token)
 
 
 def parse_email_sources(value=None) -> list[str]:
@@ -48,7 +73,16 @@ def parse_email_sources(value=None) -> list[str]:
     return out or ["outlook"]
 
 
-def _pick_from_source(source: str) -> str:
+def _normalize_exclude_emails(values: Iterable[str] | str | None) -> set[str]:
+    """规范化重试时不得再次领取的邮箱地址。"""
+    if not values:
+        return set()
+    raw_values = [values] if isinstance(values, str) else values
+    return {str(value or "").strip().casefold() for value in raw_values if str(value or "").strip()}
+
+
+def _pick_from_source(source: str, exclude_emails: set[str] | None = None) -> str:
+    exclude_emails = exclude_emails or set()
     if source == "gptmail":
         from core.gptmail_client import pick_account
         return pick_account().email
@@ -60,10 +94,10 @@ def _pick_from_source(source: str) -> str:
         return pick_domain_email()
     if source == "generic_api":
         from core.generic_api_mail_client import pick_account
-        return pick_account().email
+        return pick_account(exclude_emails=exclude_emails).email
     if source == "imap":
         from core.imap_mail_client import pick_account
-        return pick_account().email
+        return pick_account(exclude_emails=exclude_emails).email
     if source == "mailnest":
         from core.mailnest_client import pick_account
         return pick_account().email
@@ -74,16 +108,26 @@ def _pick_from_source(source: str) -> str:
         from core.remail_client import pick_account
         return pick_account().email
     from core.outlook_client import pick_account
-    return pick_account().email
+    return pick_account(exclude_emails=exclude_emails).email
 
 
-def acquire_email() -> str:
-    """根据 EMAIL_SOURCE 领取一个用于注册的邮箱地址；多个来源时按顺序兜底。"""
-    sources = parse_email_sources()
+def acquire_email(exclude_emails: Iterable[str] | str | None = None) -> str:
+    """领取邮箱；exclude_emails 用于重试时隔离已失败邮箱。"""
+    override = _EMAIL_SOURCE_OVERRIDE.get()
+    sources = [override] if override else parse_email_sources()
+    excluded = _normalize_exclude_emails(exclude_emails)
     last_exc: Exception | None = None
     for source in sources:
         try:
-            email = _pick_from_source(source)
+            email = str(_pick_from_source(source, excluded) or "").strip()
+            if not email:
+                raise RuntimeError(f"邮箱来源 {source} 返回空地址")
+            if email.casefold() in excluded:
+                try:
+                    release_email(email, status="available", note="重试排除邮箱，已释放")
+                except Exception:
+                    logger.exception("[EmailProvider] 释放排除邮箱失败: %s", email)
+                raise RuntimeError(f"邮箱 {email} 在本次重试排除列表中")
             logger.info(f"[EmailProvider] 使用邮箱来源: {source}, email={email}")
             return email
         except Exception as exc:
@@ -93,17 +137,26 @@ def acquire_email() -> str:
     raise RuntimeError(f"所有邮箱来源均领取失败: {sources}; last={last_exc}")
 
 
-def acquire_email_from_source(source: str) -> str:
-    """从调用方指定的单一来源领取邮箱，不受 EMAIL_SOURCE 兜底顺序影响。"""
+def acquire_email_from_source(source: str, exclude_emails: Iterable[str] | str | None = None) -> str:
+    """从指定来源领取邮箱，并跳过本次重试排除地址。"""
     source = str(source or "").strip().lower()
     if source not in _VALID_SOURCES:
         raise ValueError(f"不支持的邮箱来源: {source}")
-    email = _pick_from_source(source)
+    excluded = _normalize_exclude_emails(exclude_emails)
+    email = str(_pick_from_source(source, excluded) or "").strip()
+    if not email:
+        raise RuntimeError(f"邮箱来源 {source} 返回空地址")
+    if email.casefold() in excluded:
+        try:
+            release_email(email, status="available", note="重试排除邮箱，已释放")
+        except Exception:
+            logger.exception("[EmailProvider] 释放排除邮箱失败: %s", email)
+        raise RuntimeError(f"邮箱 {email} 在本次重试排除列表中")
     logger.info("[EmailProvider] 指定来源领取邮箱: source=%s, email=%s", source, email)
     return email
 
 
-def acquire_email_after_input(email: str | None = None) -> str:
+def acquire_email_after_input(email: str | None = None, exclude_emails: Iterable[str] | str | None = None) -> str:
     """在浏览器已找到邮箱输入框后领取邮箱。
 
     浏览器驱动把“找到输入框”和“领取邮箱”拆成两个阶段，避免页面加载、风控
@@ -115,9 +168,13 @@ def acquire_email_after_input(email: str | None = None) -> str:
 
     from config import email as _email_cfg
 
-    if not bool(getattr(_email_cfg, "USE_EMAIL_SERVICE", False)):
+    if not bool(getattr(_email_cfg, "USE_EMAIL_SERVICE", False)) and not has_email_source_override():
         raise RuntimeError("页面已找到邮箱输入框，但自动取邮箱未启用且未配置 REGISTER_EMAIL")
-    allocated = str(acquire_email() or "").strip()
+    # 无排除列表时保持旧调用形态，兼容固定邮箱模式之外的旧包装器和测试替身。
+    if exclude_emails:
+        allocated = str(acquire_email(exclude_emails=exclude_emails) or "").strip()
+    else:
+        allocated = str(acquire_email() or "").strip()
     if not allocated:
         raise RuntimeError("邮箱服务返回了空邮箱地址")
     logger.info("[EmailProvider] 已找到邮箱输入框，开始分配邮箱: %s", allocated)
@@ -215,7 +272,7 @@ def wait_for_otp(
     """
     try:
         from config import email as _email_cfg
-        use_service = bool(getattr(_email_cfg, "USE_EMAIL_SERVICE", True))
+        use_service = bool(getattr(_email_cfg, "USE_EMAIL_SERVICE", True)) or has_email_source_override()
     except Exception:
         use_service = True
 
@@ -239,10 +296,10 @@ def wait_for_otp(
     if settle_seconds is not None:
         extra_kwargs["settle_seconds"] = settle_seconds
 
-    # 查活等已注册账号会传入注册时保存的来源；即使调用方没有显式传入，
-    # 这里也先读取账号落库来源，再按当前进程上下文/邮箱池/全局配置兜底。
+    # 新注册任务优先采用任务级来源；没有任务覆盖时，已注册账号优先采用落库来源。
     source = (
         _normalize_explicit_email_source(email_source)
+        or _EMAIL_SOURCE_OVERRIDE.get()
         or _registered_email_source(email)
         or resolve_email_source(email)
     )

@@ -16,6 +16,7 @@ def run_skyvern_registration(
     otp_code: str | None = None,
     batch_dir: Path | None = None,
     on_email_acquired: Callable[[str], None] | None = None,
+    exclude_emails=None,
 ) -> dict:
     return run_browser_use_registration(
         email=email,
@@ -25,5 +26,6 @@ def run_skyvern_registration(
         otp_code=otp_code,
         batch_dir=batch_dir,
         on_email_acquired=on_email_acquired,
+        exclude_emails=exclude_emails,
         cloud_provider="skyvern",
     )

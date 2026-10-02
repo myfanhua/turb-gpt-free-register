@@ -924,7 +924,7 @@ def _fill_email_and_otp(page, email: str, otp_provider, auth_url: str, dead_trac
         if str(outcome).startswith("deactivated:"):
             error_code = str(outcome).split(":", 1)[1] or "account_deactivated"
             raise AccountUnusableError(f"账号已废（{error_code}）", error_code=error_code)
-        if outcome in ("accepted", "callback", "unknown"):
+        if _otp_outcome_accepted(outcome):
             return
         if attempt >= 3:
             raise RuntimeError("Codex 邮箱验证码连续错误/过期")
@@ -1275,6 +1275,10 @@ def _wait_after_phone_otp(page, timeout: int = 25) -> str:
 
 
 
+def _otp_outcome_accepted(outcome: str) -> bool:
+    return str(outcome or "").strip().lower() in ("accepted", "callback")
+
+
 def _is_add_phone_url(page) -> bool:
     return "add-phone" in _page_url(page).lower()
 
@@ -1348,7 +1352,7 @@ def _ensure_add_phone_form(page, *, reason: str = "") -> bool:
     logger.warning("[Codex][BrowserUse] 无法回到手机号输入页：%s", _current_state_for_log(page))
     return False
 
-def _do_phone_verification_if_present(page) -> None:
+def _do_phone_verification_if_present(page) -> dict | None:
     # 给页面一点时间从邮箱 OTP 后跳到手机号页；没有就跳过。
     end = time.time() + 20
     while time.time() < end:
@@ -1364,6 +1368,11 @@ def _do_phone_verification_if_present(page) -> None:
         return
 
     http = sms_provider._http()
+    try:
+        sms_provider.preflight_sms_dependency(http=http)
+    except Exception:
+        http.close()
+        raise
     max_retries = int(getattr(sms_provider._cfg, "SMS_MAX_RETRIES", 10) or 10) if hasattr(sms_provider, "_cfg") else 10
     last_error = ""
     for attempt in range(1, max_retries + 1):
@@ -1383,7 +1392,13 @@ def _do_phone_verification_if_present(page) -> None:
             _t_phone_send.done(f"state={send_state}")
             logger.info("[Codex][BrowserUse] 手机号提交后状态：%s phone=%s", send_state, phone_e164)
             if send_state == "callback":
-                return
+                try:
+                    sms_provider.report_success(activation_id)
+                except Exception as feedback_exc:
+                    logger.warning("[Codex][BrowserUse] 记录短信成功反馈失败：%s", feedback_exc)
+                phone_activation = sms_provider.complete(activation_id, http) or {}
+                http.close()
+                return phone_activation
             if send_state != "code_page":
                 raise RuntimeError(f"提交手机号后未确认发送短信/进入验证码页：state={send_state}, page={_current_state_for_log(page)}")
             sms_provider.set_status(activation_id, 1, http=http)
@@ -1401,18 +1416,36 @@ def _do_phone_verification_if_present(page) -> None:
             )
             outcome = _wait_after_phone_otp(page, timeout=30)
             logger.info("[Codex][BrowserUse] 手机 OTP 提交后状态：%s", outcome)
-            if outcome in ("accepted", "callback", "unknown"):
-                sms_provider.complete(activation_id, http)
-                return
+            if _otp_outcome_accepted(outcome):
+                try:
+                    sms_provider.report_success(activation_id)
+                except Exception as feedback_exc:
+                    logger.warning("[Codex][BrowserUse] 记录短信成功反馈失败：%s", feedback_exc)
+                phone_activation = sms_provider.complete(activation_id, http) or {}
+                http.close()
+                return phone_activation
             raise RuntimeError(f"手机验证码未通过：{outcome}")
+        except (
+            sms_provider.SmsNoBalanceError,
+            sms_provider.SmsProviderConfigurationError,
+            sms_provider.SmsNoNumbersError,
+        ) as exc:
+            last_error = f"{type(exc).__name__}: {str(exc)[:220]}"
+            if activation_id:
+                try:
+                    sms_provider.cancel_and_report_failure(activation_id, http, exc)
+                except Exception as feedback_exc:
+                    logger.warning("[Codex][BrowserUse] 释放号码或记录短信依赖失败反馈失败：%s", feedback_exc)
+            http.close()
+            raise
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {str(exc)[:220]}"
             logger.warning("[Codex][BrowserUse] 手机验证失败（%s/%s）：%s", attempt, max_retries, last_error)
             if activation_id:
                 try:
-                    sms_provider.cancel(activation_id, http)
-                except Exception:
-                    pass
+                    sms_provider.cancel_and_report_failure(activation_id, http, exc)
+                except Exception as feedback_exc:
+                    logger.warning("[Codex][BrowserUse] 释放号码或记录短信失败反馈失败：%s", feedback_exc)
             if attempt >= max_retries:
                 break
             try:
@@ -1422,6 +1455,7 @@ def _do_phone_verification_if_present(page) -> None:
             except Exception:
                 pass
             time.sleep(min(1 + attempt, 4))
+    http.close()
     raise RuntimeError(f"手机验证失败，已重试 {max_retries} 次：{last_error}")
 
 
@@ -1523,7 +1557,7 @@ def _run_browser_use_codex_oauth_once(email: str, otp_provider=None, proxy: str 
             dead_tracker = _install_account_dead_response_tracker(page)
 
             _fill_email_and_otp(page, email, otp_provider, auth_url, dead_tracker=dead_tracker)
-            _do_phone_verification_if_present(page)
+            phone_activation = _do_phone_verification_if_present(page) or {}
             logger.info("[Codex][BrowserUse] 手机验证处理完成/无需处理，等待授权确认和 callback")
             _t_callback = _StepTimer("等待 consent/workspace/callback")
             callback_url = _finish_consent_workspace(context, page)
@@ -1549,6 +1583,7 @@ def _run_browser_use_codex_oauth_once(email: str, otp_provider=None, proxy: str 
                     file_path=str(file_path) if file_path else None,
                     callback_url=callback_url,
                     message=str(msg),
+                    phone_activation=phone_activation,
                 )
 
             if auth_source == "sub2":
@@ -1573,13 +1608,14 @@ def _run_browser_use_codex_oauth_once(email: str, otp_provider=None, proxy: str 
                     file_path=str(file_path) if file_path else None,
                     callback_url=callback_url,
                     message=str(msg),
+                    phone_activation=phone_activation,
                 )
 
             token_payload = proto._exchange_codex_token(code, code_verifier)
             storage = proto._build_codex_storage(token_payload)
             path = proto._save_codex_credential(email, storage)
             _t_all.done("success")
-            return proto._codex_result(status="success", ok=True, email=email, file_path=str(path), callback_url=callback_url)
+            return proto._codex_result(status="success", ok=True, email=email, file_path=str(path), callback_url=callback_url, phone_activation=phone_activation)
     except AccountUnusableError as exc:
         logger.warning("[Codex][BrowserUse] 账号已废：%s，%s", email, exc.error_code)
         return proto._codex_result(
@@ -1590,6 +1626,15 @@ def _run_browser_use_codex_oauth_once(email: str, otp_provider=None, proxy: str 
     except Exception as exc:
         logger.error("[Codex][BrowserUse] 授权失败：%s: %s", type(exc).__name__, exc)
         logger.debug("[Codex][BrowserUse] 失败详情", exc_info=True)
+        if isinstance(exc, sms_provider.SmsProviderError):
+            sms_outcome = sms_provider.classify_sms_exception(exc)
+            return proto._codex_result(
+                status=sms_outcome["status"],
+                email=email,
+                error_code=sms_outcome["error_code"],
+                retryable=sms_outcome["retryable"],
+                message=sms_outcome["message"][:240],
+            )
         return proto._codex_result(status="failed", email=email, message=f"{type(exc).__name__}: {str(exc)[:300]}")
     finally:
         keep_open = bool(getattr(_cfg, "BROWSER_USE_KEEP_BROWSER_OPEN", False))

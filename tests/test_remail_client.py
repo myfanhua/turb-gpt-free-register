@@ -159,6 +159,7 @@ class RemailClientTests(unittest.TestCase):
             {"email": "FRESH@OUTLOOK.TEST", "token": "st-saved-token"},
         )
 
+    @patch.object(email_config, "REMAIL_API_KEY", "rk-test-key", create=True)
     @patch("core.remail_client._saved_context_metadata", return_value={})
     @patch("core.remail_client.requests.request")
     def test_restore_context_requires_exact_email_match(self, request, saved):

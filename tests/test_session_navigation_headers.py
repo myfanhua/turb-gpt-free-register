@@ -1,11 +1,25 @@
 # -*- coding: utf-8 -*-
 import unittest
+from unittest.mock import patch
 
+from config import browser as browser_config
 from config.browser import build_browser_environment
 from core.session import BrowserSession
 
 
 class SessionNavigationHeaderTests(unittest.TestCase):
+    def test_uppercase_configured_profile_does_not_break_us_geo(self):
+        with patch.object(browser_config, "BROWSER_LOCALE_PROFILE", "US"):
+            profile = build_browser_environment({
+                "country": "US",
+                "timezone": "America/New_York",
+                "city": "New York City",
+            })
+
+        self.assertEqual(profile["locale_profile"], "us")
+        self.assertEqual(profile["navigator_language"], "en-US")
+        self.assertEqual(profile["timezone_iana"], "America/New_York")
+
     def test_vietnam_exit_uses_matching_locale_and_timezone(self):
         profile = build_browser_environment({
             "country": "VN",

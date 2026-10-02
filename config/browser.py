@@ -179,6 +179,12 @@ TIMEZONE_NAME_BY_IANA = {
 }
 
 
+def _normalize_locale_profile_key(value: str | None = None) -> str:
+    """Normalize .env/WebUI profile values and keep a valid fallback."""
+    configured = str(BROWSER_LOCALE_PROFILE if value is None else value or "").strip().lower()
+    return configured if configured in BROWSER_LOCALE_PROFILES else "jp"
+
+
 def _offset_minutes_for_timezone(tz_name: str, default: int) -> int:
     try:
         offset = datetime.now(ZoneInfo(tz_name)).utcoffset()
@@ -190,16 +196,18 @@ def _offset_minutes_for_timezone(tz_name: str, default: int) -> int:
 
 
 def _locale_profile_key_from_geo(geo: dict | None) -> str:
+    default_profile = _normalize_locale_profile_key()
     if not geo or not AUTO_BROWSER_LOCALE_FROM_IP:
-        return BROWSER_LOCALE_PROFILE
+        return default_profile
     country = str(geo.get("country") or geo.get("country_code") or "").upper()
-    return COUNTRY_LOCALE_PROFILE_MAP.get(country, BROWSER_LOCALE_PROFILE)
+    return COUNTRY_LOCALE_PROFILE_MAP.get(country, default_profile)
 
 
 def _build_locale_from_geo(geo: dict | None) -> dict:
     key = _locale_profile_key_from_geo(geo)
     resolved_profile = key
-    locale = dict(BROWSER_LOCALE_PROFILES.get(key, BROWSER_LOCALE_PROFILES[BROWSER_LOCALE_PROFILE]))
+    default_profile = _normalize_locale_profile_key()
+    locale = dict(BROWSER_LOCALE_PROFILES.get(key, BROWSER_LOCALE_PROFILES[default_profile]))
     if geo and AUTO_BROWSER_LOCALE_FROM_IP:
         country = str(geo.get("country") or geo.get("country_code") or "").upper()
         # 专用画像覆盖常见国家；其余已知国家动态生成语言字段。若地理接口
@@ -405,3 +413,11 @@ def validate_browser_profile(profile: dict) -> list[str]:
 
 # ---- .env overrides for WebUI editable fields ----
 apply_env_overrides(globals(), {'BROWSER_LOCALE_PROFILE': 'str', 'AUTO_BROWSER_LOCALE_FROM_IP': 'bool', 'IP_GEO_TIMEOUT': 'float', 'REJECT_CLOUD_PROXY': 'bool', 'BROWSER_DATA_SAVER_MODE': 'bool', 'BROWSER_DATA_SAVER_DEEP_MODE': 'bool', 'BROWSER_DATA_SAVER_BLOCKED_RESOURCE_TYPES': 'list_str_multiline', 'BROWSER_DATA_SAVER_BLOCKED_URL_PATTERNS': 'list_str_multiline', 'BROWSER_TRAFFIC_DETAIL_LOG': 'bool', 'BROWSER_TRAFFIC_DETAIL_MAX_ENTRIES': 'int', 'BROWSER_JS_COVERAGE_LOG': 'bool', 'BROWSER_JS_COVERAGE_MAX_ENTRIES': 'int'})
+BROWSER_LOCALE_PROFILE = _normalize_locale_profile_key(BROWSER_LOCALE_PROFILE)
+_LOCALE = BROWSER_LOCALE_PROFILES[BROWSER_LOCALE_PROFILE]
+NAVIGATOR_LANGUAGE = _LOCALE["navigator_language"]
+NAVIGATOR_LANGUAGES = list(_LOCALE["navigator_languages"])
+ACCEPT_LANGUAGE = _LOCALE["accept_language"]
+TIMEZONE_IANA = _LOCALE["timezone_iana"]
+TIMEZONE_OFFSET_MINUTES = int(_LOCALE["timezone_offset_minutes"])
+TIMEZONE_NAME = _LOCALE["timezone_name"]

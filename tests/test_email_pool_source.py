@@ -114,6 +114,75 @@ class EmailPoolSourceTests(unittest.TestCase):
                 self.assertTrue(db.delete_email_pool("domain@example.com", source="cloudflare_domain"))
                 self.assertFalse(db.list_email_pool_page(source="all", limit=10)["items"])
 
+    def test_claim_skips_excluded_email_for_all_local_pool_sources(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            with patch.multiple(db, **self._storage_patches(root)):
+                db.import_outlook_accounts([
+                    {"email": "outlook-first@example.com", "password": "pw", "client_id": "cid", "refresh_token": "rt"},
+                    {"email": "outlook-second@example.com", "password": "pw", "client_id": "cid", "refresh_token": "rt"},
+                ])
+                db.import_generic_api_emails([
+                    {"email": "generic-first@example.com", "code_url": "https://mail.example/first"},
+                    {"email": "generic-second@example.com", "code_url": "https://mail.example/second"},
+                ])
+                db.import_imap_emails([
+                    {"email": "imap-first@example.com", "password": "pw", "server": "imap.example.com", "port": 993},
+                    {"email": "imap-second@example.com", "password": "pw", "server": "imap.example.com", "port": 993},
+                ])
+
+                outlook = db.claim_next_outlook(exclude_emails=["OUTLOOK-FIRST@EXAMPLE.COM"])
+                generic = db.claim_next_generic_api_email(exclude_emails="GENERIC-FIRST@EXAMPLE.COM")
+                imap = db.claim_next_imap_email(exclude_emails={"imap-first@example.com"})
+
+                self.assertEqual(outlook["email"], "outlook-second@example.com")
+                self.assertEqual(generic["email"], "generic-second@example.com")
+                self.assertEqual(imap["email"], "imap-second@example.com")
+                self.assertEqual(db.get_outlook_by_email("outlook-first@example.com")["status"], "available")
+                self.assertEqual(db.get_generic_api_email_by_email("generic-first@example.com")["status"], "available")
+                self.assertEqual(db.get_imap_email_by_email("imap-first@example.com")["status"], "available")
+
+    def test_retry_job_persists_excluded_emails(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            with patch.multiple(db, **self._storage_patches(root)):
+                source = db.create_job("outlook")
+                db.update_job(source["id"], status="failed", email="failed@example.com")
+                retry, created = db.create_retry_job(
+                    source["id"],
+                    job_type="registration",
+                    email_source="outlook",
+                    excluded_emails=["failed@example.com", "second@example.com"],
+                )
+
+                self.assertTrue(created)
+                self.assertEqual(
+                    retry["excluded_emails"],
+                    ["failed@example.com", "second@example.com"],
+                )
+                self.assertEqual(
+                    db.get_job(retry["id"])["excluded_emails"],
+                    ["failed@example.com", "second@example.com"],
+                )
+
+
+    def test_retry_job_preserves_explicit_email_source_mode(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            with patch.multiple(db, **self._storage_patches(root)):
+                source = db.create_job("generic_api", email_source_mode="specific")
+                db.update_job(source["id"], status="failed", email="failed@example.com")
+                retry, created = db.create_retry_job(
+                    source["id"],
+                    job_type="registration",
+                    email_source=source["email_source"],
+                    email_source_mode=source["email_source_mode"],
+                )
+
+                self.assertTrue(created)
+                self.assertEqual(retry["email_source"], "generic_api")
+                self.assertEqual(retry["email_source_mode"], "specific")
+
 
 if __name__ == "__main__":
     unittest.main()
