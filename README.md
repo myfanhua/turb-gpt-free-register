@@ -10,7 +10,7 @@ ChatGPT / OpenAI 账号自动注册与 Codex OAuth 授权工具。当前项目�
 
 项目提供 **CLI** 和 **本地 WebUI** 两种使用方式。日常推荐使用 WebUI。
 
-> 项目说明：本项目基于 [xiaoguzuiniu/gpt-free-register](https://github.com/xiaoguzuiniu/gpt-free-register) 进行改造与扩展。
+> 项目说明：本仓库为 [myfanhua/turb-gpt-free-register](https://github.com/myfanhua/turb-gpt-free-register) 的个人 fork，基于其代码做二次开发（上游本身基于 [xiaoguzuiniu/gpt-free-register](https://github.com/xiaoguzuiniu/gpt-free-register) 改造）。
 
 - TG 交流群：[https://t.me/+uC3Ix0l2E085Njhl](https://t.me/+uC3Ix0l2E085Njhl)
 
