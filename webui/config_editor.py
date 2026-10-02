@@ -301,11 +301,11 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "TWOFA_WORKERS", "file": "twofa.py", "type": "int", "group": "功能开关",
-        "label": "2FA并发数", "help": "同时执行的2FA设置任务数，默认4，范围1-16；修改后需重启服务",
+        "label": "2FA并发数", "help": "同时执行的2FA设置任务数，默认4，范围1-16；保存后立即生效",
     },
     {
         "key": "TWOFA_QUEUE_LIMIT", "file": "twofa.py", "type": "int", "group": "功能开关",
-        "label": "2FA队列容量", "help": "允许排队等待的2FA任务总数，默认200",
+        "label": "2FA队列容量", "help": "允许排队和执行中的2FA任务总数，默认200；保存后立即生效",
     },
     {
         "key": "ENABLE_FLOW_TRIGGER", "file": "flow_trigger.py", "type": "bool", "group": "功能开关",

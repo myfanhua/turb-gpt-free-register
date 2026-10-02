@@ -144,6 +144,7 @@ def write_env_values(updates: dict[str, str]) -> list[str]:
     out_lines: list[str] = []
     key_re = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
 
+    seen_updated: set[str] = set()
     for line in existing_lines:
         m = key_re.match(line)
         if not m:
@@ -153,6 +154,11 @@ def write_env_values(updates: dict[str, str]) -> list[str]:
         if key in remaining:
             out_lines.append(f"{key}={_escape_env_value(remaining.pop(key))}")
             written.append(key)
+            seen_updated.add(key)
+        elif key in updates and key in seen_updated:
+            # Collapse duplicate keys being edited so no later stale value can
+            # shadow the value the user just saved.
+            continue
         else:
             out_lines.append(line)
 

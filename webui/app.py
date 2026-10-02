@@ -3174,6 +3174,8 @@ def create_app(auth_code: str | None = None) -> Flask:
         try:
             import config as _config_pkg
             _config_pkg.reload_all()
+            from core import twofa_service
+            twofa_service.apply_settings()
         except Exception as exc:
             reload_ok = False
             reload_err = f"{type(exc).__name__}: {exc}"
