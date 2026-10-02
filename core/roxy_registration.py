@@ -2301,6 +2301,7 @@ def run_roxy_registration(
     otp_code: str = None,
     batch_dir: Path | None = None,
     on_email_acquired: Callable[[str], None] | None = None,
+    exclude_emails=None,
 ) -> dict:
     """Roxy 指纹浏览器自动化注册入口。"""
     client = RoxyBrowserClient()
@@ -2393,7 +2394,7 @@ def run_roxy_registration(
         def _email_supplier_after_input() -> str:
             nonlocal email
             _check_manual_stop()
-            email = acquire_email_after_input(email)
+            email = acquire_email_after_input(email, exclude_emails=exclude_emails)
             if on_email_acquired:
                 on_email_acquired(email)
             return email
@@ -2521,7 +2522,7 @@ def run_roxy_registration(
 
         codex_result = {
             "status": "skipped",
-            "ok": True,
+            "ok": False,
             "message": "ENABLE_CODEX_AUTO=False，跳过 Codex",
         }
         try:
@@ -2577,9 +2578,16 @@ def run_roxy_registration(
                 "network_traffic": network_traffic,
             },
         )
-        codex_ok = codex_result.get("ok") or codex_result.get("status") == "skipped"
+        codex_status = str(codex_result.get("status") or ("success" if bool(codex_result.get("ok")) else "failed"))
+        codex_ok = bool(codex_result.get("ok")) or codex_status == "skipped"
         return {
-            "success": bool(codex_ok),
+            "success": True,
+            "task_status": "success" if codex_ok else "partial_success",
+            "account_status": "success",
+            "codex_status": codex_status,
+            "phase": "completed" if codex_ok else "codex",
+            "error_code": None if codex_ok else f"codex_{codex_status}",
+            "retryable": not codex_ok and codex_status != "deactivated",
             "email": email,
             "account_id": account_id,
             "access_token": access_token,
@@ -2613,6 +2621,12 @@ def run_roxy_registration(
             pass
         return {
             "success": False,
+            "task_status": "failed",
+            "account_status": "failed",
+            "codex_status": "not_started",
+            "phase": "registration",
+            "error_code": getattr(exc, "error_code", None) or type(exc).__name__.lower(),
+            "retryable": bool(getattr(exc, "retryable", not create_acknowledged)) and not create_acknowledged,
             "email": email,
             "network_traffic": network_traffic,
             "error": f"{type(exc).__name__}: {str(exc)[:300]}",

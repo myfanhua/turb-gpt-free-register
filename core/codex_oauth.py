@@ -173,9 +173,12 @@ def _codex_result(
     file_path: str | None = None,
     callback_url: str | None = None,
     message: str = "",
+    error_code: str | None = None,
+    retryable: bool | None = None,
+    phone_activation: dict | None = None,
 ) -> dict:
     """构造与 flow_trigger._flow_result 同形态的结构化结果。"""
-    return {
+    result = {
         "status": status,
         "ok": ok,
         "http_status": http_status,
@@ -183,7 +186,12 @@ def _codex_result(
         "file_path": file_path,
         "callback_url": callback_url,
         "message": message,
+        "error_code": error_code,
+        "retryable": retryable,
     }
+    if phone_activation:
+        result["phone_activation"] = dict(phone_activation)
+    return result
 
 
 def _account_registration_password(email: str) -> str:
@@ -576,8 +584,33 @@ def list_cpa_codex_auth_files() -> list[dict]:
     return out
 
 
+def _cpa_auth_timestamp(item: dict) -> float:
+    """提取 CPA 凭证更新时间，用于同邮箱多凭证的稳定消歧。"""
+    for key in (
+        "updated_at", "updatedAt", "modtime", "modified_at", "modifiedAt",
+        "last_refresh", "created_at", "createdAt",
+    ):
+        raw = item.get(key)
+        if raw is None or raw == "":
+            continue
+        if isinstance(raw, (int, float)):
+            return float(raw)
+        try:
+            return datetime.fromisoformat(str(raw).strip().replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError, OverflowError):
+            continue
+    return 0.0
+
+
+def _cpa_auth_available(item: dict) -> bool:
+    def enabled_flag(value) -> bool:
+        return value is True or str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    return not enabled_flag(item.get("disabled")) and not enabled_flag(item.get("unavailable"))
+
+
 def find_cpa_codex_auth_file(*, email: str = "", local_filename: str = "") -> dict | None:
-    """按本地回执/凭证文件名或邮箱匹配 CPA 侧 codex auth 文件。"""
+    """按文件名或邮箱匹配 CPA Codex 凭证；同邮箱时优先最新可用凭证。"""
     email_l = str(email or "").strip().lower()
     local_name_l = str(local_filename or "").strip().lower()
     local_stem_l = local_name_l[:-5] if local_name_l.endswith(".json") else local_name_l
@@ -604,8 +637,131 @@ def find_cpa_codex_auth_file(*, email: str = "", local_filename: str = "") -> di
                 s = max(s, 75)
         return s
 
-    ranked = sorted(((score(item), item) for item in files), key=lambda x: x[0], reverse=True)
-    return ranked[0][1] if ranked and ranked[0][0] > 0 else None
+    ranked = [(score(item), item) for item in files]
+    best_score = max((value for value, _ in ranked), default=0)
+    if best_score <= 0:
+        return None
+    candidates = [item for value, item in ranked if value == best_score]
+    if len(candidates) == 1:
+        return candidates[0]
+
+    def quality(item: dict) -> tuple[int, int, float]:
+        available = _cpa_auth_available(item)
+        active = available and str(item.get("status") or "").strip().lower() == "active"
+        return int(active), int(available), _cpa_auth_timestamp(item)
+
+    best_quality = max(quality(item) for item in candidates)
+    finalists = [item for item in candidates if quality(item) == best_quality]
+    if len(finalists) == 1:
+        return finalists[0]
+    auth_indices = {
+        str(item.get("auth_index") or item.get("authIndex") or item.get("AuthIndex") or item.get("index") or "").strip()
+        for item in finalists
+    }
+    auth_indices.discard("")
+    if len(auth_indices) == 1:
+        return finalists[0]
+    names = ", ".join(sorted(str(item.get("name") or "<未命名>") for item in finalists))
+    raise RuntimeError(f"[Codex][CPA] 匹配到多份无法消歧的 OAuth 凭证: {names}")
+
+
+def _codex_usage_error(body, http_status: int) -> str:
+    """从 CPA api-call 包装响应中提取可展示的上游错误。"""
+    parsed = body
+    if isinstance(body, str):
+        text = body.strip()
+        if text:
+            try:
+                parsed = json.loads(text)
+            except Exception:
+                return text[:500]
+        else:
+            parsed = {}
+
+    messages: list[str] = []
+    if isinstance(parsed, dict):
+        error = parsed.get("error")
+        if isinstance(error, dict):
+            for key in ("message", "code", "type", "detail"):
+                value = str(error.get(key) or "").strip()
+                if value and value not in messages:
+                    messages.append(value)
+        elif error:
+            messages.append(str(error).strip())
+        for key in ("message", "code", "detail", "reason"):
+            value = str(parsed.get(key) or "").strip()
+            if value and value not in messages:
+                messages.append(value)
+    elif parsed:
+        messages.append(str(parsed).strip())
+    return " · ".join(messages)[:500] or f"Codex usage 请求返回 HTTP {http_status}"
+
+
+def check_cpa_codex_oauth(*, email: str = "", local_filename: str = "") -> dict:
+    """通过 CPA 使用指定 OAuth 凭证只读请求 usage，验证凭证当前有效性。"""
+    checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    meta = find_cpa_codex_auth_file(email=email, local_filename=local_filename)
+    if not meta:
+        return {
+            "ok": False,
+            "status": "missing",
+            "http_status": None,
+            "error": "CPA 中未找到匹配的 Codex OAuth 凭证",
+            "checked_at": checked_at,
+            "cpa_name": None,
+        }
+
+    cpa_name = str(meta.get("name") or "").strip() or None
+    auth_index = meta.get("auth_index") or meta.get("authIndex") or meta.get("AuthIndex") or meta.get("index")
+    if auth_index is None or str(auth_index).strip() == "":
+        return {
+            "ok": False,
+            "status": "missing",
+            "http_status": None,
+            "error": "匹配的 CPA Codex 凭证缺少 auth_index",
+            "checked_at": checked_at,
+            "cpa_name": cpa_name,
+        }
+
+    payload = _cpa_request_json("POST", "/v0/management/api-call", {
+        "auth_index": auth_index,
+        "method": "GET",
+        "url": "https://chatgpt.com/backend-api/wham/usage",
+        "header": {
+            "Authorization": "Bearer $TOKEN$",
+            "Accept": "application/json",
+            "User-Agent": "codex_cli_rs/0.0.0",
+        },
+    })
+    raw_status = payload.get("status_code") if "status_code" in payload else payload.get("statusCode")
+    try:
+        http_status = int(raw_status)
+    except (TypeError, ValueError):
+        raise RuntimeError("[Codex][CPA] api-call 响应缺少有效 status_code")
+
+    if 200 <= http_status < 300:
+        status = "valid"
+        ok = True
+        error = None
+    else:
+        ok = False
+        error = _codex_usage_error(payload.get("body"), http_status)
+        error_l = error.lower()
+        token_invalid = any(marker in error_l for marker in (
+            "token_revoked", "invalidated oauth token", "invalid oauth token",
+            "oauth token expired", "invalid_grant",
+        ))
+        status = "invalid" if http_status == 401 or token_invalid else "failed"
+
+    return {
+        "ok": ok,
+        "status": status,
+        "http_status": http_status,
+        "error": error,
+        "checked_at": checked_at,
+        "cpa_name": cpa_name,
+        "auth_index": auth_index,
+    }
 
 
 def download_cpa_codex_auth_text(*, cpa_name: str | None = None, email: str = "", local_filename: str = "") -> tuple[str, str, dict]:
@@ -1266,7 +1422,7 @@ def _sleep_before_phone_retry(attempt: int, max_retries: int, *, prefix: str = "
     time.sleep(seconds)
 
 
-def _do_phone_verification(session: BrowserSession) -> dict:
+def _do_phone_verification(session: BrowserSession) -> tuple[dict, dict]:
     """
     用接码平台拿号 → add-phone/send 发短信 → 收码 → phone-otp/validate。
     一个号收不到码或被 OpenAI 拒就取消换号，最多 SMS_MAX_RETRIES 次（热加载）。
@@ -1278,7 +1434,25 @@ def _do_phone_verification(session: BrowserSession) -> dict:
     http = sms_provider._http()
     max_retries = _cfg.SMS_MAX_RETRIES
     provider = _sms_provider_name()
+
+    def cancel_and_report_failure(activation_id, reason) -> None:
+        if not activation_id:
+            return
+        try:
+            sms_provider.cancel_and_report_failure(activation_id, http, reason)
+        except Exception as feedback_exc:
+            logger.warning("[Codex] 释放号码或记录短信失败反馈失败：%s", feedback_exc)
+
+    def report_success(activation_id) -> None:
+        if not activation_id:
+            return
+        try:
+            sms_provider.report_success(activation_id)
+        except Exception as feedback_exc:
+            logger.warning("[Codex] 记录短信成功反馈失败：%s", feedback_exc)
+
     try:
+        sms_provider.preflight_sms_dependency(http=http)
         last_err = None
         for attempt in range(1, max_retries + 1):
             activation_id = None
@@ -1304,7 +1478,7 @@ def _do_phone_verification(session: BrowserSession) -> dict:
                         f"[Codex] add-phone/send 未成功 reason={send_reason or 'unknown'}, "
                         f"status={send_resp.status_code}: {send_text[:240]}，换号重试"
                     )
-                    sms_provider.cancel(activation_id, http)
+                    cancel_and_report_failure(activation_id, send_reason or send_text or "send_failed")
                     _sleep_before_phone_retry(attempt, max_retries)
                     continue
 
@@ -1321,7 +1495,7 @@ def _do_phone_verification(session: BrowserSession) -> dict:
                     sms_code = sms_provider.wait_for_sms_code(activation_id, http)
                 except sms_provider.SmsCodeTimeout:
                     logger.warning(f"[Codex] 号码 +{phone} 在 {_cfg.SMS_CODE_WAIT}s 内未收到短信，取消换号")
-                    sms_provider.cancel(activation_id, http)
+                    cancel_and_report_failure(activation_id, "code_timeout")
                     _sleep_before_phone_retry(attempt, max_retries)
                     continue
 
@@ -1339,25 +1513,35 @@ def _do_phone_verification(session: BrowserSession) -> dict:
                         f"[Codex] phone-otp/validate 失败 reason={val_reason}, status={val_resp.status_code}: "
                         f"{val_text[:240]}，换号重试"
                     )
-                    sms_provider.cancel(activation_id, http)
+                    cancel_and_report_failure(activation_id, val_reason)
                     _sleep_before_phone_retry(attempt, max_retries)
                     continue
 
                 # 成功
-                sms_provider.complete(activation_id, http)
+                report_success(activation_id)
+                phone_activation = sms_provider.complete(activation_id, http) or {}
                 logger.info("[Codex] 手机号验证通过")
-                return _resp_json(val_resp)
+                return _resp_json(val_resp), phone_activation
 
-            except sms_provider.SmsNoBalanceError:
-                # 余额不足，重试无意义，直接抛
+            except (
+                sms_provider.SmsNoBalanceError,
+                sms_provider.SmsProviderConfigurationError,
+                sms_provider.SmsNoNumbersError,
+            ) as exc:
+                # 依赖前置失败或库存暂空，交给 OAuth 入口统一持久化状态。
+                cancel_and_report_failure(activation_id, exc)
                 raise
             except sms_provider.SmsProviderError as exc:
                 last_err = exc
                 logger.warning(f"[Codex] 接码尝试 {attempt} 失败：{exc}")
-                if activation_id:
-                    sms_provider.cancel(activation_id, http)
+                cancel_and_report_failure(activation_id, exc)
                 _sleep_before_phone_retry(attempt, max_retries)
                 continue
+            except Exception as exc:
+                last_err = exc
+                logger.warning("[Codex] 手机验证流程异常：%s", str(exc)[:240])
+                cancel_and_report_failure(activation_id, exc)
+                raise
 
         raise RuntimeError(
             f"[Codex] 手机号验证重试 {max_retries} 次仍失败（provider={provider}）"
@@ -1892,9 +2076,10 @@ def run_codex_oauth(
             ) if continue_url else early_callback_url
 
         # 5. 是否需要手机号也完全由 Auth 返回决定，不再因为走过 OTP/密码而固定执行。
+        phone_activation = {}
         if _is_phone_step(auth_result):
             logger.info("[Codex] Auth 明确要求手机号验证，开始接码：%s", email)
-            phone_result = _do_phone_verification(session)
+            phone_result, phone_activation = _do_phone_verification(session)
             phone_continue = _extract_continue_url(phone_result)
             if phone_continue:
                 early_callback_url = _follow_login_continue(
@@ -1935,6 +2120,7 @@ def run_codex_oauth(
                 file_path=str(path) if path else None,
                 callback_url=callback_url,
                 message=str(msg),
+                phone_activation=phone_activation,
             )
 
         # 7A-sub2. sub2 模式：把 callback URL 上传给 sub2。
@@ -1960,6 +2146,7 @@ def run_codex_oauth(
                 file_path=str(path) if path else None,
                 callback_url=callback_url,
                 message=str(msg),
+                phone_activation=phone_activation,
             )
 
         # 7B. local 模式：保留旧实现，用本地 verifier 换 token 并保存 CPA 兼容授权文件。
@@ -1984,6 +2171,7 @@ def run_codex_oauth(
             file_path=str(path),
             callback_url=callback_url,
             message=f"plan={id_claims.get('plan_type') or 'unknown'}",
+            phone_activation=phone_activation,
         )
     except AccountUnusableError as exc:
         logger.warning(f"[Codex] 账号已废（{exc.error_code}）：{email}")
@@ -2007,6 +2195,15 @@ def run_codex_oauth(
             )
         logger.warning(f"[Codex] 失败：{email}，{type(exc).__name__}: {str(exc)[:200]}")
         logger.debug("[Codex] 失败详情:", exc_info=True)
+        if isinstance(exc, sms_provider.SmsProviderError):
+            sms_outcome = sms_provider.classify_sms_exception(exc)
+            return _codex_result(
+                status=sms_outcome["status"],
+                email=email,
+                error_code=sms_outcome["error_code"],
+                retryable=sms_outcome["retryable"],
+                message=sms_outcome["message"][:240],
+            )
         return _codex_result(
             status="failed",
             email=email,

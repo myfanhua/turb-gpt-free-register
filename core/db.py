@@ -1122,7 +1122,12 @@ def insert_account(
         return row_id
 
 
-def update_account_codex_status(email: str, codex_status: str, codex_error: str | None = None) -> bool:
+def update_account_codex_status(
+    email: str,
+    codex_status: str,
+    codex_error: str | None = None,
+    phone_activation: dict | None = None,
+) -> bool:
     """
     单独更新某账号的 codex_status / codex_error（手动补跑 Codex 时用）。
     返回是否找到该账号。
@@ -1134,6 +1139,27 @@ def update_account_codex_status(email: str, codex_status: str, codex_error: str 
             return False
         row["codex_status"] = codex_status
         row["codex_error"] = codex_error
+        if isinstance(phone_activation, dict) and phone_activation:
+            raw_extra = row.get("extra_json")
+            if isinstance(raw_extra, dict):
+                extra = dict(raw_extra)
+            elif isinstance(raw_extra, str) and raw_extra.strip():
+                try:
+                    extra = json.loads(raw_extra)
+                except (TypeError, ValueError):
+                    extra = {}
+            else:
+                extra = {}
+            if not isinstance(extra, dict):
+                extra = {}
+            codex_extra = extra.get("codex")
+            if not isinstance(codex_extra, dict):
+                codex_extra = {}
+            else:
+                codex_extra = dict(codex_extra)
+            codex_extra["phone_activation"] = dict(phone_activation)
+            extra["codex"] = codex_extra
+            row["extra_json"] = json.dumps(extra, ensure_ascii=False)
         if str(codex_status or "").strip().lower() == "deactivated":
             # Codex 授权阶段判定为 deactivated，按账号废号处理，便于账号列表统一筛选。
             row["live_check_status"] = "deactivated"
@@ -1666,6 +1692,10 @@ def list_account_plan_check_statuses(
         "plan_check_completed_at", "plan_checked_at", "plan_last_success_at",
         "plan_check_network_route", "plan_check_proxy_used", "plan_check_proxy_fallback_reason",
         "live_check_proxy_used", "live_check_fingerprint_text",
+        "codex_oauth_check_status", "codex_oauth_check_ok", "codex_oauth_check_error",
+        "codex_oauth_check_trigger", "codex_oauth_check_queued_at", "codex_oauth_check_started_at",
+        "codex_oauth_check_completed_at", "codex_oauth_checked_at", "codex_oauth_check_http_status",
+        "codex_oauth_check_cpa_name",
         "expires_at", "plan_expires_at", "plan_renews_at", "renews_at",
         "billing_period", "billing_currency", "discount_amount", "discount_type",
         "discount_expires_at", "discount_promo_campaign_id",
@@ -1738,6 +1768,11 @@ def list_account_plan_check_statuses(
                     "eligible_promo_campaigns": row.get("eligible_promo_campaigns"),
                     "extract_link_status": row.get("extract_link_status"),
                     "codex_status": row.get("codex_status"),
+                    "codex_oauth_check_status": row.get("codex_oauth_check_status"),
+                    "codex_oauth_check_ok": row.get("codex_oauth_check_ok"),
+                    "codex_oauth_check_error": row.get("codex_oauth_check_error"),
+                    "codex_oauth_checked_at": row.get("codex_oauth_checked_at"),
+                    "codex_oauth_check_http_status": row.get("codex_oauth_check_http_status"),
                     "codex_agent_status": row.get("codex_agent_status"),
                     "totp_setup_status": row.get("totp_setup_status"),
                     "totp_setup_ok": row.get("totp_setup_ok"),
@@ -2147,6 +2182,116 @@ def mark_account_live_check_running(acc_id: int) -> bool:
         return True
 
 
+def claim_account_codex_oauth_check(acc_id: int, trigger: str = "manual") -> bool:
+    """原子占用 Codex OAuth 测活任务；已有未超时任务时返回 False。"""
+    with _LOCK:
+        rows = _load_accounts()
+        row = next((r for r in rows if int(r.get("id") or 0) == int(acc_id)), None)
+        if row is None:
+            return False
+        current_status = row.get("codex_oauth_check_status")
+        if current_status in {"queued", "running"}:
+            try:
+                stamp_key = "codex_oauth_check_queued_at" if current_status == "queued" else "codex_oauth_check_started_at"
+                stale_after = _PLAN_CHECK_QUEUE_STALE_SECONDS if current_status == "queued" else _PLAN_CHECK_STALE_SECONDS
+                started_at = datetime.fromisoformat(str(row.get(stamp_key) or ""))
+                if (datetime.now() - started_at).total_seconds() < stale_after:
+                    return False
+            except (TypeError, ValueError):
+                pass
+        now = _now()
+        check_id = uuid.uuid4().hex
+        row["codex_oauth_check_status"] = "queued"
+        row["codex_oauth_check_ok"] = False
+        row["codex_oauth_check_id"] = check_id
+        row["codex_oauth_check_trigger"] = str(trigger or "manual")
+        row["codex_oauth_check_queued_at"] = now
+        row["codex_oauth_check_started_at"] = None
+        row["codex_oauth_check_completed_at"] = None
+        row["codex_oauth_checked_at"] = None
+        row["codex_oauth_check_http_status"] = None
+        row["codex_oauth_check_error"] = None
+        row["updated_at"] = now
+        _save_accounts(rows)
+        return True
+
+
+def mark_account_codex_oauth_check_running(acc_id: int, expected_check_id: str | None = None) -> bool:
+    """把当前代次的 Codex OAuth 测活任务标记为运行中。"""
+    with _LOCK:
+        rows = _load_accounts()
+        row = next((r for r in rows if int(r.get("id") or 0) == int(acc_id)), None)
+        if row is None or row.get("codex_oauth_check_status") not in {"queued", "running"}:
+            return False
+        if expected_check_id is not None and str(row.get("codex_oauth_check_id") or "") != str(expected_check_id):
+            return False
+        now = _now()
+        row["codex_oauth_check_status"] = "running"
+        row["codex_oauth_check_started_at"] = now
+        row["codex_oauth_check_error"] = None
+        row["updated_at"] = now
+        _save_accounts(rows)
+        return True
+
+
+def update_account_codex_oauth_check(
+    acc_id: int,
+    result: dict | None = None,
+    expected_check_id: str | None = None,
+) -> bool:
+    """写回 Codex OAuth 测活结果；指定任务 ID 时拒绝陈旧 worker 覆盖。"""
+    result = result or {}
+    with _LOCK:
+        rows = _load_accounts()
+        row = next((r for r in rows if int(r.get("id") or 0) == int(acc_id)), None)
+        if row is None:
+            return False
+        if expected_check_id is not None and str(row.get("codex_oauth_check_id") or "") != str(expected_check_id):
+            return False
+        now = _now()
+        status = str(result.get("status") or ("valid" if result.get("ok") else "failed"))
+        if status not in {"valid", "invalid", "missing", "failed"}:
+            status = "failed"
+        ok = bool(result.get("ok")) and status == "valid"
+        raw_http_status = result.get("http_status")
+        try:
+            http_status = int(raw_http_status) if raw_http_status is not None else None
+        except (TypeError, ValueError):
+            http_status = None
+        row["codex_oauth_check_status"] = status
+        row["codex_oauth_check_ok"] = ok
+        row["codex_oauth_check_error"] = None if ok else str(result.get("error") or "Codex OAuth 测活失败")[:1000]
+        row["codex_oauth_checked_at"] = result.get("checked_at") or now
+        row["codex_oauth_check_http_status"] = http_status
+        row["codex_oauth_check_cpa_name"] = str(result.get("cpa_name") or "").strip() or None
+        row["codex_oauth_check_completed_at"] = now
+        row["updated_at"] = now
+        _save_accounts(rows)
+        return True
+
+
+def recover_interrupted_codex_oauth_checks() -> int:
+    """服务启动时恢复上次进程中断的 Codex OAuth 测活状态。"""
+    with _LOCK:
+        rows = _load_accounts()
+        recovered = 0
+        now = _now()
+        for row in rows:
+            if row.get("codex_oauth_check_status") not in {"queued", "running"}:
+                continue
+            row["codex_oauth_check_status"] = "failed"
+            row["codex_oauth_check_ok"] = False
+            row["codex_oauth_check_id"] = None
+            row["codex_oauth_check_error"] = "WebUI 重启或任务异常中断，请重新检测 Codex OAuth"
+            row["codex_oauth_checked_at"] = now
+            row["codex_oauth_check_completed_at"] = now
+            row["updated_at"] = now
+            recovered += 1
+        if recovered:
+            _save_accounts(rows)
+        return recovered
+
+
 def update_accounts_note(account_ids: list[int] | None, note: str) -> tuple[list[dict], list[dict]]:
     """
     批量更新已注册账号备注。
@@ -2490,11 +2635,24 @@ def import_registered_email_accounts(records: list[dict], source: str | None) ->
         return inserted, skipped
 
 
-def claim_next_outlook() -> dict | None:
+def _email_exclusion_set(exclude_emails: Any = None) -> set[str]:
+    """规范化重试时不得再次领取的邮箱集合。"""
+    if not exclude_emails:
+        return set()
+    values = [exclude_emails] if isinstance(exclude_emails, str) else exclude_emails
+    return {str(value or "").strip().casefold() for value in values if str(value or "").strip()}
+
+
+def claim_next_outlook(exclude_emails: Any = None) -> dict | None:
     """原子领取一个可用 Outlook 账号并标记为 used。"""
+    excluded = _email_exclusion_set(exclude_emails)
     with _LOCK:
         rows = sorted(_load_outlook(), key=lambda x: int(x.get("id") or 0))
-        row = next((r for r in rows if r.get("status") == "available"), None)
+        row = next((
+            r for r in rows
+            if r.get("status") == "available"
+            and str(r.get("email") or "").strip().casefold() not in excluded
+        ), None)
         if row is None:
             return None
         row["status"] = "used"
@@ -2637,11 +2795,16 @@ def import_generic_api_emails(records: list[dict]) -> tuple[int, int]:
         return inserted, skipped
 
 
-def claim_next_generic_api_email() -> dict | None:
+def claim_next_generic_api_email(exclude_emails: Any = None) -> dict | None:
     """原子领取一个可用通用 API 邮箱并标记为 used。"""
+    excluded = _email_exclusion_set(exclude_emails)
     with _LOCK:
         rows = sorted(_load_generic_api_emails(), key=lambda x: int(x.get("id") or 0))
-        row = next((r for r in rows if r.get("status") == "available"), None)
+        row = next((
+            r for r in rows
+            if r.get("status") == "available"
+            and str(r.get("email") or "").strip().casefold() not in excluded
+        ), None)
         if row is None:
             return None
         row["status"] = "used"
@@ -2743,10 +2906,15 @@ def import_imap_emails(records: list[dict]) -> tuple[int, int]:
         return inserted, skipped
 
 
-def claim_next_imap_email() -> dict | None:
+def claim_next_imap_email(exclude_emails: Any = None) -> dict | None:
+    excluded = _email_exclusion_set(exclude_emails)
     with _LOCK:
         rows = sorted(_load_imap_emails(), key=lambda x: int(x.get("id") or 0))
-        row = next((r for r in rows if r.get("status") == "available"), None)
+        row = next((
+            r for r in rows
+            if r.get("status") == "available"
+            and str(r.get("email") or "").strip().casefold() not in excluded
+        ), None)
         if row is None:
             return None
         row["status"], row["used_at"], row["note"] = "used", _now(), None
@@ -3057,6 +3225,7 @@ def _new_job_row(
     rows: list[dict],
     *,
     email_source: str,
+    email_source_mode: str = "auto",
     job_type: str = "registration",
     parent_job_id: int | None = None,
     root_job_id: int | None = None,
@@ -3064,6 +3233,7 @@ def _new_job_row(
     retry_action: str | None = None,
     email: str | None = None,
     account_id: int | None = None,
+    excluded_emails: list[str] | None = None,
 ) -> dict:
     job_uuid = str(uuid.uuid4())
     log_file = str(_LOG_DIR / f"{job_uuid}.log")
@@ -3077,9 +3247,16 @@ def _new_job_row(
         "retry_attempt": int(retry_attempt or 0),
         "retry_action": retry_action,
         "email_source": email_source,
+        "email_source_mode": email_source_mode,
         "email": email,
+        "excluded_emails": list(excluded_emails or []),
         "status": "pending",
         "error_message": None,
+        "phase": "queued",
+        "error_code": None,
+        "retryable": True,
+        "account_status": "pending",
+        "codex_status": "not_started",
         "log_file": log_file,
         "started_at": None,
         "completed_at": None,
@@ -3089,11 +3266,11 @@ def _new_job_row(
     }
 
 
-def create_job(email_source: str) -> dict:
+def create_job(email_source: str, email_source_mode: str = "auto") -> dict:
     """创建一个首次执行的 pending 注册任务。"""
     with _LOCK:
         rows = _load_jobs()
-        row = _new_job_row(rows, email_source=email_source)
+        row = _new_job_row(rows, email_source=email_source, email_source_mode=email_source_mode)
         rows.append(row)
         _save_jobs(rows)
         return dict(row)
@@ -3104,8 +3281,10 @@ def create_retry_job(
     *,
     job_type: str,
     email_source: str,
+    email_source_mode: str = "auto",
     email: str | None = None,
     account_id: int | None = None,
+    excluded_emails: list[str] | None = None,
 ) -> tuple[dict, bool]:
     """原子创建重试子任务；同一任务链已有活跃任务时直接复用。"""
     with _LOCK:
@@ -3113,7 +3292,7 @@ def create_retry_job(
         source = next((r for r in rows if int(r.get("id") or 0) == int(source_job_id)), None)
         if source is None:
             raise LookupError("任务不存在")
-        if source.get("status") not in ("failed", "stopped", "cancelled"):
+        if source.get("status") not in ("failed", "stopped", "cancelled", "partial_success", "blocked"):
             raise ValueError(f"当前状态不支持重试：{source.get('status')}")
 
         root_id = int(source.get("root_job_id") or source.get("id"))
@@ -3137,6 +3316,7 @@ def create_retry_job(
         row = _new_job_row(
             rows,
             email_source=email_source,
+            email_source_mode=email_source_mode,
             job_type=job_type,
             parent_job_id=int(source_job_id),
             root_job_id=root_id,
@@ -3144,6 +3324,7 @@ def create_retry_job(
             retry_action=("codex" if job_type == "codex_retry" else "registration"),
             email=email,
             account_id=account_id,
+            excluded_emails=excluded_emails,
         )
         rows.append(row)
         _save_jobs(rows)
@@ -3160,6 +3341,11 @@ def update_job(
     completed_at: str | None = None,
     account_id: int | None = None,
     network_traffic: dict | None = None,
+    phase: str | None = None,
+    error_code: str | None = None,
+    retryable: bool | None = None,
+    account_status: str | None = None,
+    codex_status: str | None = None,
 ) -> None:
     with _LOCK:
         rows = _load_jobs()
@@ -3180,6 +3366,16 @@ def update_job(
             row["account_id"] = account_id
         if network_traffic is not None:
             row["network_traffic"] = dict(network_traffic)
+        if phase is not None:
+            row["phase"] = phase
+        if error_code is not None:
+            row["error_code"] = error_code
+        if retryable is not None:
+            row["retryable"] = bool(retryable)
+        if account_status is not None:
+            row["account_status"] = account_status
+        if codex_status is not None:
+            row["codex_status"] = codex_status
         _save_jobs(rows)
 
 

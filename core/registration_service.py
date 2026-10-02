@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from core import codex_retry_service, db
+from core import codex_retry_service, db, email_provider
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,22 @@ _STOP_EVENTS: dict[int, threading.Event] = {}
 _ACTIVE_JOBS: set[int] = set()
 _STOP_LOCK = threading.Lock()
 _THREAD_CTX = threading.local()
+
+
+def _normalize_job_excluded_emails(values: Any = None) -> list[str]:
+    """规范化并去重任务链里的失败邮箱，保留稳定顺序供重试使用。"""
+    if not values:
+        return []
+    raw_values = [values] if isinstance(values, str) else values
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in raw_values:
+        email = str(value or "").strip()
+        key = email.casefold()
+        if email and key not in seen:
+            result.append(email)
+            seen.add(key)
+    return result
 
 
 class StopRequested(RuntimeError):
@@ -97,13 +113,15 @@ def _random_display_name() -> str:
     return random_display_name()
 
 
-def _prepare_registration_args() -> tuple[str | None, str, str]:
+def _prepare_registration_args(*, force_email_pool: bool = False) -> tuple[str | None, str, str]:
     """复用 CLI 的默认规则，为旧 Web 任务入口补齐注册参数。"""
     # 用模块属性读，支持 WebUI 热加载
     from config import register as _r, email as _e
     from core.profile_utils import generate_random_birthday
 
     email = str(getattr(_r, "REGISTER_EMAIL", "") or "").strip()
+    if force_email_pool:
+        email = ""
     name = str(getattr(_r, "REGISTER_NAME", "") or "").strip()
     # WebUI/配置里有时会把空值存成 "-"，这不是合法 OpenAI 显示名，按空处理并自动生成
     if name in {"-", "—", "无", "空", "none", "None", "null", "NULL"}:
@@ -118,7 +136,7 @@ def _prepare_registration_args() -> tuple[str | None, str, str]:
     # 自动邮箱不在准备阶段领取：浏览器驱动会等页面找到邮箱输入框后再领取，
     # 协议驱动则在 run_registration 即将开始认证时领取。这样页面打不开/找不到
     # 输入框时不会提前消耗邮箱订单或池中素材。
-    if not email and not _e.USE_EMAIL_SERVICE:
+    if not email and not _e.USE_EMAIL_SERVICE and not force_email_pool:
         raise RuntimeError(
             "手动模式未配置邮箱。请在 WebUI 配置页设置 REGISTER_EMAIL，"
             "或开启 USE_EMAIL_SERVICE 并从邮箱池领取。"
@@ -196,8 +214,8 @@ def get_executor(max_workers: int | None = None) -> ThreadPoolExecutor:
     """返回注册线程池。
 
     旧逻辑只在首次创建线程池时使用 max_workers，后续 WebUI 改线程数再提交仍会复用
-    上一次的池。这里改成：每次传入的 max_workers 和当前池不一致时，立即创建新池供
-    新提交任务使用；旧池不接收新任务，但会继续把已经排队/运行的任务跑完。
+    上一次的池。这里改成：每次传入的 max_workers 和当前池不一致时，先等待旧池中
+    已提交的任务全部完成，再创建新池供后续任务使用，避免不同代线程池并行执行。
     """
     global _executor, _executor_workers, _executor_generation
     requested_workers = _normalize_workers(max_workers) if max_workers is not None else _executor_workers
@@ -205,11 +223,10 @@ def get_executor(max_workers: int | None = None) -> ThreadPoolExecutor:
         if _executor is None or requested_workers != _executor_workers:
             old_executor = _executor
             if old_executor is not None:
-                # 不取消旧池里已提交的任务，只是不再往旧池追加新任务。
-                old_executor.shutdown(wait=False, cancel_futures=False)
-                _retired_executors.append(old_executor)
+                # 等待旧池完全排空再创建新池，避免 workers 切换造成跨代并发叠加。
+                old_executor.shutdown(wait=True, cancel_futures=False)
                 logger.info(
-                    "[Service] 注册线程池 workers 从 %s 切换为 %s；旧池继续处理已排队任务",
+                    "[Service] 注册线程池 workers 从 %s 切换为 %s；旧池已排空",
                     _executor_workers,
                     requested_workers,
                 )
@@ -289,14 +306,23 @@ def _run_one_job(job_id: int, log_file: str) -> None:
         _deactivate_job(job_id)
         return
 
-    db.update_job(job_id, status="running", started_at=datetime.now().isoformat(timespec="seconds"))
+    excluded_emails = _normalize_job_excluded_emails(current.get("excluded_emails"))
+    force_email_pool = current.get("email_source_mode") == "specific"
+
+    db.update_job(
+        job_id,
+        status="running",
+        phase="registration",
+        account_status="running",
+        started_at=datetime.now().isoformat(timespec="seconds"),
+    )
 
     email: str | None = None
     try:
         with _JobLogContext(log_file):
             from main import run_registration
             log_logger.info(f"[Job {job_id}] 开始注册任务")
-            email, name, birthday = _prepare_registration_args()
+            email, name, birthday = _prepare_registration_args(force_email_pool=force_email_pool)
             db.update_job(job_id, email=email)
             check_stop_requested()
             def _on_email_acquired(acquired_email: str) -> None:
@@ -306,52 +332,66 @@ def _run_one_job(job_id: int, log_file: str) -> None:
                     db.update_job(job_id, email=email)
                     log_logger.info(f"[Job {job_id}] 页面已找到邮箱输入框，已分配邮箱: {email}")
 
-            result = run_registration(
-                email=email,
-                name=name,
-                birthday=birthday,
-                on_email_acquired=_on_email_acquired,
-            )
+            with email_provider.email_source_context(
+                current.get("email_source") if force_email_pool else None
+            ):
+                result = run_registration(
+                    email=email,
+                    name=name,
+                    birthday=birthday,
+                    on_email_acquired=_on_email_acquired,
+                    exclude_emails=excluded_emails,
+                )
             if is_stop_requested(job_id):
                 _release_unconsumed_job_email(email, "用户手动停止")
                 db.update_job(
                     job_id,
                     status="stopped",
+                    phase="stopped",
+                    retryable=False,
                     network_traffic=(result or {}).get("network_traffic") if isinstance(result, dict) else None,
                     error="用户手动停止",
                     completed_at=datetime.now().isoformat(timespec="seconds"),
                 )
                 log_logger.warning(f"[Job {job_id}] 已按用户请求停止")
                 return
-            if isinstance(result, dict) and result.get("success"):
-                db.update_job(
-                    job_id,
-                    status="success",
-                    email=result.get("email"),
-                    account_id=result.get("account_id"),
-                    network_traffic=result.get("network_traffic"),
-                    completed_at=datetime.now().isoformat(timespec="seconds"),
-                )
-                log_logger.info(f"[Job {job_id}] 成功: {result.get('email')}")
+
+            result_dict = result if isinstance(result, dict) else {}
+            result_status = str(result_dict.get("task_status") or ("success" if result_dict.get("success") else "failed"))
+            if result_status not in {"success", "partial_success", "blocked", "failed"}:
+                result_status = "failed"
+            result_email = str(result_dict.get("email") or email or "").strip() or None
+            result_account_id = result_dict.get("account_id")
+            result_error = str(result_dict.get("error") or "").strip()
+            result_account_status = str(result_dict.get("account_status") or ("success" if result_account_id else "failed"))
+            result_codex_status = str(result_dict.get("codex_status") or "not_started")
+            result_phase = str(result_dict.get("phase") or ("completed" if result_status in {"success", "partial_success"} else "registration"))
+            result_retryable = result_dict.get("retryable")
+            if result_retryable is None:
+                result_retryable = result_status in {"failed", "partial_success", "blocked"}
+            db.update_job(
+                job_id,
+                status=result_status,
+                email=result_email,
+                account_id=result_account_id,
+                network_traffic=result_dict.get("network_traffic"),
+                error=result_error[:500] if result_error else None,
+                phase=result_phase,
+                error_code=result_dict.get("error_code"),
+                retryable=bool(result_retryable),
+                account_status=result_account_status,
+                codex_status=result_codex_status,
+                completed_at=datetime.now().isoformat(timespec="seconds"),
+            )
+            if result_status in {"success", "partial_success"}:
+                log_logger.info(f"[Job {job_id}] {result_status}: {result_email}")
             else:
-                # 注意：失败也可能伴随 account_id（如 Codex 失败但账号已注册成功）
-                err = (result or {}).get("error") if isinstance(result, dict) else "unknown"
-                result_email = (result or {}).get("email") if isinstance(result, dict) else None
-                db.update_job(
-                    job_id,
-                    status="failed",
-                    email=result_email,
-                    account_id=(result or {}).get("account_id") if isinstance(result, dict) else None,
-                    network_traffic=(result or {}).get("network_traffic") if isinstance(result, dict) else None,
-                    error=str(err)[:500],
-                    completed_at=datetime.now().isoformat(timespec="seconds"),
-                )
-                email_to_handle = str(result_email or email or "").strip()
-                if _should_disable_failed_registration_email(err):
-                    _disable_job_email(email_to_handle, str(err))
+                email_to_handle = str(result_email or "").strip()
+                if _should_disable_failed_registration_email(result_error):
+                    _disable_job_email(email_to_handle, result_error)
                 else:
-                    _release_unconsumed_job_email(email_to_handle, str(err))
-                log_logger.error(f"[Job {job_id}] 失败: {err}")
+                    _release_unconsumed_job_email(email_to_handle, result_error)
+                log_logger.error(f"[Job {job_id}] {result_status}: {result_error or 'unknown'}")
     except StopRequested as exc:
         _release_unconsumed_job_email(email, str(exc))
         log_logger.warning(f"[Job {job_id}] 已停止: {exc}")
@@ -443,11 +483,12 @@ def _run_codex_retry_job(job_id: int, log_file: str, email: str, account_id: int
 def submit_registration(count: int = 1, email_source: str | None = None, workers: int | None = None) -> list[dict]:
     """
     创建 N 个注册任务并提交到线程池。
-    email_source 仅记录到 DB；实际邮箱来源固定为 Outlook 账号池。
+    email_source 为支持的单一来源时，任务按此来源领取；自动模式保留配置顺序。
 
     Returns:
         N 个新创建的 job dict
     """
+    email_source_was_explicit = email_source is not None
     if email_source is None:
         from config import email as _email_cfg
         email_source = _email_cfg.EMAIL_SOURCE
@@ -457,9 +498,14 @@ def submit_registration(count: int = 1, email_source: str | None = None, workers
     with _executor_lock:
         executor = get_executor(max_workers=workers)
         effective_workers = get_executor_workers()
+        email_source_mode = (
+            "specific"
+            if email_source_was_explicit and email_provider.is_supported_email_source(email_source)
+            else "auto"
+        )
         jobs = []
         for _ in range(count):
-            job = db.create_job(email_source=email_source)
+            job = db.create_job(email_source=email_source, email_source_mode=email_source_mode)
             try:
                 executor.submit(_run_one_job, job["id"], job["log_file"])
             except Exception as exc:
@@ -498,7 +544,7 @@ def get_retry_info(job: dict) -> dict:
         "retry_reason": None,
         "display_status": status,
     }
-    if status not in ("failed", "stopped", "cancelled"):
+    if status not in ("failed", "stopped", "cancelled", "partial_success", "blocked"):
         return info
 
     successful_retry = db.get_successful_retry_for_job(int(job.get("id") or 0))
@@ -549,6 +595,9 @@ def retry_job(job_id: int, workers: int | None = None) -> dict:
     account = _account_for_job(source)
     email = str((account or {}).get("email") or source.get("email") or "").strip()
     account_id = int(account["id"]) if account and account.get("id") is not None else None
+    excluded_emails = _normalize_job_excluded_emails(source.get("excluded_emails"))
+    if action == "registration" and email:
+        excluded_emails = _normalize_job_excluded_emails([*excluded_emails, email])
     reserved_codex = False
     if action == "codex":
         if not email or account_id is None:
@@ -562,8 +611,10 @@ def retry_job(job_id: int, workers: int | None = None) -> dict:
             int(job_id),
             job_type="codex_retry" if action == "codex" else "registration",
             email_source=str(source.get("email_source") or "outlook"),
+            email_source_mode=str(source.get("email_source_mode") or "auto"),
             email=email if action == "codex" else None,
             account_id=account_id if action == "codex" else None,
+            excluded_emails=excluded_emails if action == "registration" else None,
         )
     except LookupError as exc:
         if reserved_codex:

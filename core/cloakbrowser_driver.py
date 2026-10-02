@@ -83,6 +83,14 @@ class CloakElement:
         except Exception:
             return ""
 
+    @property
+    def text(self) -> str:
+        """提供 Selenium WebElement.text 兼容值，供脚本返回的元素使用。"""
+        try:
+            return str(self._eval("el => el.innerText || el.textContent || el.value || """) or "")
+        except Exception:
+            return ""
+
     def send_keys(self, *values: str) -> None:
         # 兼容 Selenium: el.send_keys(Keys.COMMAND, 'a')。
         text = "".join(str(v or "") for v in values)

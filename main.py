@@ -177,6 +177,7 @@ def run_registration(
     otp_code: str = None,
     batch_dir=None,
     on_email_acquired: Callable[[str], None] | None = None,
+    exclude_emails=None,
 ):
     """
     执行完整的 ChatGPT 邮箱密码注册流程。
@@ -209,6 +210,7 @@ def run_registration(
             otp_code=otp_code,
             batch_dir=batch_dir,
             on_email_acquired=on_email_acquired,
+            exclude_emails=exclude_emails,
         )
     if driver_mode in ("cloak", "cloakbrowser"):
         from core.cloakbrowser_registration import run_cloak_registration
@@ -220,6 +222,7 @@ def run_registration(
             otp_code=otp_code,
             batch_dir=batch_dir,
             on_email_acquired=on_email_acquired,
+            exclude_emails=exclude_emails,
         )
     if driver_mode in ("browser_use", "browseruse", "browser-use", "bu"):
         from core.browser_use_registration import run_browser_use_registration
@@ -231,6 +234,7 @@ def run_registration(
             otp_code=otp_code,
             batch_dir=batch_dir,
             on_email_acquired=on_email_acquired,
+            exclude_emails=exclude_emails,
         )
     if driver_mode in ("skyvern", "sv"):
         from core.skyvern_registration import run_skyvern_registration
@@ -242,6 +246,7 @@ def run_registration(
             otp_code=otp_code,
             batch_dir=batch_dir,
             on_email_acquired=on_email_acquired,
+            exclude_emails=exclude_emails,
         )
     if driver_mode not in ("protocol", "api", "http"):
         raise RuntimeError(
@@ -250,12 +255,13 @@ def run_registration(
 
     # 纯协议驱动没有“邮箱输入框”可等待，因此在创建 BrowserSession 前领取。
     if not str(email or "").strip():
-        if not _email_cfg.USE_EMAIL_SERVICE:
+        from core.email_provider import has_email_source_override
+        if not _email_cfg.USE_EMAIL_SERVICE and not has_email_source_override():
             raise RuntimeError(
                 "手动模式未配置邮箱。请在 WebUI 配置页设置 REGISTER_EMAIL，"
                 "或开启 USE_EMAIL_SERVICE 并从邮箱池领取。"
             )
-        email = acquire_email()
+        email = acquire_email(exclude_emails=exclude_emails)
         if on_email_acquired:
             on_email_acquired(email)
 
@@ -368,14 +374,15 @@ def run_registration(
         # Sentinel Token 不提前生成；等 OTP 到手后紧贴 validate 请求生成，
         # 避免等待邮箱期间 challenge 过期或与重新发送后的状态不一致。
 
-        # 等待验证码：USE_EMAIL_SERVICE=True 时自动从 Outlook 取件，否则人工输入。
+        # 显式来源任务也自动从所选邮箱服务收取验证码。
         # 如果验证码错误/过期，自动重新发送并重新取最新验证码。
         validate_result = None
         max_otp_attempts = 3
         current_otp = otp_code
         for otp_attempt in range(1, max_otp_attempts + 1):
             if current_otp is None:
-                if _email_cfg.USE_EMAIL_SERVICE:
+                from core.email_provider import has_email_source_override
+                if _email_cfg.USE_EMAIL_SERVICE or has_email_source_override():
                     logger.info(f"[OTP] 等待验证码：{email}（第 {otp_attempt}/{max_otp_attempts} 次）")
                     current_otp = wait_for_otp(email, after_ts=otp_after_ts)
                 else:
@@ -599,17 +606,21 @@ def run_registration(
 
         logger.debug(f"[完成] TOTP Secret: {totp_secret or '(未设置)'}")
 
-        # 注册任务的成功判定：账号本身(注册+token)+Codex 授权都成功才算 success。
-        # Codex 失败时账号仍保存（token 拿到了、有补跑机会），但任务状态标失败，
-        # 让 WebUI 任务表能清楚区分"完整成功"和"差 Codex"两种结果。
-        codex_ok = codex_result.get("ok") or codex_result.get("status") == "skipped"
-        task_success = codex_ok
+        # success 只表示账号主体已经注册并落库；Codex 是可独立补跑的后置阶段。
+        codex_status = str(codex_result.get("status") or ("success" if bool(codex_result.get("ok")) else "failed"))
+        codex_ok = bool(codex_result.get("ok")) or codex_status == "skipped"
+        task_status = "success" if codex_ok else "partial_success"
         task_error = None
-        if not task_success:
+        if not codex_ok:
             task_error = f"Codex 未完成: {codex_result.get('message', '未知')}"
-            logger.warning(f"[任务结果] {email} 账号已保存但任务标失败，原因: {task_error}")
+            logger.warning(f"[任务结果] {email} 账号已保存，Codex 待补跑，原因: {task_error}")
 
-        return {"success": task_success, "email": email, "account_id": account_id,
+        return {"success": True, "task_status": task_status,
+                "account_status": "success", "codex_status": codex_status,
+                "phase": "completed" if codex_ok else "codex",
+                "error_code": None if codex_ok else f"codex_{codex_status}",
+                "retryable": not codex_ok and codex_status != "deactivated",
+                "email": email, "account_id": account_id,
                 "access_token": access_token, "totp_secret": totp_secret,
                 "flow": flow_result, "codex": codex_result,
                 "error": task_error}
@@ -643,7 +654,17 @@ def run_registration(
                     logger.info(f"[邮箱:{src}] {email} 已恢复 available")
         except Exception:
             pass
-        return {"success": False, "email": email, "error": str(e)}
+        return {
+            "success": False,
+            "task_status": "failed",
+            "account_status": "failed",
+            "codex_status": "not_started",
+            "phase": "registration",
+            "error_code": type(e).__name__.lower(),
+            "retryable": not account_dead and not create_acknowledged,
+            "email": email,
+            "error": str(e),
+        }
 
 
 def main():

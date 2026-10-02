@@ -709,7 +709,7 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "SMS_MAX_PRICE", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "最高号码价格", "help": "透传给接码平台的 maxPrice；留空不限。SMSBower 可用它筛选价格/号码等级",
+        "label": "最高号码价格", "help": "留空不限。SMSBower 下按人民币配置并换算为美元；其他通道沿用平台原生币种",
     },
     {
         "key": "SMS_MAX_RETRIES", "file": "codex.py", "type": "int", "group": "接码平台",
@@ -750,8 +750,16 @@ EDITABLE_FIELDS = [
         "label": "SMSBower 排除号码前缀", "help": "可选，号码前缀用逗号分隔；用于避开已知不可用号段",
     },
     {
+        "key": "SMSBOWER_USD_CNY_RATE", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "SMSBower 美元兑人民币汇率", "help": "每 1 美元对应人民币金额；SMSBower 最低/最高价格按人民币填写并据此换算",
+    },
+    {
         "key": "SMSBOWER_MIN_PRICE", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "SMSBower 最低价格", "help": "可选，透传 minPrice；与最高价格一起限定号码价格区间",
+        "label": "SMSBower 最低价格（元）", "help": "可选，按人民币填写；本地价格表筛选并换算为美元 minPrice",
+    },
+    {
+        "key": "SMSBOWER_MAX_PRICE", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "SMSBower 最高价格（元）", "help": "可选，按人民币填写；本地价格表筛选并换算为美元 maxPrice",
     },
     {
         "key": "H_API_BASE", "file": "codex.py", "type": "str", "group": "接码平台",

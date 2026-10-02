@@ -46,9 +46,9 @@ def _account_from_row(row: dict | None) -> ImapEmailAccount | None:
     )
 
 
-def pick_account() -> ImapEmailAccount:
+def pick_account(exclude_emails: set[str] | None = None) -> ImapEmailAccount:
     from core import db
-    account = _account_from_row(db.claim_next_imap_email())
+    account = _account_from_row(db.claim_next_imap_email(exclude_emails=exclude_emails))
     if account is None:
         raise ImapMailError("通用 IMAP 邮箱池没有可用邮箱，请先在邮箱池导入")
     _CONTEXT_CACHE[account.email.lower()] = account

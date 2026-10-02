@@ -642,11 +642,11 @@ def _fetch_inline_messages_page_otp(
     return None
 
 
-def pick_account() -> GenericApiEmailAccount:
+def pick_account(exclude_emails: set[str] | None = None) -> GenericApiEmailAccount:
     """直接从 SQLite 邮箱库领取一个可用通用 API 邮箱。"""
     from core.db import claim_next_generic_api_email, generic_api_email_pool_summary
 
-    row = claim_next_generic_api_email()
+    row = claim_next_generic_api_email(exclude_emails=exclude_emails)
     if row is None:
         summary = generic_api_email_pool_summary()
         raise GenericApiMailError(

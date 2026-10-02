@@ -370,6 +370,12 @@
       display: inline-flex; align-items: center; gap: 8px;
       color: #606266; font-size: 14px; white-space: nowrap;
     }
+    .jobs-toolbar-v2 .jobs-tb-select {
+      width: 220px; max-width: 100%; height: 40px; padding: 0 8px;
+      border: 1px solid #dcdfe6; border-radius: 6px;
+      background: #fff; color: #606266; font: inherit; font-size: 14px;
+      box-sizing: border-box;
+    }
     .accounts-filter-v2 .acc-v2-date {
       height: 40px; padding: 0 8px;
       border: 1px solid #dcdfe6; border-radius: 6px;
@@ -716,10 +722,12 @@
       border: 1px solid #ebeef5; border-radius: 10px; background: #fff;
       box-shadow: 0 0 12px rgba(0,0,0,.04); overflow: hidden;
     }
-    .accounts-table-v2-wrap { overflow: auto; padding: 0; }
+    .accounts-table-v2-wrap {
+      width: 100%; min-width: 0; overflow-x: hidden; overflow-y: visible; padding: 0;
+    }
     .accounts-table-v2 {
-      width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 14px;
-      min-width: 1280px;
+      width: 100%; min-width: 0; max-width: 100%;
+      border-collapse: collapse; table-layout: fixed; font-size: 14px;
     }
     .accounts-table-v2 th, .accounts-table-v2 td {
       padding: 12px 12px; border-bottom: 1px solid #ebeef5;
@@ -733,22 +741,22 @@
     }
     .accounts-table-v2 thead th:first-child { padding-left: 16px; }
     .accounts-table-v2 thead th:last-child { padding-right: 16px; }
+    /* 12 列按容器比例分配，避免固定像素宽度把表格撑出视口。 */
     .accounts-table-v2 .col-check {
-      width: 48px; padding-left: 16px; padding-right: 8px;
+      width: 3%; padding-left: 16px; padding-right: 8px;
       text-align: left; vertical-align: middle;
     }
-    .accounts-table-v2 .col-id { width: 72px; }
-    .accounts-table-v2 .col-email { width: 330px; }
-    .accounts-table-v2 .col-source { width: 90px; }
-    .accounts-table-v2 .col-token { width: 100px; }
-    .accounts-table-v2 .col-password { width: 120px; }
-    .accounts-table-v2 .col-plan { width: 220px; }
-    .accounts-table-v2 .col-note { width: 140px; }
-    .accounts-table-v2 .col-small { width: 170px; }
-    .accounts-table-v2 .col-status { width: 100px; }
-    .accounts-table-v2 .col-agent { width: 140px; }
-    .accounts-table-v2 .col-time { width: 170px; }
-    .accounts-table-v2 .col-actions { width: 148px; }
+    .accounts-table-v2 .col-id { width: 4%; }
+    .accounts-table-v2 .col-email { width: 19%; }
+    .accounts-table-v2 .col-source { width: 6%; }
+    .accounts-table-v2 .col-token { width: 6%; }
+    .accounts-table-v2 .col-password { width: 8%; }
+    .accounts-table-v2 .col-plan { width: 13%; }
+    .accounts-table-v2 .col-note { width: 6%; }
+    .accounts-table-v2 .col-small { width: 12%; }
+    .accounts-table-v2 .col-status { width: 6%; }
+    .accounts-table-v2 .col-time { width: 8%; }
+    .accounts-table-v2 .col-actions { width: 9%; }
     .accounts-table-v2 input[type="checkbox"] {
       width: 16px !important; height: 16px !important;
       min-width: 16px !important; min-height: 16px !important;
@@ -780,14 +788,14 @@
     .accounts-table-v2 .col-password,
     .accounts-table-v2 .col-plan,
     .accounts-table-v2 .col-note,
-    .accounts-table-v2 .col-agent,
+    .accounts-table-v2 .col-small,
     .accounts-table-v2 .col-actions {
-      white-space: normal; overflow: visible; text-overflow: clip; vertical-align: middle;
+      min-width: 0; white-space: normal; overflow: hidden;
+      text-overflow: clip; vertical-align: middle;
     }
     .accounts-table-v2 .acc-v2-email {
-      font-weight: 700; color: #303133; line-height: 1.35;
-      overflow: visible; text-overflow: clip; white-space: normal;
-      overflow-wrap: anywhere; word-break: break-word;
+      min-width: 0; max-width: 100%; font-weight: 700; color: #303133; line-height: 1.35;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .accounts-table-v2 .acc-v2-sub {
       margin-top: 2px; color: #909399; font-size: 12px; line-height: 1.3;
@@ -795,9 +803,8 @@
     }
     .accounts-table-v2 .acc-v2-email-history,
     .accounts-table-v2 .acc-v2-email-user {
-      margin-top: 2px; color: #909399; font-size: 12px; line-height: 1.35;
-      white-space: normal; overflow: visible; text-overflow: clip;
-      overflow-wrap: anywhere; word-break: break-word;
+      min-width: 0; max-width: 100%; margin-top: 2px; color: #909399; font-size: 12px; line-height: 1.35;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
     .accounts-table-v2 .acc-v2-email-user { color: #606266; }
     .accounts-table-v2 .acc-v2-email-status {
@@ -889,6 +896,15 @@
     .accounts-table-v2 .acc-v2-codex.is-fail { color: #f56c6c; }
     .accounts-table-v2 .acc-v2-codex.is-run { color: #e6a23c; }
     .accounts-table-v2 .acc-v2-codex.is-mute { color: #c0c4cc; }
+    .accounts-table-v2 .acc-v2-codex-info {
+      display: grid; gap: 1px; margin-top: 4px;
+      color: #606266; font-size: 11px; line-height: 1.35;
+      white-space: normal; font-variant-numeric: tabular-nums;
+    }
+    .accounts-table-v2 .acc-v2-codex-info-line {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .accounts-table-v2 .acc-v2-codex-info-label { color: #909399; }
     .accounts-table-v2 .agent-token-cell {
       display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
     }
@@ -1091,6 +1107,50 @@
       .accounts-filter-v2 .acc-v2-search-wrap {
         flex-basis: 100%; width: 100%;
       }
+    }
+    /* 窄屏保留核心识别和状态字段，其余信息仍可从单元格 title/更多菜单获取。 */
+    @media (max-width: 1100px) {
+      .accounts-table-v2 col.col-source,
+      .accounts-table-v2 col.col-token,
+      .accounts-table-v2 col.col-password,
+      .accounts-table-v2 col.col-note,
+      .accounts-table-v2 col.col-time,
+      .accounts-table-v2 th.col-source,
+      .accounts-table-v2 th.col-token,
+      .accounts-table-v2 th.col-password,
+      .accounts-table-v2 th.col-note,
+      .accounts-table-v2 th.col-time,
+      .accounts-table-v2 td.col-source,
+      .accounts-table-v2 td.col-token,
+      .accounts-table-v2 td.col-password,
+      .accounts-table-v2 td.col-note,
+      .accounts-table-v2 td.col-time { display: none; }
+      .accounts-table-v2 .col-check { width: 6%; }
+      .accounts-table-v2 .col-id { width: 7%; }
+      .accounts-table-v2 .col-email { width: 30%; }
+      .accounts-table-v2 .col-plan { width: 20%; }
+      .accounts-table-v2 .col-small { width: 17%; }
+      .accounts-table-v2 .col-status { width: 10%; }
+      .accounts-table-v2 .col-actions { width: 10%; }
+      .accounts-table-v2 .acc-v2-actions { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 700px) {
+      .accounts-table-v2 col.col-plan,
+      .accounts-table-v2 col.col-small,
+      .accounts-table-v2 th.col-plan,
+      .accounts-table-v2 th.col-small,
+      .accounts-table-v2 td.col-plan,
+      .accounts-table-v2 td.col-small { display: none; }
+      .accounts-table-v2 .col-check { width: 10%; }
+      .accounts-table-v2 .col-id { width: 10%; }
+      .accounts-table-v2 .col-email { width: 52%; }
+      .accounts-table-v2 .col-status { width: 14%; }
+      .accounts-table-v2 .col-actions { width: 14%; }
+      .accounts-table-v2 th, .accounts-table-v2 td { padding-left: 6px; padding-right: 6px; }
+      .accounts-table-v2 thead th:first-child,
+      .accounts-table-v2 tbody td:first-child { padding-left: 8px; }
+      .accounts-table-v2 thead th:last-child,
+      .accounts-table-v2 tbody td:last-child { padding-right: 8px; }
     }
     #accountsToolbarV2 { padding-top: 12px; }
 
@@ -2186,6 +2246,13 @@
             </button>
           </span>
         </label>
+        <label class="jobs-tb-field">邮箱来源
+          <select id="regEmailSourceV2" class="jobs-tb-select">
+            <option value="auto">自动（按配置顺序）</option>
+            <option value="outlook">Outlook</option>
+            <option value="generic_api">通用 API</option>
+          </select>
+        </label>
         <button type="button" class="jobs-tb-btn jobs-tb-btn--primary" id="btnStartV2">开始注册</button>
       </div>
       <div id="regWarnV2"></div>
@@ -2288,6 +2355,7 @@
         </div>
         <div class="acc-v2-btn-group">
           <span class="acc-v2-btn-group-title">Codex</span>
+          <button type="button" class="jobs-tb-btn jobs-tb-btn--primary" id="btnCheckSelectedCodexOauthV2" onclick="checkSelectedCodexOauth()" disabled title="只读请求 Codex usage，验证选中账号的 OAuth 凭证；不消耗邮箱 OTP、短信或模型额度">Codex测活</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--primary" id="btnRetrySelectedCodexV2" disabled title="给选中的账号批量补跑 Codex 授权">补跑</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--good" id="btnDownloadSelectedCpaV2" disabled title="从 CPA auth-files 下载选中账号的 Codex JSON，并打包 ZIP">下载CPA</button>
           <button type="button" class="jobs-tb-btn jobs-tb-btn--danger" id="btnStopSelectedCodexV2" disabled title="停止选中账号中正在补跑的 Codex 授权">停止</button>
@@ -2880,6 +2948,7 @@ async function loadSummary() {
 async function startRegistrationFromInputs(countEl, workersEl, startBtn) {
   const count = parseInt((countEl?.value || '1'), 10);
   const workers = parseInt((workersEl?.value || '3'), 10);
+  const emailSource = ($('#regEmailSourceV2')?.value || 'auto');
   const activeCount = Number(JOB_STATUS_COUNTS.active || 0);
   if (activeCount > 0) {
     const ok = confirm(
@@ -2896,7 +2965,7 @@ async function startRegistrationFromInputs(countEl, workersEl, startBtn) {
   };
   const b2 = $('#btnStartV2'); if (b2) b2.disabled = true;
   try {
-    const r = await api('/api/jobs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count, workers}) });
+    const r = await api('/api/jobs', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count, workers, email_source: emailSource}) });
     const warnHtml = r.warning ? `<div class="banner warn">${esc(r.warning)}（本次并发 ${r.workers || workers}）</div>` : `<div class="banner info">已提交 ${r.submitted} 个任务，本次并发 ${r.workers || workers}</div>`;
     const warnEl = $('#regWarnV2'); if (warnEl) warnEl.innerHTML = warnHtml;
     const c2 = $('#regCountV2'); if (c2) c2.value = count;
@@ -2906,6 +2975,19 @@ async function startRegistrationFromInputs(countEl, workersEl, startBtn) {
     const warnEl = $('#regWarnV2'); if (warnEl) warnEl.innerHTML = `<div class="banner warn">${esc(e.message)}</div>`;
   }
   finally { setTimeout(restoreBtn, 3000); }
+}
+async function loadRegistrationEmailSources() {
+  const select = $('#regEmailSourceV2');
+  if (!select) return;
+  const selected = select.value || 'auto';
+  try {
+    const result = await api('/api/registration/email-sources');
+    if (!Array.isArray(result.options)) return;
+    select.innerHTML = result.options.map((option) =>
+      '<option value="' + esc(option.value) + '">' + esc(option.label) + '</option>'
+    ).join('');
+    select.value = result.options.some((option) => option.value === selected) ? selected : 'auto';
+  } catch (_) {}
 }
 async function cancelAllPendingJobs(btn) {
   const pendingCount = Number(JOB_STATUS_COUNTS.pending || 0);
@@ -2975,6 +3057,7 @@ function bindJobsBodyEvents(bodyEl) {
 // 注册任务区
 (() => {
   const startV2 = $('#btnStartV2');
+  loadRegistrationEmailSources();
   if (startV2) startV2.addEventListener('click', () => startRegistrationFromInputs($('#regCountV2'), $('#regWorkersV2'), startV2));
   const delV2 = $('#btnDeleteSelectedJobsV2');
   if (delV2) delV2.addEventListener('click', deleteSelectedJobs);
@@ -3395,17 +3478,66 @@ function _codexCell(r) {
   if (s === 'deactivated') return `<span class="pill status-failed" title="授权记录显示账号异常，建议通过查活确认账号状态">失败</span>`;
   return `<span class="muted">-</span>`;
 }
+function _codexMoneyLabel(value, symbol) {
+  const text = String(value ?? '').trim();
+  if (!text) return '—';
+  const amount = text.replace(/^[\$¥￥]\s*/, '').replace(/\s*(?:USD|CNY|RMB)$/i, '').trim();
+  return amount ? amount + symbol : '—';
+}
+function _codexAccountInfoCellV2(r) {
+  if (String(r.codex_status || '').toLowerCase() !== 'success') return '';
+  const info = r.codex_account_info && typeof r.codex_account_info === 'object'
+    ? r.codex_account_info : {};
+  const phone = String(info.phone_number ?? '').trim();
+  if (!phone) return '';
+  const region = String(info.region ?? '').trim() || '未知';
+  const priceParts = [];
+  const cny = _codexMoneyLabel(info.price_cny, '¥');
+  const usd = _codexMoneyLabel(info.price_usd, '$');
+  if (cny !== '—') priceParts.push(cny);
+  if (usd !== '—') priceParts.push(usd);
+  const price = priceParts.length ? priceParts.join('/') : '未知';
+  const titleParts = [];
+  const source = String(info.price_source ?? '').trim();
+  const rateDate = String(info.rate_date ?? '').trim();
+  if (source) titleParts.push('价格来源: ' + source);
+  if (rateDate) titleParts.push('USD/CNY 汇率日期: ' + rateDate);
+  const titleAttr = titleParts.length ? ' title="' + esc(titleParts.join('；')) + '"' : '';
+  return '<div class="acc-v2-codex-info"' + titleAttr + '>'
+    + '<div class="acc-v2-codex-info-line"><span class="acc-v2-codex-info-label">手机号：</span>' + esc(phone) + '</div>'
+    + '<div class="acc-v2-codex-info-line"><span class="acc-v2-codex-info-label">归属地：</span>' + esc(region) + '</div>'
+    + '<div class="acc-v2-codex-info-line"><span class="acc-v2-codex-info-label">价格：</span>' + esc(price) + '</div></div>';
+}
 function _codexCellV2(r) {
-  const s = r.codex_status || '';
+  const s = String(r.codex_status || '').toLowerCase();
   const err = r.codex_error || '';
   const titleAttr = err ? ` title="${esc(err)}"` : '';
-  if (s === 'success') return `<span class="acc-v2-codex is-ok"${titleAttr}>已通过</span>`;
-  if (s === 'retrying') return `<span class="acc-v2-codex is-run"${titleAttr}>补跑中</span>`;
-  if (s === 'stopped') return `<span class="acc-v2-codex is-mute"${titleAttr}>已停止</span>`;
-  if (s === 'failed') return `<span class="acc-v2-codex is-fail"${titleAttr}>失败</span>`;
-  if (s === 'skipped') return `<span class="acc-v2-codex is-skip"${titleAttr}>已跳过</span>`;
-  if (s === 'deactivated') return `<span class="acc-v2-codex is-fail" title="授权记录显示账号异常，建议通过查活确认账号状态">失败</span>`;
-  return `<span class="acc-v2-muted">-</span>`;
+  let authHtml = '<span class="acc-v2-muted">-</span>';
+  if (s === 'success') authHtml = `<span class="acc-v2-codex is-ok"${titleAttr}>已授权</span>`;
+  else if (s === 'retrying') authHtml = `<span class="acc-v2-codex is-run"${titleAttr}>补跑中</span>`;
+  else if (s === 'stopped') authHtml = `<span class="acc-v2-codex is-mute"${titleAttr}>已停止</span>`;
+  else if (s === 'failed') authHtml = `<span class="acc-v2-codex is-fail"${titleAttr}>授权失败</span>`;
+  else if (s === 'skipped') authHtml = `<span class="acc-v2-codex is-skip"${titleAttr}>已跳过</span>`;
+  else if (s === 'deactivated') authHtml = '<span class="acc-v2-codex is-fail" title="授权记录显示账号异常，建议分别执行账号查活和 Codex OAuth 测活">授权异常</span>';
+
+  const accountInfoHtml = _codexAccountInfoCellV2(r);
+  const oauthStatus = r.codex_oauth_check_status || '';
+  if (!oauthStatus) return authHtml + accountInfoHtml;
+  const oauthTitle = [
+    r.codex_oauth_checked_at ? `检测时间: ${r.codex_oauth_checked_at}` : '',
+    r.codex_oauth_check_http_status != null ? `HTTP: ${r.codex_oauth_check_http_status}` : '',
+    r.codex_oauth_check_cpa_name ? `CPA: ${r.codex_oauth_check_cpa_name}` : '',
+    r.codex_oauth_check_error || '',
+  ].filter(Boolean).join('\n');
+  const oa = oauthTitle ? ` title="${esc(oauthTitle)}"` : '';
+  let oauthHtml = '';
+  if (oauthStatus === 'valid') oauthHtml = `<div class="acc-v2-sub" style="color:#67c23a"${oa}>OAuth: 有效</div>`;
+  else if (oauthStatus === 'invalid') oauthHtml = `<div class="acc-v2-sub" style="color:#f56c6c"${oa}>OAuth: 失效</div>`;
+  else if (oauthStatus === 'missing') oauthHtml = `<div class="acc-v2-sub" style="color:#909399"${oa}>OAuth: 无凭证</div>`;
+  else if (oauthStatus === 'queued') oauthHtml = `<div class="acc-v2-sub" style="color:#e6a23c"${oa}>OAuth: 排队</div>`;
+  else if (oauthStatus === 'running') oauthHtml = `<div class="acc-v2-sub" style="color:#e6a23c"${oa}>OAuth: 检测中</div>`;
+  else if (oauthStatus === 'failed') oauthHtml = `<div class="acc-v2-sub" style="color:#e6a23c"${oa}>OAuth: 检测失败</div>`;
+  return authHtml + accountInfoHtml + oauthHtml;
 }
 function _totpCellV2(r) {
   const enabled = !!r.totp_enabled;
@@ -3659,6 +3791,7 @@ function _accountsV2MoreMenu(r) {
     `<button type="button" data-account-change-email="${esc(r.id)}" title="从指定邮箱来源领取新邮箱并换绑">换绑邮箱</button>`,
     `<button type="button" data-account-change-email-log="${esc(r.id)}" title="查看最近一次邮箱换绑日志">换绑日志</button>`,
     `<button type="button" onclick="checkSelectedLive([Number('${esc(r.id)}')], this); return false;" title="重新登录该账号，成功则刷新最新 AT/accessToken">查活刷新AT</button>`,
+    `<button type="button" onclick="checkSelectedCodexOauth([Number('${esc(r.id)}')], this); return false;" title="只读请求 Codex usage，验证该账号的 OAuth 凭证">Codex OAuth测活</button>`,
     `<button type="button" data-account-live-log="${esc(r.email)}" title="查看该账号最近一次查活日志">查活日志</button>`,
     `<button type="button" data-account-totp-log="${esc(r.email)}" title="查看该账号最近一次 2FA 设置日志">2FA日志</button>`,
     _planAction(r),
@@ -3741,7 +3874,7 @@ function updateAccountSelectionUi(pageRows = null) {
   const archiveTitle = SHOW_ARCHIVED_ACCOUNTS ? '把选中的归档账号恢复到默认账号列表' : '归档选中的账号；默认账号列表将不再查询/显示这些账号';
   const v2Ids = [
     'btnCheckSelectedPlansV2', 'btnExtractSelectedLinksV2',
-    'btnRetrySelectedCodexV2', 'btnDownloadSelectedCpaV2', 'btnStopSelectedCodexV2',
+    'btnCheckSelectedCodexOauthV2', 'btnRetrySelectedCodexV2', 'btnDownloadSelectedCpaV2', 'btnStopSelectedCodexV2',
     'btnSetupSelectedTotpV2', 'btnChangeSelectedEmailsV2', 'btnNoteSelectedAccountsV2', 'btnCopySelectedLinesV2', 'btnCopySelectedTokensV2', 'btnCopySelectedEmailsV2',
     'btnDownloadSelectedTxtV2', 'btnDownloadSelectedFullExportV2', 'btnCopySelectedFullExportV2', 'btnCopySelectedLoginCredentialsV2', 'btnArchiveSelectedAccountsV2', 'btnDeleteSelectedAccountsV2',
   ];
@@ -4093,7 +4226,7 @@ async function onAccountsBodyClick(e) {
   const btn = e.target.closest('[data-codex-retry]');
   if (!btn) return;
   const email = btn.dataset.codexRetry;
-  if (!confirm(`重新跑 Codex 授权？\n\n${email}\n\n将消耗：\n  • 1 封邮箱 OTP（自动收）\n  • 1 个接码短信（约 $0.13）\n\n补跑会在后台进行（~1-2 分钟），完成后状态自动更新。`)) return;
+  if (!confirm(`重新跑 Codex 授权？\n\n${email}\n\n将消耗：\n  • 1 封邮箱 OTP（自动收）\n  • 1 个接码短信（价格按当前 SMSBower 配置，实际以供应商返回为准）\n\n补跑会在后台进行（~1-2 分钟），完成后状态自动更新。`)) return;
   btn.disabled = true;
   try {
     const r = await api('/api/codex/retry', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email}) });
@@ -4935,6 +5068,41 @@ async function checkSelectedLive(idsArg = null, btnArg = null) {
     loadSummary();
   } catch(err) {
     showToast('查活失败: ' + err.message);
+    updateAccountSelectionUi();
+  } finally {
+    if (btn) {
+      btn.textContent = old;
+      btn.disabled = false;
+    }
+  }
+}
+
+async function checkSelectedCodexOauth(idsArg = null, btnArg = null) {
+  const ids = idsArg || Array.from(ACCOUNT_SELECTED);
+  if (ids.length === 0) { showToast('请先选择账号'); return; }
+  const msg = idsArg
+    ? '确定检测这个账号的 Codex OAuth 凭证吗？'
+    : `确定检测选中的 ${ids.length} 个账号的 Codex OAuth 凭证吗？`;
+  if (!confirm(`${msg}\n\n检测只会读取 Codex usage，不触发邮箱 OTP、短信或模型请求。`)) return;
+  const btn = btnArg || $('#btnCheckSelectedCodexOauthV2');
+  const old = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '检测中…';
+  }
+  try {
+    const r = await api('/api/accounts/check-codex-oauth-bulk', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({account_ids: ids}),
+    });
+    const skipped = (r.skipped || []).length;
+    showToast(`Codex测活已入队 ${r.started_count || 0} 个，忙碌 ${r.busy_count || 0} 个，失败 ${r.failed_count || 0}${skipped ? `，跳过 ${skipped}` : ''}`);
+    await loadAccounts();
+    window.setTimeout(() => loadAccounts(), 800);
+    window.setTimeout(() => loadAccounts(), 2200);
+  } catch(err) {
+    showToast('Codex OAuth 测活失败: ' + err.message);
     updateAccountSelectionUi();
   } finally {
     if (btn) {

@@ -249,6 +249,16 @@
     .accounts-table .col-note { width: 150px; }
     .accounts-table .col-small { width: 168px; }
     .accounts-table .col-status { width: 88px; }
+    .accounts-table .col-codex { width: 220px; }
+    .accounts-table .codex-phone-info {
+      display: grid; gap: 1px; margin-top: 4px;
+      color: #475467; font-size: 11px; line-height: 1.35;
+      white-space: normal; font-variant-numeric: tabular-nums;
+    }
+    .accounts-table .codex-phone-info-line {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .accounts-table .codex-phone-info-label { color: #667085; }
     .accounts-table .col-agent { width: 220px; }
     .accounts-table .col-time { width: 170px; }
     .accounts-table .col-actions { width: 380px; }
@@ -621,7 +631,7 @@
       </div>
       <div class="table-wrap">
         <table class="accounts-table">
-          <colgroup><col class="col-check"><col class="col-id"><col class="col-email"><col class="col-source"><col class="col-token"><col class="col-password"><col class="col-plan"><col class="col-note"><col class="col-small"><col class="col-status"><col class="col-time"><col class="col-actions"></colgroup>
+          <colgroup><col class="col-check"><col class="col-id"><col class="col-email"><col class="col-source"><col class="col-token"><col class="col-password"><col class="col-plan"><col class="col-note"><col class="col-small"><col class="col-codex"><col class="col-time"><col class="col-actions"></colgroup>
           <thead><tr>
             <th><input type="checkbox" id="accountsSelectAll" title="全选/取消全选当前页账号"></th>
             <th>ID</th><th>邮箱</th><th>来源</th><th>Token</th><th>密码</th><th>套餐</th><th>备注</th><th>2FA</th><th>Codex</th><th>创建时间</th><th>操作</th>
@@ -1397,11 +1407,38 @@ async function pollAccountPlanStatuses() {
   } catch(e) {}
   finally { planStatusLoading = false; }
 }
+function _codexMoneyLabel(value, symbol) {
+  const text = String(value ?? '').trim();
+  if (!text) return '—';
+  const amount = text.replace(/^[\$¥￥]\s*/, '').replace(/\s*(?:USD|CNY|RMB)$/i, '').trim();
+  return amount ? amount + symbol : '—';
+}
+function _codexPhoneInfo(r) {
+  if (String(r.codex_status || '').toLowerCase() !== 'success') return '';
+  const info = r.codex_account_info && typeof r.codex_account_info === 'object'
+    ? r.codex_account_info : {};
+  const phone = String(info.phone_number ?? '').trim();
+  if (!phone) return '';
+  const region = String(info.region ?? '').trim() || '未知';
+  const cny = _codexMoneyLabel(info.price_cny, '¥');
+  const usd = _codexMoneyLabel(info.price_usd, '$');
+  const price = [cny, usd].filter(value => value !== '—').join('/') || '未知';
+  const titleParts = [];
+  const source = String(info.price_source ?? '').trim();
+  const rateDate = String(info.rate_date ?? '').trim();
+  if (source) titleParts.push('价格来源: ' + source);
+  if (rateDate) titleParts.push('USD/CNY 汇率日期: ' + rateDate);
+  const titleAttr = titleParts.length ? ' title="' + esc(titleParts.join('；')) + '"' : '';
+  return '<div class="codex-phone-info"' + titleAttr + '>'
+    + '<div class="codex-phone-info-line"><span class="codex-phone-info-label">手机号：</span>' + esc(phone) + '</div>'
+    + '<div class="codex-phone-info-line"><span class="codex-phone-info-label">归属地：</span>' + esc(region) + '</div>'
+    + '<div class="codex-phone-info-line"><span class="codex-phone-info-label">价格：</span>' + esc(price) + '</div></div>';
+}
 function _codexCell(r) {
   const s = r.codex_status || '';
   const err = r.codex_error || '';
   const titleAttr = err ? ` title="${esc(err)}"` : '';
-  if (s === 'success') return `<span class="pill status-success">成功</span>`;
+  if (s === 'success') return `<span class="pill status-success">成功</span>` + _codexPhoneInfo(r);
   if (s === 'retrying') return `<span class="pill status-running">补跑中</span>`;
   if (s === 'stopped') return `<span class="pill status-used"${titleAttr}>已停止</span>`;
   if (s === 'failed') return `<span class="pill status-failed"${titleAttr}>失败</span>`;
@@ -2045,7 +2082,7 @@ $('#accountsBody').addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-codex-retry]');
   if (!btn) return;
   const email = btn.dataset.codexRetry;
-  if (!confirm(`重新跑 Codex 授权？\n\n${email}\n\n将消耗：\n  • 1 封邮箱 OTP（自动收）\n  • 1 个接码短信（约 $0.13）\n\n补跑会在后台进行（~1-2 分钟），完成后状态自动更新。`)) return;
+  if (!confirm(`重新跑 Codex 授权？\n\n${email}\n\n将消耗：\n  • 1 封邮箱 OTP（自动收）\n  • 1 个接码短信（价格按当前 SMSBower 配置，实际以供应商返回为准）\n\n补跑会在后台进行（~1-2 分钟），完成后状态自动更新。`)) return;
   btn.disabled = true;
   try {
     const r = await api('/api/codex/retry', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email}) });

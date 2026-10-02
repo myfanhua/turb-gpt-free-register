@@ -72,7 +72,45 @@ class OutlookAccount:
 
 
 class OutlookClientError(RuntimeError):
-    """Outlook 邮箱服务相关异常。"""
+    """Outlook 邮箱服务相关异常，保留可供任务层使用的结构化信息。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "outlook_error",
+        stage: str = "unknown",
+        retryable: bool = True,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = str(error_code or "outlook_error")
+        self.stage = str(stage or "unknown")
+        self.retryable = bool(retryable)
+
+
+def _ensure_outlook_error(
+    exc: BaseException,
+    *,
+    stage: str,
+    error_code: str,
+    retryable: bool = True,
+) -> OutlookClientError:
+    """将第三方异常转换为任务层可识别的 OutlookClientError。"""
+    if isinstance(exc, OutlookClientError):
+        if exc.error_code != "outlook_error" or exc.stage != "unknown":
+            return exc
+        return OutlookClientError(
+            str(exc),
+            error_code=error_code,
+            stage=stage,
+            retryable=exc.retryable,
+        )
+    return OutlookClientError(
+        f"{type(exc).__name__}: {exc}",
+        error_code=error_code,
+        stage=stage,
+        retryable=retryable,
+    )
 
 
 def _cache_key(email: str) -> str:
@@ -147,11 +185,19 @@ def _get_security_session(http: CurlSession) -> dict:
         )
         if resp.status_code != 200:
             raise OutlookClientError(
-                f"security-session 初始化失败 HTTP {resp.status_code}: {resp.text[:200]}"
+                f"security-session 初始化失败 HTTP {resp.status_code}: {resp.text[:200]}",
+                error_code="outlook_security_session_http",
+                stage="remote_session",
+                retryable=resp.status_code in (408, 409, 425, 429) or resp.status_code >= 500,
             )
         data = resp.json()
         if not data.get("success"):
-            raise OutlookClientError(f"security-session 返回 success=False: {data}")
+            raise OutlookClientError(
+                f"security-session 返回 success=False: {data}",
+                error_code="outlook_security_session_response",
+                stage="remote_session",
+                retryable=True,
+            )
         import datetime
         expires_ms = int(
             datetime.datetime.fromisoformat(
@@ -216,7 +262,10 @@ def _secure_post(http: CurlSession, url: str, payload: dict, retry: int = 0) -> 
 
     if resp.status_code != 200:
         raise OutlookClientError(
-            f"secure_post {url} HTTP {resp.status_code}: {resp.text[:200]}"
+            f"secure_post {url} HTTP {resp.status_code}: {resp.text[:200]}",
+            error_code="outlook_remote_http",
+            stage="remote_fetch",
+            retryable=resp.status_code in (408, 409, 425, 429) or resp.status_code >= 500,
         )
     return resp.json()
 
@@ -254,14 +303,14 @@ def _parse_accounts_file(path: Path) -> list[OutlookAccount]:
 # 公共接口：挑账号 / 取 OTP（统一走 DB）
 # ============================================================
 
-def pick_account() -> OutlookAccount:
+def pick_account(exclude_emails: set[str] | None = None) -> OutlookAccount:
     """
     原子地挑一个 status='available' 的 Outlook 账号并标记为 'used'（DB 事务）。
     多线程并发安全。
     """
     from core.db import claim_next_outlook, outlook_pool_summary
 
-    row = claim_next_outlook()
+    row = claim_next_outlook(exclude_emails=exclude_emails)
     if row is None:
         summary = outlook_pool_summary()
         raise OutlookClientError(
@@ -543,7 +592,12 @@ def _ms_access_token(
     cache_key = _ms_token_cache_key(account)
     fatal_reason = _ms_token_fatal_reason(account)
     if fatal_reason:
-        raise OutlookClientError(f"Microsoft OAuth refresh_token 换 token 失败: {fatal_reason}")
+        raise OutlookClientError(
+            f"Microsoft OAuth refresh_token 换 token 失败: {fatal_reason}",
+            error_code="outlook_oauth_refresh_failed",
+            stage="oauth",
+            retryable=False,
+        )
     cached = _MS_TOKEN_CACHE.get(cache_key)
     now = time.time()
     if cached and cached[1] - now > 120:
@@ -623,8 +677,18 @@ def _ms_access_token(
         if _is_oauth_fatal_error(last_text):
             reason = _compact_oauth_error(last_text)
             _MS_TOKEN_FATAL_CACHE[cache_key] = (reason, time.time() + 600)
-            raise OutlookClientError(f"Microsoft OAuth refresh_token 换 token 失败: {reason}")
-        raise OutlookClientError(f"Microsoft OAuth refresh_token 换 token 失败: {last_text}")
+            raise OutlookClientError(
+                f"Microsoft OAuth refresh_token 换 token 失败: {reason}",
+                error_code="outlook_oauth_refresh_failed",
+                stage="oauth",
+                retryable=False,
+            )
+        raise OutlookClientError(
+            f"Microsoft OAuth refresh_token 换 token 失败: {last_text}",
+            error_code="outlook_oauth_refresh_failed",
+            stage="oauth",
+            retryable=True,
+        )
     finally:
         if own_http:
             http.close()
@@ -670,7 +734,12 @@ def _live_imap_access_token(account: OutlookAccount, http: CurlSession | None = 
             scope = str((data or {}).get("scope") or "")
             logger.debug("[Outlook] Live IMAP(New) token 获取成功 scope=%s", scope[:160])
             return token
-        raise OutlookClientError(f"Live IMAP(New) refresh_token 换 token 失败: {text[:500]}")
+        raise OutlookClientError(
+            f"Live IMAP(New) refresh_token 换 token 失败: {text[:500]}",
+            error_code="outlook_oauth_refresh_failed",
+            stage="oauth",
+            retryable=resp.status_code in (408, 409, 425, 429) or resp.status_code >= 500,
+        )
     finally:
         if own_http:
             http.close()
@@ -712,11 +781,21 @@ def _fetch_graph_messages(http: CurlSession, token: str) -> list[dict]:
     resp = http.get(url, headers=headers, params=params)
     text = resp.text or ""
     if resp.status_code != 200:
-        raise OutlookClientError(f"Microsoft Graph messages HTTP {resp.status_code}: {text[:500]}")
+        raise OutlookClientError(
+            f"Microsoft Graph messages HTTP {resp.status_code}: {text[:500]}",
+            error_code="outlook_graph_http",
+            stage="graph_fetch",
+            retryable=resp.status_code in (408, 409, 425, 429) or resp.status_code >= 500,
+        )
     data = resp.json()
     rows = data.get("value") if isinstance(data, dict) else None
     if not isinstance(rows, list):
-        raise OutlookClientError(f"Microsoft Graph 响应缺少 value: {str(data)[:300]}")
+        raise OutlookClientError(
+            f"Microsoft Graph 响应缺少 value: {str(data)[:300]}",
+            error_code="outlook_graph_response",
+            stage="graph_fetch",
+            retryable=True,
+        )
     out = [_normalize_ms_message(m) for m in rows if isinstance(m, dict)]
     for item in out:
         item["_fetch_source"] = "graph"
@@ -756,12 +835,27 @@ def _fetch_outlook_rest_messages(http: CurlSession, token: str) -> list[dict]:
         if resp.status_code == 400 and ("Could not find a property" in text or "ParseUri" in text):
             logger.debug("[Outlook] Outlook REST 参数不兼容，降级重试: %s", text[:220])
             continue
-        raise OutlookClientError(f"Outlook REST messages HTTP {resp.status_code}: {text[:500]}")
+        raise OutlookClientError(
+            f"Outlook REST messages HTTP {resp.status_code}: {text[:500]}",
+            error_code="outlook_rest_http",
+            stage="rest_fetch",
+            retryable=resp.status_code in (408, 409, 425, 429) or resp.status_code >= 500,
+        )
     if data is None:
-        raise OutlookClientError(f"Outlook REST messages 失败: {last_text}")
+        raise OutlookClientError(
+            f"Outlook REST messages 失败: {last_text}",
+            error_code="outlook_rest_response",
+            stage="rest_fetch",
+            retryable=True,
+        )
     rows = data.get("value") if isinstance(data, dict) else None
     if not isinstance(rows, list):
-        raise OutlookClientError(f"Outlook REST 响应缺少 value: {str(data)[:300]}")
+        raise OutlookClientError(
+            f"Outlook REST 响应缺少 value: {str(data)[:300]}",
+            error_code="outlook_rest_response",
+            stage="rest_fetch",
+            retryable=True,
+        )
     out = []
     for m in rows:
         if not isinstance(m, dict):
@@ -808,11 +902,21 @@ def _fetch_imap_direct_messages(account: OutlookAccount) -> list[dict]:
         mail.authenticate("XOAUTH2", lambda _challenge: auth_string.encode("utf-8"))
         status, _data = mail.select("INBOX")
         if status != "OK":
-            raise OutlookClientError(f"IMAP select INBOX 失败: {status}")
+            raise OutlookClientError(
+                f"IMAP select INBOX 失败: {status}",
+                error_code="outlook_imap_select",
+                stage="imap_fetch",
+                retryable=True,
+            )
 
         status, msg_ids = mail.search(None, "ALL")
         if status != "OK":
-            raise OutlookClientError(f"IMAP search 失败: {status}")
+            raise OutlookClientError(
+                f"IMAP search 失败: {status}",
+                error_code="outlook_imap_search",
+                stage="imap_fetch",
+                retryable=True,
+            )
         ids = msg_ids[0].split() if msg_ids and msg_ids[0] else []
         if not ids:
             logger.debug("[Outlook] 本地 IMAP 收件箱为空")
@@ -839,8 +943,14 @@ def _fetch_imap_direct_messages(account: OutlookAccount) -> list[dict]:
             logger.info("[Outlook] 本地 IMAP 直连拿到 %s 封邮件 token_source=%s", len(out), token_source)
         return out
     except Exception as exc:
-        logger.warning("[Outlook] 本地 IMAP 直连失败: %s: %s", type(exc).__name__, exc)
-        return []
+        error = _ensure_outlook_error(
+            exc,
+            stage="imap_fetch",
+            error_code="outlook_imap_fetch_error",
+            retryable=True,
+        )
+        logger.warning("[Outlook] 本地 IMAP 直连失败: %s: %s", error.error_code, error)
+        raise error
     finally:
         try:
             if mail is not None:
@@ -855,7 +965,12 @@ def _fetch_via_graph_direct(account: OutlookAccount) -> list[dict]:
     fatal_reason = _ms_token_fatal_reason(account)
     if fatal_reason:
         logger.debug("[Outlook] 跳过 Graph/REST：OAuth 已知不可用：%s", fatal_reason)
-        return []
+        raise OutlookClientError(
+            f"Microsoft OAuth refresh_token 换 token 失败: {fatal_reason}",
+            error_code="outlook_oauth_refresh_failed",
+            stage="oauth",
+            retryable=False,
+        )
     http = _ms_http()
     try:
         token, kind = _ms_access_token(account, http=http)
@@ -875,8 +990,14 @@ def _fetch_via_graph_direct(account: OutlookAccount) -> list[dict]:
         logger.debug(f"[Outlook] Outlook REST 直连拿到 {len(out)} 封邮件")
         return out
     except Exception as exc:
-        logger.warning(f"[Outlook] Microsoft/Outlook 直连失败: {type(exc).__name__}: {exc}")
-        return []
+        error = _ensure_outlook_error(
+            exc,
+            stage="graph_fetch",
+            error_code="outlook_direct_fetch_error",
+            retryable=True,
+        )
+        logger.warning("[Outlook] Microsoft/Outlook 直连失败: %s: %s", error.error_code, error)
+        raise error
     finally:
         http.close()
 
@@ -918,20 +1039,32 @@ def _fetch_via(session: CurlSession, protocol: str, account: OutlookAccount) -> 
     try:
         data = _secure_post(session, url, payload)
     except OutlookClientError as exc:
-        logger.warning(f"[Outlook] {protocol} 请求失败: {exc}")
+        logger.warning("[Outlook] %s 请求失败: %s: %s", protocol, exc.error_code, exc)
         if mode == "auto" and _is_remote_disabled_error(exc):
             _REMOTE_DISABLED = True
             logger.warning("[Outlook] 远端取件服务已禁用，自动切换为 Microsoft Graph 直连模式")
             if protocol == "graph":
                 return _fetch_via_graph_direct(account)
-        return []
+        raise exc
     except Exception as exc:
-        logger.warning(f"[Outlook] {protocol} 请求异常: {type(exc).__name__}: {exc}")
-        return []
+        error = _ensure_outlook_error(
+            exc,
+            stage="remote_fetch",
+            error_code="outlook_remote_fetch_error",
+            retryable=True,
+        )
+        logger.warning("[Outlook] %s 请求异常: %s: %s", protocol, error.error_code, error)
+        raise error
 
     if not data.get("success"):
-        logger.debug(f"[Outlook] {protocol} success=False: {data.get('error')}")
-        return []
+        error_text = str(data.get("error") or data)[:500]
+        logger.warning("[Outlook] %s success=False: %s", protocol, error_text)
+        raise OutlookClientError(
+            f"{protocol} 取件接口返回 success=False: {error_text}",
+            error_code="outlook_remote_response",
+            stage="remote_fetch",
+            retryable=True,
+        )
 
     emails = data.get("emails") or []
     source = f"remote_{protocol}"
@@ -998,7 +1131,12 @@ def fetch_latest_otp(
     """
     account = get_account_context(email)
     if account is None:
-        raise OutlookClientError(f"未找到 {email} 的账号上下文，无法取 OTP")
+        raise OutlookClientError(
+            f"未找到 {email} 的账号上下文，无法取 OTP",
+            error_code="outlook_account_context_missing",
+            stage="context",
+            retryable=False,
+        )
 
     deadline = time.time() + (max_wait or _email_cfg.OTP_MAX_WAIT)
     interval = poll_interval or _email_cfg.OTP_POLL_INTERVAL
@@ -1018,12 +1156,37 @@ def fetch_latest_otp(
     best_source: str = ""
     settle_until: float | None = None # 抓到第一封后，等到这个时刻才返回
     last_diag_log = 0.0
+    last_fetch_error: OutlookClientError | None = None
 
     while time.time() < deadline:
         # 每轮都重新拉，因为可能有新邮件，也可能旧邮件因延迟才出现
         all_candidates: list[tuple[str, dict, float, str]] = []
         for protocol in ("graph", "imap"):
-            emails = _fetch_via(session, protocol, account)
+            try:
+                emails = _fetch_via(session, protocol, account)
+            except OutlookClientError as exc:
+                last_fetch_error = exc
+                logger.debug(
+                    "[Outlook] %s 抓取失败，继续尝试另一协议: %s: %s",
+                    protocol,
+                    exc.error_code,
+                    exc,
+                )
+                continue
+            except Exception as exc:
+                last_fetch_error = _ensure_outlook_error(
+                    exc,
+                    stage=f"{protocol}_fetch",
+                    error_code="outlook_fetch_error",
+                    retryable=True,
+                )
+                logger.debug(
+                    "[Outlook] %s 抓取异常，继续尝试另一协议: %s: %s",
+                    protocol,
+                    last_fetch_error.error_code,
+                    last_fetch_error,
+                )
+                continue
             for item in emails:
                 ts = _parse_email_ts(item) or 0.0
                 source = str(item.get("_fetch_source") or protocol) if isinstance(item, dict) else protocol
@@ -1117,9 +1280,20 @@ def fetch_latest_otp(
         )
         return best_otp
 
+    if last_fetch_error is not None:
+        logger.warning(
+            "[Outlook] OTP 轮询结束，最后一次邮件抓取失败: %s: %s",
+            last_fetch_error.error_code,
+            last_fetch_error,
+        )
+        raise last_fetch_error
+
     raise OutlookClientError(
         f"等待 {email} 的 OTP 超时（>{max_wait or _email_cfg.OTP_MAX_WAIT}s）。"
-        f"可能：refresh_token 失效 / 邮箱被 OpenAI 黑名单 / IP 风控未通过。"
+        f"可能：refresh_token 失效 / 邮箱被 OpenAI 黑名单 / IP 风控未通过。",
+        error_code="otp_timeout",
+        stage="otp_poll",
+        retryable=True,
     )
 
 
