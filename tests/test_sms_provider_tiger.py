@@ -161,8 +161,11 @@ class TigerSmsTests(unittest.TestCase):
 
     def test_cancel_success_does_not_sleep(self):
         self.responses({'status': 'success'})
-        with patch.object(sms, '_http', return_value=self.http), patch.object(sms.time, 'sleep') as sleep:
+        with patch.object(sms, '_http', return_value=self.http), patch.object(sms.time, 'sleep') as sleep, \
+             self.assertLogs(sms.logger, level='INFO') as logs:
             sms.cancel('123', background=False)
+        self.assertTrue(any('请求取消号码 id=123' in line for line in logs.output))
+        self.assertTrue(any('号码取消成功 id=123' in line for line in logs.output))
         sleep.assert_not_called()
 
     def test_cancel_does_not_claim_success_when_sms_received(self):

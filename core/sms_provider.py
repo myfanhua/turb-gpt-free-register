@@ -888,11 +888,13 @@ def _cancel_tiger_sync(activation_id: str, base: str, api_key: str) -> None:
     try:
         for attempt in range(3):
             try:
+                logger.info("[Tiger SMS] 请求取消号码 id=%s，第 %s/3 次", activation_id, attempt + 1)
                 data = _request_tiger(http, {"action": "setStatusV2", "status": "8", "id": activation_id},
                                       base=base, api_key=api_key)
                 if not isinstance(data, dict) or data.get("status") != "success":
                     raise SmsProviderError("Tiger SMS setStatusV2 未确认取消成功")
                 _ACQUIRED_AT.pop(activation_id, None)
+                logger.info("[Tiger SMS] 号码取消成功 id=%s", activation_id)
                 return
             except _TigerApiError as exc:
                 if exc.code == "EARLY_CANCEL_DENIED" and attempt < 2:
@@ -931,6 +933,7 @@ def cancel(activation_id: str, http: CurlSession | None = None, background: bool
     if _provider() == "tiger":
         args = (activation_id, _cfg.TIGER_SMS_API_BASE, _cfg.TIGER_SMS_API_KEY)
         if background:
+            logger.info("[Tiger SMS] 已提交后台取消 id=%s", activation_id)
             threading.Thread(target=_cancel_tiger_sync, args=args,
                              name=f"tiger-cancel-{activation_id}", daemon=True).start()
         else:
