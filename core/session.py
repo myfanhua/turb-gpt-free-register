@@ -16,7 +16,7 @@ from curl_cffi.requests import Session
 from config import (
     USER_AGENT, SEC_CH_UA, SEC_CH_UA_PLATFORM, SEC_CH_UA_MOBILE,
     SEC_CH_UA_FULL_VERSION_LIST, SEC_CH_UA_PLATFORM_VERSION, SEC_CH_UA_ARCH,
-    SEC_CH_UA_BITNESS, SEC_CH_UA_MODEL, SEND_HIGH_ENTROPY_CLIENT_HINTS,
+    SEC_CH_UA_BITNESS, SEC_CH_UA_MODEL,
     ACCEPT_LANGUAGE, IMPERSONATE, OAI_CLIENT_BUILD_NUMBER, OAI_CLIENT_VERSION,
     REQUEST_TIMEOUT, pick_proxy, pick_browser_profile, validate_browser_profile,
     BROWSER_PROFILE_POOL, build_browser_environment,
@@ -80,6 +80,33 @@ class BrowserSession:
     """
 
     def __init__(
+        self,
+        proxy: str = None,
+        *,
+        detect_exit_geo: bool = True,
+        device_id: str | None = None,
+        auth_session_logging_id: str | None = None,
+        oai_session_id: str | None = None,
+        sentinel_sid: str | None = None,
+        browser_profile: dict | None = None,
+        fingerprint_seed: str | None = None,
+    ):
+        try:
+            self._initialize(
+                proxy, detect_exit_geo=detect_exit_geo, device_id=device_id,
+                auth_session_logging_id=auth_session_logging_id, oai_session_id=oai_session_id,
+                sentinel_sid=sentinel_sid, browser_profile=browser_profile,
+                fingerprint_seed=fingerprint_seed,
+            )
+        except BaseException:
+            # 构造失败时调用方拿不到实例，也必须释放已经创建的 HTTP 客户端/中继。
+            try:
+                BrowserSession.close(self)
+            except Exception:
+                logger.debug("会话初始化失败后的清理异常", exc_info=True)
+            raise
+
+    def _initialize(
         self,
         proxy: str = None,
         *,
@@ -244,6 +271,39 @@ class BrowserSession:
         # Cloudflare 状态只能来自真实响应 Set-Cookie；这里仅记录变化，不主动伪造/覆盖。
         self._cf_cookie_seen = self.cf_cookie_snapshot()
 
+    def sync_device_id_from_cookies(self, domain: str = "chatgpt.com") -> str:
+        """导航后采用服务端更新的 oai-did，并同步后续 OAuth/Sentinel 身份。
+
+        host-only 与点域 Cookie 可能同时存在，不能直接 cookies.get(name)。
+        不改 CF Cookie，也不把独立的 Sentinel SDK sid 改成 device_id。
+        """
+        jar = self.session.cookies.jar
+        from core.cookie_scope import cookies_for_url
+        scoped_jar = cookies_for_url(self.session.cookies, f"https://{domain}/")
+        scopes = ("chatgpt.com", "openai.com", "auth.openai.com", "sentinel.openai.com")
+        candidates = [cookie for cookie in scoped_jar if cookie.name == "oai-did"
+                      and cookie.domain.lstrip(".").lower() in scopes
+                      and (domain == cookie.domain.lstrip(".").lower()
+                           or domain.endswith("." + cookie.domain.lstrip(".").lower()))
+                      and cookie.value]
+        changed = [cookie for cookie in candidates if cookie.value != self.device_id]
+        if not changed:
+            return self.device_id
+        device_id = str(changed[-1].value)
+        hosts = ("chatgpt.com", "auth.openai.com", "sentinel.openai.com")
+        for cookie in list(jar):
+            if cookie.name == "oai-did" and cookie.domain.lstrip(".").lower() in scopes:
+                # wreq.cookies.jar 是枚举快照，必须通过原生适配器 set 才能生效。
+                self.session.cookies.set("oai-did", device_id, domain=cookie.domain,
+                                         path=cookie.path, secure=cookie.secure)
+        for host in hosts:
+            self.session.cookies.set("oai-did", device_id, domain=host, path="/")
+        self.device_id = device_id
+        # requirements proof 绑定旧身份，不能在新身份下继续使用。
+        self._sentinel_context_p = {}
+        logger.info("[协议会话] 已同步服务端 device_id，来源=%s", domain)
+        return device_id
+
     def cf_cookie_snapshot(self) -> dict:
         """返回当前 CookieJar 中的 Cloudflare 关键 Cookie 摘要，便于确认同 IP/同会话连续性。"""
         out = {}
@@ -259,9 +319,11 @@ class BrowserSession:
     def close(self) -> None:
         """Close the HTTP session and any proxy-pool relay owned by this session."""
         try:
-            self.session.close()
+            raw = getattr(self, "session", None)
+            if raw is not None:
+                raw.close()
         finally:
-            relay, self._proxy_pool_relay = self._proxy_pool_relay, None
+            relay, self._proxy_pool_relay = getattr(self, "_proxy_pool_relay", None), None
             if relay is not None:
                 relay.close()
 
@@ -368,19 +430,30 @@ class BrowserSession:
                 f"如确认是住宅代理，可设置 REJECT_CLOUD_PROXY=False。"
             )
 
-    def _cookie_header_for_domain(self, domain: str) -> str:
+    def _cookie_header_for_domain(self, domain: str, *, javascript_visible: bool = False) -> str:
         """导出当前会话给指定域名可见的 Cookie，供 Node VM document.cookie 使用。"""
         pairs = []
         wanted = domain.lower().lstrip(".")
         try:
-            for cookie in self.session.cookies.jar:
+            scoped = getattr(self.session.cookies, "jar_for_url", None)
+            jar = scoped(f"https://{wanted}/") if callable(scoped) else self.session.cookies.jar
+            for cookie in jar:
                 name = getattr(cookie, "name", "")
                 value = getattr(cookie, "value", "")
                 cdom = str(getattr(cookie, "domain", "") or "").lower().lstrip(".")
                 if not name:
                     continue
-                if cdom and not (wanted == cdom or wanted.endswith("." + cdom) or cdom.endswith("." + wanted)):
+                if cdom and not (wanted == cdom or wanted.endswith("." + cdom)):
                     continue
+                if cdom and not getattr(cookie, "domain_specified", True) and wanted != cdom:
+                    continue
+                if javascript_visible:
+                    # Node 的 document 位于 Auth 根路径，不能暴露 HttpOnly 或其它路径 cookie。
+                    rest = getattr(cookie, "_rest", {}) or {}
+                    if any(str(key).lower() == "httponly" for key in rest):
+                        continue
+                    if cookie.is_expired() or (getattr(cookie, "path", "/") or "/") != "/":
+                        continue
                 pairs.append(f"{name}={value}")
         except Exception:
             pass
@@ -389,13 +462,20 @@ class BrowserSession:
     def auth_cookie_header(self) -> str:
         return self._cookie_header_with_device("auth.openai.com")
 
+    def auth_document_cookie(self) -> str:
+        """仅导出 JS 可见 Cookie；HTTP CookieJar 仍保留完整认证凭证。"""
+        return self._cookie_header_with_device("auth.openai.com", javascript_visible=True)
+
     def chatgpt_cookie_header(self) -> str:
         return self._cookie_header_with_device("chatgpt.com")
 
-    def _cookie_header_with_device(self, domain: str) -> str:
+    def _cookie_header_with_device(self, domain: str, *, javascript_visible: bool = False) -> str:
         """导出 Cookie，并确保设备/语言 cookie 不会因 Jar 合并而丢失。"""
-        existing = self._cookie_header_for_domain(domain)
+        existing = self._cookie_header_for_domain(domain, javascript_visible=javascript_visible)
         pairs = [p.strip() for p in existing.split(";") if p.strip()]
+        if javascript_visible:
+            # 合并Jar可能含同名的父域/主域值；JS侧只保留当前会话的身份与语言。
+            pairs = [p for p in pairs if p.split("=", 1)[0].strip() not in ("oai-did", "oai-locale")]
         names = {p.split("=", 1)[0].strip() for p in pairs if "=" in p}
         if "oai-did" not in names:
             pairs.append(f"oai-did={self.device_id}")
@@ -487,6 +567,7 @@ class BrowserSession:
         headers = {
             "User-Agent": str(profile.get("user_agent") or USER_AGENT),
             "accept-language": str(profile.get("accept_language") or ACCEPT_LANGUAGE),
+            "accept-encoding": "gzip, deflate, br, zstd",
         }
 
         # Safari 不发送 Chromium Client Hints；Chrome/Chromium 画像才补 sec-ch-*。
@@ -498,7 +579,8 @@ class BrowserSession:
                 headers["sec-ch-ua-mobile"] = str(profile.get("sec_ch_ua_mobile") or SEC_CH_UA_MOBILE)
             if profile.get("sec_ch_ua_platform") or SEC_CH_UA_PLATFORM:
                 headers["sec-ch-ua-platform"] = str(profile.get("sec_ch_ua_platform") or SEC_CH_UA_PLATFORM)
-            if SEND_HIGH_ENTROPY_CLIENT_HINTS:
+            from config import browser as browser_cfg
+            if browser_cfg.SEND_HIGH_ENTROPY_CLIENT_HINTS:
                 headers.update({
                     "sec-ch-ua-full-version-list": str(profile.get("sec_ch_ua_full_version_list") or SEC_CH_UA_FULL_VERSION_LIST),
                     "sec-ch-ua-platform-version": str(profile.get("sec_ch_ua_platform_version") or SEC_CH_UA_PLATFORM_VERSION),
@@ -607,7 +689,7 @@ class BrowserSession:
         """NextAuth `/api/auth/*` 头；HAR 中不携带 oai-client-*。"""
         headers = self._get_common_headers()
         headers.update({
-            "accept": "*/*",
+            "accept": "application/json",
             "content-type": "application/json",
             "sec-fetch-site": "same-origin",
             "sec-fetch-mode": "cors",
@@ -615,7 +697,10 @@ class BrowserSession:
             "referer": referer,
             "priority": "u=1, i",
         })
-        return headers
+        self.datadog_trace_id = str(random.getrandbits(64) or 1)
+        self.datadog_parent_id = str(random.getrandbits(64) or 1)
+        headers.update(self.get_trace_context_headers())
+        return self._attach_datadog_headers(headers)
 
     def get_chatgpt_headers(self, referer: str = "https://chatgpt.com/login") -> dict:
         """
@@ -696,7 +781,8 @@ class BrowserSession:
         获取 sentinel.openai.com 的请求头。
         用于步骤6、9、11。
         """
-        from config import SENTINEL_SV
+        from core.sentinel_sdk import sentinel_sdk_version
+        SENTINEL_SV = sentinel_sdk_version(self)
         headers = self._get_common_headers()
         headers.update({
             "accept": "*/*",
@@ -803,6 +889,8 @@ class BrowserSession:
 
     def get(self, url: str, headers: dict = None, **kwargs):
         """发送 GET 请求"""
+        from core.task_control import check_stop_requested
+        check_stop_requested()
         self._raise_if_circuit_open()
         headers = self._attach_openai_target_headers_for_url(url, headers)
         resp = self.session.get(url, headers=headers, **kwargs)
@@ -810,6 +898,8 @@ class BrowserSession:
 
     def post(self, url: str, headers: dict = None, **kwargs):
         """发送 POST 请求"""
+        from core.task_control import check_stop_requested
+        check_stop_requested()
         self._raise_if_circuit_open()
         headers = self._attach_openai_target_headers_for_url(url, headers)
         resp = self.session.post(url, headers=headers, **kwargs)

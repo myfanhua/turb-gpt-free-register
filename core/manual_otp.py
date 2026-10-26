@@ -93,6 +93,8 @@ def wait_for_manual_otp(email: str, *, timeout: int = 180, job_id: int | None = 
     key = _norm(email)
     if not key:
         raise RuntimeError("手动 OTP：email 为空")
+    from core.task_control import check_stop_requested
+    check_stop_requested()
 
     # 若已有预提交验证码，直接用
     existing = pop_manual_otp(email)
@@ -112,14 +114,15 @@ def wait_for_manual_otp(email: str, *, timeout: int = 180, job_id: int | None = 
     # CLI 交互兜底：如果有 TTY，也允许终端输入
     try:
         import sys
-        has_tty = bool(getattr(sys, "stdin", None) and sys.stdin.isatty())
+        has_tty = job_id is None and bool(getattr(sys, "stdin", None) and sys.stdin.isatty())
     except Exception:
         has_tty = False
 
-    end = time.time() + max(10, int(timeout))
+    end = time.monotonic() + max(10, int(timeout))
     ev = _event_for(key)
     try:
-        while time.time() < end:
+        while time.monotonic() < end:
+            check_stop_requested()
             code = pop_manual_otp(email)
             if code:
                 return code
@@ -141,14 +144,10 @@ def wait_for_manual_otp(email: str, *, timeout: int = 180, job_id: int | None = 
                     if code:
                         return code
             else:
-                ev.wait(timeout=1.0)
+                ev.wait(timeout=min(.25, max(0, end - time.monotonic())))
 
             # 支持任务被手动停止
-            try:
-                from core.registration_service import check_stop_requested
-                check_stop_requested()
-            except Exception:
-                pass
+            check_stop_requested()
         raise TimeoutError(f"等待手动验证码超时（{timeout}s）：{email}")
     finally:
         clear_waiting(email)

@@ -17,14 +17,13 @@ from config import email as _email_cfg
 from config import roxybrowser as _roxy_cfg
 from config import openai_protocol as _protocol_cfg
 from config import register as _register_cfg
-from core.session import BrowserSession
+from core.session import BrowserSession, close_browser_session
 from core.chatgpt_auth import get_providers, get_csrf_token, signin_openai
 from core.openai_auth import (
     follow_authorize,
     request_sentinel_token,
     build_sentinel_header,
     validate_email_otp,
-    send_email_otp,
     network_preflight,
     navigate_about_you,
     navigate_create_account_password,
@@ -36,7 +35,6 @@ from core.openai_auth import (
     create_account,
 )
 from core.account_export import (
-    follow_oauth_callback,
     fetch_session,
     setup_2fa,
     save_account_data,
@@ -46,6 +44,14 @@ from core.email_provider import acquire_email, wait_for_otp
 from core.humanize import delay as human_delay
 from core.name_samples import random_display_name
 from core.profile_utils import generate_random_birthday
+from core.protocol_registration import (
+    resolve_signup_step, continue_existing_login, needs_email_otp,
+    resend_registration_otp, select_registration_workspace,
+    follow_registration_callback, step_info, landing_step, recover_registration_disallowed,
+    install_registration_checkpoint,
+    checkpoint_registration_password,
+    reauthorize_registration_session,
+)
 
 # 配置日志
 logging.basicConfig(
@@ -103,31 +109,54 @@ def _finalize_registration_session(
     if not continue_url:
         raise RuntimeError("create_account 响应缺少 continue_url，无法完成 OAuth 回调")
 
+    from core.registration_service import StopRequested
+    from core.openai_auth import (
+        _interruptible_sleep, _is_retryable_authorize_error, _reset_retryable_circuit,
+    )
+
     last_exc: Exception | None = None
+    callback_completed = False
     for attempt in range(1, _FINALIZE_SESSION_MAX_ATTEMPTS + 1):
         try:
             logger.info(
                 f"[登录态] 完成 OAuth 回调并拉取 Token：{email} "
                 f"(尝试 {attempt}/{_FINALIZE_SESSION_MAX_ATTEMPTS})"
             )
-            follow_oauth_callback(session, continue_url, referer=callback_referer)
-            human_delay("post_auth")
+            if not callback_completed:
+                follow_registration_callback(session, continue_url, referer=callback_referer)
+                callback_completed = True
+                human_delay("post_auth")
             session_info = fetch_session(session)
             access_token = session_info.get("accessToken")
             if not access_token:
                 raise RuntimeError("session 响应缺少 accessToken")
+            user = session_info.get("user")
+            session_email = user.get("email") if isinstance(user, dict) else None
+            if session_email and str(session_email).strip().casefold() != str(email).strip().casefold():
+                raise RuntimeError("session 邮箱与注册目标不匹配，停止保存账号")
             logger.info(f"[登录态] 已拿到 accessToken：{email}")
             return session_info, access_token
+        except StopRequested:
+            raise
         except Exception as exc:
             last_exc = exc
+            session_pending = callback_completed and any(message in str(exc) for message in (
+                "session 响应缺少 accessToken", "未拿到 accessToken，登录态可能未建立",
+            ))
+            if not session_pending and not _is_retryable_authorize_error(exc):
+                raise
+            if getattr(session, "_registration_callback_started", False) is True:
+                callback_completed = True
             if attempt >= _FINALIZE_SESSION_MAX_ATTEMPTS:
                 break
+            _reset_retryable_circuit(session)
             backoff = _FINALIZE_SESSION_BACKOFF_BASE ** (attempt - 1)
             logger.warning(
                 f"[登录态] 回调或拉取 Token 失败：{email}，"
                 f"{type(exc).__name__}: {str(exc)[:180]}，{backoff:.1f}s 后重试"
             )
-            time.sleep(backoff)
+            # code 已消费时只重试 session，不能再次重放同一个 OAuth callback。
+            _interruptible_sleep(backoff)
 
     raise RuntimeError(
         f"OAuth 回调/拉取 Token 重试耗尽：{email}，"
@@ -179,7 +208,7 @@ def run_registration(
     on_email_acquired: Callable[[str], None] | None = None,
 ):
     """
-    执行完整的 ChatGPT 邮箱密码注册流程。
+    执行 ChatGPT 密码注册；已有账号按服务端状态恢复密码/OTP/MFA 登录。
 
     OpenAI 当前默认流程：signin 时携带 login_hint+screen_hint=login_or_signup
     → 进入 /create-account/password 并提交密码 → 发送并验证邮箱 OTP
@@ -248,68 +277,72 @@ def run_registration(
             f"不支持的 REGISTRATION_DRIVER={driver_mode!r}，可选 protocol / roxy / cloak / browser_use / skyvern"
         )
 
-    # 纯协议驱动没有“邮箱输入框”可等待，因此在创建 BrowserSession 前领取。
-    if not str(email or "").strip():
-        if not _email_cfg.USE_EMAIL_SERVICE:
-            raise RuntimeError(
-                "手动模式未配置邮箱。请在 WebUI 配置页设置 REGISTER_EMAIL，"
-                "或开启 USE_EMAIL_SERVICE 并从邮箱池领取。"
-            )
-        email = acquire_email()
-        if on_email_acquired:
-            on_email_acquired(email)
-
-    # 创建浏览器会话（proxy=None 时自动从 config.PROXY_POOL 随机抽一个）
-    fingerprint_seed = _protocol_registration_fingerprint_seed(email)
-    reuse_fingerprint = fingerprint_seed is not None
-    # 单个 BrowserSession 生命周期内始终复用同一指纹；是否跨任务按邮箱
-    # 稳定复用由 PROTOCOL_REUSE_FINGERPRINT_BY_EMAIL 控制。
-    session = BrowserSession(
-        proxy=proxy,
-        fingerprint_seed=fingerprint_seed,
-    )
-
-    # 从代理 URL 中抽取 sid 段做日志，避免把账号密码完整打印
-    proxy_label = "无"
-    if session.proxy:
-        # 形如 socks5h://user-region-JP-sid-XXXX-t-5:pass@host:port
-        try:
-            sid_part = next(
-                (seg for seg in session.proxy.split("@")[0].split("-") if len(seg) == 8),
-                "***",
-            )
-            proxy_label = f"{session.proxy.split('://')[0]}://...sid-{sid_part}...@{session.proxy.split('@')[-1]}"
-        except Exception:
-            proxy_label = "已配置"
-
-    if not birthday:
-        birthday = generate_random_birthday()
-
-    logger.info(f"[注册] 开始：{email}，代理={proxy_label}")
-    logger.info(
-        "[指纹] 生命周期模式：%s",
-        "同邮箱保持" if reuse_fingerprint else "每次任务重新创建",
-    )
-    logger.info(f"[注册] 本次随机生日: {birthday}")
-    fp = session.fingerprint_summary()
-    logger.info(
-        "[指纹] 协议注册统一上下文: device_id=%s oai_session_id=%s auth_session_logging_id=%s "
-        "ua=%s lang=%s tz=%s(%s) screen=%sx%s@%s cpu=%s mem=%s geo=%s:%s",
-        session.device_id[:12] + "...",
-        session.oai_session_id[:12] + "...",
-        session.auth_session_logging_id[:12] + "...",
-        BrowserSession._short_value(fp.get("user_agent"), 72),
-        fp.get("accept_language"),
-        fp.get("timezone_iana"),
-        fp.get("timezone_offset_minutes"),
-        fp.get("screen_width"), fp.get("screen_height"), fp.get("device_pixel_ratio"),
-        fp.get("hardware_concurrency"), fp.get("device_memory"),
-        fp.get("geo_country") or "?", fp.get("geo_city") or "?",
-    )
-
+    from core.registration_service import StopRequested, check_stop_requested
+    session = None
     create_acknowledged = False
+    credentials_saved = False
+    password_saved = False
     registration_password = None
     try:
+        # 纯协议驱动没有“邮箱输入框”可等待，因此在创建 BrowserSession 前领取。
+        if not str(email or "").strip():
+            if not _email_cfg.USE_EMAIL_SERVICE:
+                raise RuntimeError(
+                    "手动模式未配置邮箱。请在 WebUI 配置页设置 REGISTER_EMAIL，"
+                    "或开启 USE_EMAIL_SERVICE 并从邮箱池领取。"
+                )
+            email = acquire_email()
+            if on_email_acquired:
+                on_email_acquired(email)
+
+        # 创建浏览器会话（proxy=None 时自动从 config.PROXY_POOL 随机抽一个）
+        fingerprint_seed = _protocol_registration_fingerprint_seed(email)
+        reuse_fingerprint = fingerprint_seed is not None
+        # 单个 BrowserSession 生命周期内始终复用同一指纹；是否跨任务按邮箱
+        # 稳定复用由 PROTOCOL_REUSE_FINGERPRINT_BY_EMAIL 控制。
+        session = BrowserSession(
+            proxy=proxy,
+            fingerprint_seed=fingerprint_seed,
+        )
+
+        # 从代理 URL 中抽取 sid 段做日志，避免把账号密码完整打印
+        proxy_label = "无"
+        if session.proxy:
+            # 形如 socks5h://user-region-JP-sid-XXXX-t-5:pass@host:port
+            try:
+                sid_part = next(
+                    (seg for seg in session.proxy.split("@")[0].split("-") if len(seg) == 8),
+                    "***",
+                )
+                proxy_label = f"{session.proxy.split('://')[0]}://...sid-{sid_part}...@{session.proxy.split('@')[-1]}"
+            except Exception:
+                proxy_label = "已配置"
+
+        if not birthday:
+            birthday = generate_random_birthday()
+
+        logger.info(f"[注册] 开始：{email}，代理={proxy_label}")
+        logger.info(
+            "[指纹] 生命周期模式：%s",
+            "同邮箱保持" if reuse_fingerprint else "每次任务重新创建",
+        )
+        logger.info(f"[注册] 本次随机生日: {birthday}")
+        fp = session.fingerprint_summary()
+        logger.info(
+            "[指纹] 协议注册统一上下文: device_id=%s oai_session_id=%s auth_session_logging_id=%s "
+            "ua=%s lang=%s tz=%s(%s) screen=%sx%s@%s cpu=%s mem=%s geo=%s:%s",
+            session.device_id[:12] + "...",
+            session.oai_session_id[:12] + "...",
+            session.auth_session_logging_id[:12] + "...",
+            BrowserSession._short_value(fp.get("user_agent"), 72),
+            fp.get("accept_language"),
+            fp.get("timezone_iana"),
+            fp.get("timezone_offset_minutes"),
+            fp.get("screen_width"), fp.get("screen_height"), fp.get("device_pixel_ratio"),
+            fp.get("hardware_concurrency"), fp.get("device_memory"),
+            fp.get("geo_country") or "?", fp.get("geo_city") or "?",
+        )
+
         # 网络预检必须在 signin/follow_authorize 之前完成；预检不带邮箱，不会触发 OTP。
         network_preflight(session)
         human_delay("navigate")
@@ -338,31 +371,59 @@ def run_registration(
 
         # ==================== 阶段2: OpenAI Auth ====================
         # 步骤4: 跟随 authorize URL（建立 auth.openai.com 的 cookies）
+        authorize_started_at = time.time()
         authorize_final_url = follow_authorize(session, authorize_url)
         human_delay("navigate")
 
-        # 步骤5-8: 强制走邮箱+密码注册，不使用 passwordless OTP-only 分支。
-        navigate_create_account_password(session, authorize_final_url)
-        human_delay("navigate")
-        registration_password = generate_registration_password()
-        password_sentinel = request_password_sentinel_bundle(session)
-        password_sentinel_header, password_so_header = build_sentinel_header(
-            session, password_sentinel, "username_password_create"
-        )
-        human_delay("challenge")
-        register_result = register_user(
-            session,
-            email,
-            registration_password,
-            password_sentinel_header,
-            password_so_header,
-        )
-        create_acknowledged = True
-
-        # 只读取本次发送之后到达的验证码，避免误取历史邮件。
-        otp_after_ts = time.time()
-        navigate_email_otp_send(session, register_result.get("continue_url"))
-        human_delay("navigate")
+        # 按服务端落点分流；已登录/已有账号不重复 user/register。
+        signup_kind, initial_step = resolve_signup_step(session, email, authorize_final_url)
+        validate_result = None
+        otp_after_ts = authorize_started_at
+        if signup_kind == "new":
+            navigate_create_account_password(session, authorize_final_url)
+            human_delay("navigate")
+            registration_password = generate_registration_password()
+            password_sentinel = request_password_sentinel_bundle(session)
+            password_sentinel_header, password_so_header = build_sentinel_header(
+                session, password_sentinel, "username_password_create"
+            )
+            human_delay("challenge")
+            register_result = register_user(
+                session, email, registration_password,
+                password_sentinel_header, password_so_header,
+            )
+            create_acknowledged = True
+            checkpoint_registration_password(session, email, registration_password)
+            password_saved = True
+            otp_after_ts = time.time()
+            _, send_url = step_info(register_result)
+            navigate_email_otp_send(session, send_url or None)
+            human_delay("navigate")
+        elif signup_kind in ("about_you", "external_url", "add_phone"):
+            create_acknowledged = True
+            validate_result = dict(initial_step)
+            # 先规范化 URL，再改 page.type，避免丢掉 page.payload.url。
+            _, initial_url = step_info(initial_step)
+            if initial_url:
+                validate_result["continue_url"] = initial_url
+            validate_result["page"] = {"type": signup_kind}
+        else:
+            create_acknowledged = True  # 已有账号不能因恢复失败放回新注册邮箱池。
+            login_started_at = time.time()
+            registration_password, login_step = continue_existing_login(
+                session, email, signup_kind, initial_step,
+            )
+            if needs_email_otp(login_step):
+                page, _ = step_info(login_step)
+                if page == "passwordless_login":
+                    pass  # authorize 已发码，直接使用本轮时间下界，不额外改变认证状态。
+                elif login_step.get("_otp_already_sent") is True:
+                    otp_after_ts = login_started_at
+                else:
+                    otp_after_ts = time.time()
+                    resend_registration_otp(session, existing=True)
+            else:
+                validate_result = login_step
 
         # ==================== 阶段3: 验证码验证 ====================
         # Sentinel Token 不提前生成；等 OTP 到手后紧贴 validate 请求生成，
@@ -370,14 +431,25 @@ def run_registration(
 
         # 等待验证码：USE_EMAIL_SERVICE=True 时自动从 Outlook 取件，否则人工输入。
         # 如果验证码错误/过期，自动重新发送并重新取最新验证码。
-        validate_result = None
         max_otp_attempts = 3
         current_otp = otp_code
         for otp_attempt in range(1, max_otp_attempts + 1):
+            if validate_result is not None:
+                break
             if current_otp is None:
-                if _email_cfg.USE_EMAIL_SERVICE:
+                from core import registration_service as registration_svc
+                web_manual = getattr(registration_svc._THREAD_CTX, "job_id", None) is not None
+                if _email_cfg.USE_EMAIL_SERVICE or web_manual:
                     logger.info(f"[OTP] 等待验证码：{email}（第 {otp_attempt}/{max_otp_attempts} 次）")
-                    current_otp = wait_for_otp(email, after_ts=otp_after_ts)
+                    try:
+                        current_otp = wait_for_otp(email, after_ts=otp_after_ts)
+                    except TimeoutError:
+                        if otp_attempt >= max_otp_attempts:
+                            raise
+                        logger.warning("[OTP] 等待超时，在当前认证状态内重发后继续等待")
+                        otp_after_ts = time.time()
+                        resend_registration_otp(session, existing=signup_kind != "new")
+                        continue
                 else:
                     logger.info("")
                     logger.info(f"[OTP] 请检查邮箱，输入收到的 6 位验证码（第 {otp_attempt}/{max_otp_attempts} 次）:")
@@ -385,13 +457,12 @@ def run_registration(
 
             human_delay("otp_input")
             try:
-                # HAR 对齐：2026-07-19 抓包中的 email-otp/validate 未携带 Sentinel。
-                # 保留开关，必要时可切回旧逻辑。
+                # 验证 OTP 必须使用本次 email_otp_validate flow，而不是 authorize_continue。
                 sentinel_header_9 = None
                 so_header_9 = None
                 if getattr(_protocol_cfg, "SEND_SENTINEL_ON_EMAIL_OTP_VALIDATE", False):
-                    sentinel_resp_9 = request_sentinel_token(session, "authorize_continue")
-                    sentinel_header_9, so_header_9 = build_sentinel_header(session, sentinel_resp_9, "authorize_continue")
+                    sentinel_resp_9 = request_sentinel_token(session, "email_otp_validate")
+                    sentinel_header_9, so_header_9 = build_sentinel_header(session, sentinel_resp_9, "email_otp_validate")
                     human_delay("challenge")
 
                 # 步骤10: 提交验证码
@@ -402,7 +473,7 @@ def run_registration(
                     raise
                 logger.warning(f"[OTP] 验证码错误/过期：{str(exc)[:180]}，准备重新发送并重新获取验证码")
                 otp_after_ts = time.time()
-                send_email_otp(session)
+                resend_registration_otp(session, existing=signup_kind != "new")
                 human_delay("api")
                 current_otp = None
 
@@ -414,34 +485,39 @@ def run_registration(
         #   - about_you：新账号，需要继续提交姓名/生日 create_account。
         #   - external_url：通常说明服务端已可直接 OAuth 回调（常见于已有账号/无需资料页），
         #                   此时再强行调用 create_account 会触发 invalid_auth_step。
-        page = validate_result.get("page") if isinstance(validate_result, dict) else {}
-        page = page if isinstance(page, dict) else {}
-        page_type = str(page.get("type") or "")
-        otp_continue_url = (
-            validate_result.get("continue_url")
-            or validate_result.get("external_url")
-            or validate_result.get("url")
-            or page.get("continue_url")
-            or page.get("external_url")
-            or page.get("url")
-        )
+        page_type, otp_continue_url = step_info(validate_result)
+        if signup_kind != "new" and not page_type and not otp_continue_url:
+            otp_continue_url = reauthorize_registration_session(session, email)
+            page_type = "external_url"
+        # 按服务端状态推进条件挑战，不能只处理一次 MFA 然后忽略 add-phone。
+        seen_challenges = set()
+        for _ in range(4):
+            challenge_kind = landing_step(otp_continue_url) if otp_continue_url else page_type
+            if challenge_kind not in ("mfa_challenge", "add_phone"):
+                challenge_kind = page_type
+            if challenge_kind not in ("mfa_challenge", "add_phone"):
+                break
+            if challenge_kind in seen_challenges:
+                raise RuntimeError(f"认证挑战重复出现，停止自动循环: {challenge_kind}")
+            seen_challenges.add(challenge_kind)
+            if challenge_kind == "add_phone":
+                from core.protocol_phone import verify_registration_phone
+                validate_result = verify_registration_phone(session)
+            else:
+                saved_password, validate_result = continue_existing_login(
+                    session, email, "mfa_challenge", validate_result,
+                )
+                registration_password = registration_password or saved_password
+            page_type, otp_continue_url = step_info(validate_result)
         logger.info(
             f"[步骤10] 后续分支判断: page_type={page_type or '空'}, "
             f"has_continue_url={bool(otp_continue_url)}"
         )
 
         # ==================== 阶段5/6: 完成注册或直接 OAuth 回调 ====================
-        otp_continue_text = str(otp_continue_url or "")
-        direct_oauth_after_otp = bool(
-            otp_continue_text
-            and "about-you" not in otp_continue_text
-            and (
-                "chatgpt.com/api/auth/callback" in otp_continue_text
-                or "auth.openai.com/authorize/continue" in otp_continue_text
-                or page_type == "external_url"
-            )
-        )
-        if page_type == "external_url" or direct_oauth_after_otp:
+        next_kind = landing_step(otp_continue_url) if otp_continue_url else "unknown"
+        is_about_you = next_kind == "about_you" or (not otp_continue_url and page_type in ("about_you", "about-you"))
+        if next_kind == "external_url" or (page_type == "external_url" and not is_about_you):
             if not otp_continue_url:
                 raise RuntimeError(f"OTP external_url 响应缺少可跟随 URL，无法继续: {validate_result}")
             logger.info(f"[注册] OTP 后进入 OAuth 回调分支，跳过 create_account：{email}")
@@ -461,19 +537,10 @@ def run_registration(
                 )
             human_delay("post_auth")
         else:
-            # 兼容服务端只返回 continue_url=/about-you 但 page.type 为空/变化的情况。
-            if page_type and page_type not in ("about_you", "about-you"):
-                if otp_continue_url and "about-you" not in str(otp_continue_url):
-                    raise RuntimeError(
-                        f"OTP 后续页面类型未知，不应盲目 create_account: "
-                        f"page_type={page_type}, resp={validate_result}"
-                    )
-                logger.warning(
-                    f"[步骤10] 未知 page_type={page_type}，但 continue_url 指向 about-you，继续 create_account"
-                )
-
-            # 先真实导航到 about-you，让 auth session/page state 与 create_account 一致。
-            about_url = str(otp_continue_url) if otp_continue_url and "about-you" in str(otp_continue_url) else None
+            if not is_about_you:
+                raise RuntimeError(f"OTP 后续页面类型未知，不应盲目 create_account: page_type={page_type or '空'}")
+            # 只接受真实 about-you 路径，不能被查询参数里的 about-you 字样误导。
+            about_url = otp_continue_url if next_kind == "about_you" else None
             navigate_about_you(session, about_url)
             human_delay("navigate")
 
@@ -485,17 +552,21 @@ def run_registration(
             human_delay("form")
 
             # 步骤12: 提交用户信息，完成注册
-            create_result = create_account(session, name, birthday, sentinel_header_11, so_header_11)
+            try:
+                create_result = create_account(session, name, birthday, sentinel_header_11, so_header_11)
+            except Exception as create_exc:
+                recovered_url = recover_registration_disallowed(session, email, create_exc)
+                create_result = {"continue_url": recovered_url}
             create_acknowledged = True
 
-            logger.info(f"[注册] 创建接口已通过：{email}，继续完成 OAuth 回调")
+            logger.info(f"[注册] 资料/认证阶段已完成：{email}，继续完成 OAuth 回调")
             human_delay("post_auth")
 
             # 步骤12.5: 跟随 create_account 返回的 continue_url 完成 OAuth 回调
-            continue_url = create_result.get("continue_url")
+            _, continue_url = step_info(create_result)
             if not continue_url:
-                raise RuntimeError(
-                    f"create_account 响应缺少 continue_url，无法继续: {create_result}"
+                continue_url = select_registration_workspace(
+                    session, referer="https://auth.openai.com/about-you",
                 )
 
             # 步骤13: 拉 /api/auth/session 提取 accessToken
@@ -510,17 +581,43 @@ def run_registration(
             human_delay("post_auth")
 
         # ==================== 阶段7: 设置 2FA（受 config.ENABLE_2FA 控制）====================
-        totp_secret = None
-        if _twofa_cfg.ENABLE_2FA:
-            # 步骤14-20: 重认证（要再收一次邮箱 OTP）→ enroll TOTP → activate
+        checkpoint = install_registration_checkpoint(session, email, session_info, access_token, registration_password)
+        saved_password = getattr(session, "_registration_password", None)
+        if not registration_password and isinstance(saved_password, str):
+            registration_password = saved_password
+        known_secret = getattr(session, "_registration_totp_secret", None)
+        check_stop_requested()
+        totp_secret = known_secret if isinstance(known_secret, str) and known_secret else None
+        initial_pending = getattr(session, "_pending_totp_enrollment", None)
+        checkpoint(totp_secret=totp_secret, pending=initial_pending if isinstance(initial_pending, dict) else None)
+        credentials_saved = True
+        if _twofa_cfg.ENABLE_2FA and not totp_secret:
+            # 优先复用注册登录态；仅需要时回落邮箱重认证。
             try:
-                totp_secret = setup_2fa(session, email)
+                totp_secret = setup_2fa(session, email, access_token=access_token, prefer_inline=True)
+            except StopRequested:
+                raise
             except Exception as exc:
                 logger.error(f"2FA 设置失败: {exc}")
                 logger.debug("2FA 错误详情:", exc_info=True)
                 logger.warning("将继续保存账号信息（不含 TOTP secret），可后续手动设置")
         else:
             logger.debug("已跳过 2FA 设置 (config.ENABLE_2FA=False)")
+
+        confirmed_secret = getattr(session, "_registration_totp_secret", None)
+        if isinstance(confirmed_secret, str) and confirmed_secret:
+            totp_secret = confirmed_secret
+        pending = getattr(session, "_pending_totp_enrollment", None)
+        checkpoint(totp_secret=totp_secret, pending=pending if isinstance(pending, dict) else None)
+
+        # 重认证可能已刷新 token，即使后续 enroll 失败也应保存新 session，而非旧 token。
+        refreshed = getattr(session, "_latest_authenticated_session", None)
+        if isinstance(refreshed, dict) and isinstance(refreshed.get("accessToken"), str) and refreshed["accessToken"]:
+            user = refreshed.get("user")
+            refreshed_email = user.get("email") if isinstance(user, dict) else None
+            if refreshed_email and str(refreshed_email).strip().casefold() != str(email).strip().casefold():
+                raise RuntimeError("重认证 session 邮箱与注册目标不匹配，停止保存账号")
+            session_info, access_token = refreshed, refreshed["accessToken"]
 
         # ==================== 阶段 7.5: Codex OAuth（注册成功→拿回调/CPA凭证）====================
         # 用全新干净 session 从头登录该邮箱，走 邮箱OTP→手机短信验证(接码)→选workspace
@@ -529,9 +626,12 @@ def run_registration(
         #   1) codex_result["callback_url"]  命中 redirect_uri 的整条 Location（携带 code/state）
         #   2) codex_result["file_path"]     CPA 可直接导入的 codex-{email}.json
         codex_result = {"status": "skipped", "ok": False, "message": "未触发"}
+        check_stop_requested()
         try:
             from core.codex_oauth import run_codex_oauth
             codex_result = run_codex_oauth(email)
+        except StopRequested:
+            raise
         except Exception as exc:
             codex_result = {
                 "status": "failed",
@@ -552,6 +652,25 @@ def run_registration(
             )
 
         # ==================== 阶段8: 持久化账号 ====================
+        check_stop_requested()
+        # 目标在后置授权结束后再读 session；仅更新有效同邮箱凭证，读取失败不丢旧凭证。
+        try:
+            latest = fetch_session(session)
+        except StopRequested:
+            raise
+        except Exception:
+            logger.warning("[注册] 最终 session 可选刷新失败，保留已确认凭证")
+        else:
+            if isinstance(latest, dict) and isinstance(latest.get("accessToken"), str) and latest["accessToken"]:
+                latest_user = latest.get("user")
+                latest_email = latest_user.get("email") if isinstance(latest_user, dict) else None
+                if latest_email and str(latest_email).strip().casefold() != str(email).strip().casefold():
+                    raise RuntimeError("最终 session 邮箱与注册目标不匹配，停止保存账号")
+                session_info, access_token = latest, latest["accessToken"]
+                session._latest_authenticated_session = latest
+                pending = getattr(session, "_pending_totp_enrollment", None)
+                checkpoint(totp_secret=totp_secret, pending=pending if isinstance(pending, dict) else None)
+        pending_totp = getattr(session, "_pending_totp_enrollment", None)
         from core.email_provider import resolve_email_source
         account_id = save_account_data(
             email=email,
@@ -560,7 +679,9 @@ def run_registration(
             email_source=resolve_email_source(email),
             proxy_used=session.proxy or None,
             batch_dir=batch_dir,
+            auto_twofa=False,  # 本任务已经尝试过；不能在保存时又并发启动一次绑定。
             extra={
+                "registration_stage": "complete",
                 "user": session_info.get("user"),
                 "account": session_info.get("account"),
                 "expires": session_info.get("expires"),
@@ -568,6 +689,8 @@ def run_registration(
                 "sentinel_sid": getattr(session, "sentinel_sid", None),
                 "browser_profile": getattr(session, "browser_profile", None),
                 "registration_password": registration_password,
+                # 激活结果不明确时保留恢复材料，不将未确认 secret 标成已启用。
+                "pending_totp_enrollment": pending_totp if isinstance(pending_totp, dict) else None,
                 "codex": codex_result,
             },
         )
@@ -581,6 +704,8 @@ def run_registration(
         try:
             from core.flow_trigger import trigger_flow
             flow_result = trigger_flow(access_token)
+        except StopRequested:
+            raise
         except Exception as exc:
             flow_result = {"status": "failed", "ok": False, "message": f"{type(exc).__name__}: {exc}"}
 
@@ -632,6 +757,8 @@ def run_registration(
                         note=f"账号已废弃，邮箱不可用: {str(e)[:180]}",
                     )
                     logger.warning(f"[邮箱:{src}] {email} 账号已废弃，标记为 failed，不再重新注册")
+                elif credentials_saved or password_saved:
+                    logger.info("[注册] 已保存可恢复凭证，保留账号和邮箱状态供补跑：%s", email)
                 elif create_acknowledged:
                     src = release_email(
                         email, status="failed",
@@ -643,7 +770,15 @@ def run_registration(
                     logger.info(f"[邮箱:{src}] {email} 已恢复 available")
         except Exception:
             pass
+        if isinstance(e, StopRequested):
+            raise
         return {"success": False, "email": email, "error": str(e)}
+    finally:
+        # 登录态预热是同步的；Codex 使用独立会话，此处可释放连接池/代理中继。
+        try:
+            close_browser_session(session)
+        except Exception as close_exc:
+            logger.warning("[注册] 释放协议会话失败: %s", type(close_exc).__name__)
 
 
 def main():

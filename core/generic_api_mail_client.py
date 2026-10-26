@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import time
+from core.task_control import check_stop_requested as _check_task_stop, sleep as _task_sleep
 import base64
 import html as html_lib
 from datetime import datetime
@@ -740,6 +741,7 @@ def fetch_latest_otp(
     如果期间取码地址返回了不同验证码，则替换候选并重置 settle 倒计时；
     连续 settle 秒没有变化后才返回，避免取到接口缓存中的旧码。
     """
+    _check_task_stop()
     account = get_account_context(email)
     if account is None:
         raise GenericApiMailError(f"通用 API 邮箱不存在或未导入: {email}")
@@ -783,6 +785,7 @@ def fetch_latest_otp(
 
     attempt = 0
     while time.time() < deadline:
+        _check_task_stop()
         attempt += 1
         try:
             # 不修改 yangyang 的路径型 URL；其列表接口本身按邮件 ID 返回数据。
@@ -960,7 +963,7 @@ def fetch_latest_otp(
                 f"[GenericAPI] 暂未从取码接口拿到验证码，"
                 f"{interval}s 后重试（剩余 {remaining}s）..."
             )
-        time.sleep(interval)
+        _task_sleep(interval)
 
     if best_otp:
         logger.warning(f"[GenericAPI] 总超时但已有候选，返回 OTP={best_otp}")

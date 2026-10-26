@@ -21,6 +21,7 @@ import json
 import logging
 import threading
 import time
+from typing import Callable
 from urllib.parse import urljoin
 
 from curl_cffi.requests import Session as CurlSession
@@ -401,6 +402,8 @@ def acquire_number(
     Raises:
         SmsNoNumbersError / SmsNoBalanceError / SmsProviderError
     """
+    from core.task_control import check_stop_requested
+    check_stop_requested()
     own_http = http is None
     http = http or _http()
     try:
@@ -519,11 +522,15 @@ def acquire_number(
 def wait_for_sms_code(
     activation_id: str,
     http: CurlSession | None = None,
-    max_wait: int | None = None,
+    max_wait: float | None = None,
     poll_interval: int | None = None,
+    *,
+    on_poll: Callable[[float], None] | None = None,
+    exclude_codes: set[str] | None = None,
 ) -> str:
     """
     轮询 getStatus 直到拿到短信验证码。
+    on_poll 仅由显式调用方启用；exclude_codes 用于同号重试，跳过已提交验证码。
 
     Returns:
         验证码字符串
@@ -532,9 +539,11 @@ def wait_for_sms_code(
         SmsCodeTimeout —— 超时没收到（上层可换号重试）
         SmsProviderError —— 激活被取消等
     """
+    from core.task_control import sleep as _task_sleep
     own_http = http is None
     http = http or _http()
-    deadline = time.time() + (max_wait or _cfg.SMS_CODE_WAIT)
+    started = time.time()
+    deadline = started + (max_wait or _cfg.SMS_CODE_WAIT)
     interval = poll_interval or _cfg.SMS_POLL_INTERVAL
     try:
         provider = _provider()
@@ -547,6 +556,10 @@ def wait_for_sms_code(
                 check_stop_requested()
             except ImportError:
                 pass
+            if on_poll is not None:
+                on_poll(max(0.0, time.time() - started))
+                if time.time() >= deadline:
+                    break
             round_no += 1
             elapsed = max(0, int(total_wait - max(0, deadline - time.time())))
             remaining_before = max(0, int(deadline - time.time()))
@@ -559,7 +572,7 @@ def wait_for_sms_code(
                 code = str(data.get("code") or "").strip()
                 raw = str(data.get("raw") or "").strip()
                 status = str((data.get("item") or {}).get("status") or "").strip()
-                if code:
+                if code and code not in (exclude_codes or ()):
                     logger.info(f"[SMS:L] 第 {round_no} 轮收到验证码：{code}")
                     return code
                 remaining = max(0, int(deadline - time.time()))
@@ -567,7 +580,7 @@ def wait_for_sms_code(
                     f"[SMS:L] 第 {round_no} 轮未收到验证码，状态={status or raw or 'WAIT'}，"
                     f"{interval}s 后重试（剩余 {remaining}s）"
                 )
-                time.sleep(interval)
+                _task_sleep(interval)
                 continue
 
             if provider == "h":
@@ -575,7 +588,7 @@ def wait_for_sms_code(
                 code = str(data.get("code") or "").strip()
                 raw = str(data.get("raw") or "").strip()
                 status = str((data.get("item") or {}).get("status") or "").strip()
-                if code:
+                if code and code not in (exclude_codes or ()):
                     logger.info(f"[SMS:H] 第 {round_no} 轮收到验证码：{code}")
                     return code
                 remaining = max(0, int(deadline - time.time()))
@@ -583,30 +596,33 @@ def wait_for_sms_code(
                     f"[SMS:H] 第 {round_no} 轮未收到验证码，状态={status or raw or 'WAIT'}，"
                     f"{interval}s 后重试（剩余 {remaining}s）"
                 )
-                time.sleep(interval)
+                _task_sleep(interval)
                 continue
 
             if provider == "smsbower":
                 text = _request_smsbower(http, {"action": "getStatus", "id": activation_id})
                 if text.startswith("STATUS_OK:"):
-                    return text.split(":", 1)[1].strip().strip("'")
+                    code = text.split(":", 1)[1].strip().strip("'")
+                    if code and code not in (exclude_codes or ()):
+                        return code
                 if text == "STATUS_CANCEL":
                     raise SmsProviderError("SMSBower 激活已被取消（STATUS_CANCEL）")
-                time.sleep(interval)
+                _task_sleep(interval)
                 continue
 
             text = _request_grizzly(http, {"action": "getStatus", "id": activation_id})
 
             if text.startswith("STATUS_OK:"):
                 code = text.split(":", 1)[1].strip()
-                logger.info(f"[SMS] 第 {round_no} 轮收到验证码：{code}")
-                return code
+                if code and code not in (exclude_codes or ()):
+                    logger.info(f"[SMS] 第 {round_no} 轮收到验证码：{code}")
+                    return code
             if text == "STATUS_CANCEL":
                 raise SmsProviderError("激活已被取消（STATUS_CANCEL）")
             # STATUS_WAIT_CODE / STATUS_WAIT_RETRY:* / STATUS_WAIT_RESEND → 继续等
             remaining = max(0, int(deadline - time.time()))
             logger.info(f"[SMS] 第 {round_no} 轮未收到验证码，状态={text}，{interval}s 后重试（剩余 {remaining}s）")
-            time.sleep(interval)
+            _task_sleep(interval)
 
         raise SmsCodeTimeout(f"等待短信超时（>{total_wait}s），activation_id={activation_id}")
     finally:
@@ -629,8 +645,8 @@ def set_status(activation_id: str, status: int, http: CurlSession | None = None)
     own_http = http is None
     http = http or _http()
     try:
-        if _provider() == "l":
-            logger.debug(f"[SMS:L] 忽略状态设置 id={activation_id}, status={status}")
+        if _provider() in ("l", "h"):
+            logger.debug("[SMS:%s] 本地平台不使用 handler_api 状态设置 id=%s status=%s", _provider(), activation_id, status)
             return "OK"
         if _provider() == "smsbower":
             if int(status) == 1:

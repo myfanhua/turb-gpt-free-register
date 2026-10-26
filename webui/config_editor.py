@@ -47,6 +47,26 @@ EDITABLE_FIELDS = [
     },
     # ---- 功能开关 ----
     {
+        "key": "SENTINEL_SDK_AUTO_UPDATE", "file": "openai_protocol.py", "type": "bool", "group": "协议配置",
+        "label": "Sentinel SDK 自动更新", "help": "默认开启，按版本缓存官方 SDK；同一认证会话固定同一份脚本。关闭后使用项目内置 SDK，下载失败不会静默替换为旧版。",
+    },
+    {
+        "key": "SENTINEL_SDK_REFRESH_SECONDS", "file": "openai_protocol.py", "type": "int", "group": "协议配置",
+        "label": "Sentinel SDK 缓存有效期(秒)", "help": "默认86400秒；新会话发现缓存过期时更新，已开始的会话不切换版本。",
+    },
+    {
+        "key": "SENTINEL_SO_COLLECTION_MS", "file": "openai_protocol.py", "type": "int", "group": "协议配置",
+        "label": "Sentinel SO 采集时长(毫秒)", "help": "默认4200毫秒，沿用目标协议的行为采集序列；0跳过采集，范围0至10000。正值为参考时长，完整事件序列可能更长。",
+    },
+    {
+        "key": "SEND_HIGH_ENTROPY_CLIENT_HINTS", "file": "browser.py", "type": "bool", "group": "协议配置",
+        "label": "纯协议高熵 Client Hints", "help": "默认开启，发送当前 Chromium 画像的完整版本、平台版本、架构等提示头；Safari/Firefox 不发送 Chromium 提示头。",
+    },
+    {
+        "key": "PROTOCOL_REGISTRATION_PHONE_ENABLED", "file": "register.py", "type": "bool", "group": "协议配置",
+        "label": "纯协议注册手机验证", "help": "仅注册命中 add-phone 时使用已有接码平台配置；默认关闭，与 Codex 授权开关独立。开启后可能取号计费，新旧 UI 均可配置。",
+    },
+    {
         "key": "ENABLE_CODEX_AUTO", "file": "codex.py", "type": "bool", "group": "功能开关",
         "label": "启用 Codex OAuth", "help": "注册成功后自动跑 Codex 授权（全新session+接码），落盘 codex-邮箱.json",
     },
@@ -55,7 +75,7 @@ EDITABLE_FIELDS = [
         "label": "注册驱动", "help": "默认推荐 roxy；protocol=纯协议，容易封号不建议；roxy=RoxyBrowser；cloak=CloakBrowser；browser_use=Browser Use Cloud+Playwright；skyvern=Skyvern Browser Sessions+Playwright",
     },
     {
-        "key": "PROTOCOL_HTTP_CLIENT", "file": "browser.py", "type": "str", "group": "功能开关",
+        "key": "PROTOCOL_HTTP_CLIENT", "file": "browser.py", "type": "str", "group": "协议配置",
         "label": "纯协议 HTTP 客户端", "help": "curl_cffi / wreq；作用于 BrowserSession（含纯协议注册和后台 2FA），不改变 Roxy 注册。保存后新会话生效；wreq 需要 Python >=3.11。",
         "choices": [
             {"value": "curl_cffi", "label": "curl_cffi（默认）"},
@@ -63,11 +83,11 @@ EDITABLE_FIELDS = [
         ],
     },
     {
-        "key": "CURL_CFFI_IMPERSONATE", "file": "browser.py", "type": "str", "group": "功能开关",
+        "key": "CURL_CFFI_IMPERSONATE", "file": "browser.py", "type": "str", "group": "协议配置",
         "label": "curl_cffi 浏览器协议", "help": "仅在选择 curl_cffi 时使用；列出当前安装版本支持的桌面 Chrome / Edge / Firefox / Safari 指纹，新会话生效。",
     },
     {
-        "key": "WREQ_EMULATION", "file": "browser.py", "type": "str", "group": "功能开关",
+        "key": "WREQ_EMULATION", "file": "browser.py", "type": "str", "group": "协议配置",
         "label": "wreq 浏览器协议", "help": "仅在选择 wreq 时使用；列出当前安装版本支持的桌面浏览器指纹。需要安装 wreq；仅同步基础 UA/Client Hints，不等价于完整浏览器环境。",
     },
     {
@@ -75,7 +95,7 @@ EDITABLE_FIELDS = [
         "label": "注册后自动查套餐", "help": "注册成功后自动入队查询套餐/Plus 资格；关闭后仅保存账号，不自动查套餐",
     },
     {
-        "key": "PROTOCOL_REUSE_FINGERPRINT_BY_EMAIL", "file": "register.py", "type": "bool", "group": "注册方式",
+        "key": "PROTOCOL_REUSE_FINGERPRINT_BY_EMAIL", "file": "register.py", "type": "bool", "group": "协议配置",
         "label": "同邮箱保持协议指纹", "help": "仅影响纯协议注册；开启后同一邮箱重复任务复用稳定设备指纹，关闭后每次任务创建全新指纹",
     },
 
@@ -780,6 +800,18 @@ EDITABLE_FIELDS = [
     {
         "key": "SMS_CODE_WAIT", "file": "codex.py", "type": "int", "group": "接码平台",
         "label": "单号等短信(秒)", "help": "单个号等待短信到达的最长秒数，超时则换号",
+    },
+    {
+        "key": "PROTOCOL_PHONE_RESEND_INTERVAL", "file": "register.py", "type": "int", "group": "协议配置",
+        "label": "注册短信重发间隔(秒)", "help": "纯协议注册同号等待期间请求 phone-otp/resend 的间隔，默认20秒；不延长单号等待总上限。",
+    },
+    {
+        "key": "PROTOCOL_PHONE_MAX_RESENDS", "file": "register.py", "type": "int", "group": "协议配置",
+        "label": "注册短信最大重发次数", "help": "默认3次，0禁用；运行时上限10次。认证失败、限流或未知网络结果不盲目重发。",
+    },
+    {
+        "key": "PROTOCOL_PHONE_CODE_ATTEMPTS", "file": "register.py", "type": "int", "group": "协议配置",
+        "label": "注册同号验证码尝试次数", "help": "默认3次；明确错码时保留号码等待新码，过滤已提交旧码，仍受单号总超时限制。",
     },
     {
         "key": "SMS_API_KEY", "file": "codex.py", "type": "str", "group": "接码平台",

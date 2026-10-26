@@ -33,9 +33,12 @@ import pyotp
 # 协议级常量（CLIENT_ID/URL/SCOPE/OUTPUT_DIRNAME）虽然不会改，统一从 _cfg 读，
 # 这样 reload 后立即生效，不用再分两套导入。
 from config import codex as _cfg
-from core.session import BrowserSession
+from core.session import BrowserSession, close_browser_session
+from core.cookie_scope import cookies_for_url
 from core.humanize import delay as human_delay
 from core.openai_auth import (
+    _check_stop_requested,
+    _interruptible_sleep,
     _is_transient_network_error,
     _is_retryable_authorize_error,
     _reset_retryable_circuit,
@@ -71,6 +74,7 @@ def _with_net_retry(label: str, fn):
     """
     last_exc = None
     for attempt in range(1, _NET_MAX_ATTEMPTS + 1):
+        _check_stop_requested()
         try:
             return fn()
         except Exception as exc:
@@ -84,7 +88,7 @@ def _with_net_retry(label: str, fn):
                 f"[Codex] {label} 临时性网络错误 ({type(exc).__name__}: {str(exc)[:120]})，"
                 f"{backoff:.1f}s 后重试 (尝试 {attempt}/{_NET_MAX_ATTEMPTS})..."
             )
-            time.sleep(backoff)
+            _interruptible_sleep(backoff)
     raise last_exc if last_exc else RuntimeError(f"[Codex] {label} 重试耗尽但无异常记录")
 
 
@@ -92,6 +96,7 @@ def _with_auth_navigation_retry(session: BrowserSession, label: str, fn):
     """对 Auth document 的 403/429/5xx 重试，并保留当前 Cookie/设备上下文。"""
     last_exc = None
     for attempt in range(1, _NET_MAX_ATTEMPTS + 1):
+        _check_stop_requested()
         try:
             resp = fn()
             status = int(getattr(resp, "status_code", 0) or 0)
@@ -116,7 +121,7 @@ def _with_auth_navigation_retry(session: BrowserSession, label: str, fn):
                 label, attempt, _NET_MAX_ATTEMPTS, type(exc).__name__,
                 str(exc)[:160], backoff,
             )
-            time.sleep(backoff)
+            _interruptible_sleep(backoff)
     raise last_exc if last_exc else RuntimeError(f"[Codex] {label} 重试耗尽")
 
 
@@ -496,6 +501,7 @@ def _submit_sub2_callback(callback_url: str, *, session_id: str = "", redirect_u
     base_delay = max(1.0, float(getattr(_cfg, "CPA_CALLBACK_SUBMIT_RETRY_DELAY", 6) or 6))
     last_exc = None
     for attempt in range(1, max_attempts + 1):
+        _check_stop_requested()
         try:
             logger.info("[Codex][sub2] 正在上传 OAuth callback（第 %s/%s 次）... callback=%s", attempt, max_attempts, callback_url)
             payload = _sub2_codex_request_json("POST", path, body)
@@ -509,7 +515,7 @@ def _submit_sub2_callback(callback_url: str, *, session_id: str = "", redirect_u
                 raise
             delay = base_delay * attempt
             logger.warning("[Codex][sub2] callback 上传失败，将在 %.1fs 后重试：attempt=%s/%s error=%s", delay, attempt, max_attempts, exc)
-            time.sleep(delay)
+            _interruptible_sleep(delay)
     raise RuntimeError(f"[Codex][sub2] callback 上传失败：{last_exc}")
 
 
@@ -687,6 +693,9 @@ def _request_cpa_authorize_url() -> dict:
 
 
 def _is_cpa_callback_retryable(exc: Exception) -> bool:
+    from core.registration_service import StopRequested
+    if isinstance(exc, StopRequested):
+        return False
     text = str(exc or "").lower()
     return (
         "status=409" in text
@@ -729,6 +738,7 @@ def _submit_cpa_callback(callback_url: str) -> dict:
     base_delay = max(1.0, float(getattr(_cfg, "CPA_CALLBACK_SUBMIT_RETRY_DELAY", 6) or 6))
     last_exc = None
     for attempt in range(1, max_attempts + 1):
+        _check_stop_requested()
         try:
             logger.info(
                 "[Codex][CPA] 正在提交 OAuth callback 给 CPA（第 %s/%s 次）... callback=%s",
@@ -751,7 +761,7 @@ def _submit_cpa_callback(callback_url: str) -> dict:
                 "[Codex][CPA] callback 提交失败，将在 %.1fs 后重试：attempt=%s/%s error=%s",
                 delay, attempt, max_attempts, exc
             )
-            time.sleep(delay)
+            _interruptible_sleep(delay)
     raise RuntimeError(f"[Codex][CPA] callback 提交失败：{last_exc}")
 
 
@@ -1209,9 +1219,9 @@ def _try_password_mfa_login(
 # ============================================================
 
 def _submit_email_otp(session: BrowserSession, code: str) -> dict:
-    """POST email-otp/validate 提交邮箱验证码。带 sentinel(authorize_continue)。"""
-    sentinel_resp = request_sentinel_token(session, "authorize_continue")
-    sentinel_header, so_header = build_sentinel_header(session, sentinel_resp, "authorize_continue")
+    """POST email-otp/validate 使用与端点匹配的 Sentinel flow。"""
+    sentinel_resp = request_sentinel_token(session, "email_otp_validate")
+    sentinel_header, so_header = build_sentinel_header(session, sentinel_resp, "email_otp_validate")
     resp = _post_json(
         session,
         "https://auth.openai.com/api/accounts/email-otp/validate",
@@ -1237,7 +1247,8 @@ def _submit_email_otp(session: BrowserSession, code: str) -> dict:
             f"[Codex] 邮箱 OTP 验证失败 status={resp.status_code}: {(resp.text or '')[:300]}"
         )
     logger.info("[Codex] 邮箱 OTP 验证通过")
-    result = _resp_json(resp)
+    from core.openai_auth import parse_auth_step_response
+    result = parse_auth_step_response(resp, "codex/email-otp/validate")
     logger.info(
         "[Codex] 邮箱 OTP 后 Auth 下一步：page=%s continue=%s phone=%s mfa=%s",
         _page_type(result) or "-",
@@ -1263,7 +1274,7 @@ def _sleep_before_phone_retry(attempt: int, max_retries: int, *, prefix: str = "
         return
     seconds = random.uniform(3.0, 8.0)
     logger.info(f"{prefix} 换号前随机等待 {seconds:.1f} 秒")
-    time.sleep(seconds)
+    _interruptible_sleep(seconds)
 
 
 def _do_phone_verification(session: BrowserSession) -> dict:
@@ -1281,6 +1292,7 @@ def _do_phone_verification(session: BrowserSession) -> dict:
     try:
         last_err = None
         for attempt in range(1, max_retries + 1):
+            _check_stop_requested()
             activation_id = None
             try:
                 activation_id, phone = sms_provider.acquire_number(http)
@@ -1358,6 +1370,13 @@ def _do_phone_verification(session: BrowserSession) -> dict:
                     sms_provider.cancel(activation_id, http)
                 _sleep_before_phone_retry(attempt, max_retries)
                 continue
+            except Exception:
+                if activation_id:
+                    try:
+                        sms_provider.cancel(activation_id, http)
+                    except Exception:
+                        logger.debug("[Codex] 释放中断的手机验证号码失败", exc_info=True)
+                raise
 
         raise RuntimeError(
             f"[Codex] 手机号验证重试 {max_retries} 次仍失败（provider={provider}）"
@@ -1376,6 +1395,8 @@ def _get_workspace_id(session: BrowserSession) -> str:
     优先从 oai-client-auth-session cookie 解出 workspace；cookie 尚未落地时，
     退回 Auth 响应元数据，并在有界时间内等待 cookie/响应状态完成。
     """
+    from core.registration_service import StopRequested
+
     def find_workspace_id(payload: dict) -> str:
         for workspace in payload.get("workspaces") or []:
             if isinstance(workspace, dict) and workspace.get("id"):
@@ -1384,20 +1405,19 @@ def _get_workspace_id(session: BrowserSession) -> str:
 
     deadline = time.monotonic() + max(0.0, float(_WORKSPACE_COOKIE_WAIT_SECONDS))
     while True:
+        _check_stop_requested()
         raw = None
         try:
-            for c in session.session.cookies.jar:
+            cookies = session.session.cookies
+            source = cookies_for_url(cookies, "https://auth.openai.com/")
+            for c in source:
                 if c.name == "oai-client-auth-session":
                     raw = c.value
                     break
+        except StopRequested:
+            raise
         except Exception:
             pass
-        if not raw:
-            try:
-                raw = session.session.cookies.get("oai-client-auth-session")
-            except Exception:
-                raw = None
-
         if raw:
             wid = find_workspace_id(_decode_auth_session_metadata(raw))
             if wid:
@@ -1414,7 +1434,7 @@ def _get_workspace_id(session: BrowserSession) -> str:
             if not raw:
                 raise RuntimeError("[Codex] 找不到 oai-client-auth-session cookie，无法取 workspace_id")
             raise RuntimeError("[Codex] oai-client-auth-session 中无可用 workspace_id")
-        time.sleep(min(_WORKSPACE_POLL_INTERVAL_SECONDS, remaining))
+        _interruptible_sleep(min(_WORKSPACE_POLL_INTERVAL_SECONDS, remaining))
 
 
 def _select_workspace_and_get_callback(session: BrowserSession, state: str) -> str:
@@ -1731,8 +1751,9 @@ def run_codex_oauth(
         force: True 时跳过 ENABLE_CODEX_AUTO 开关限制，供手动补跑使用
 
     Returns:
-        结构化结果 dict。任何异常都被吞掉转 status=failed，不向上抛，不影响注册主流程。
+        结构化结果 dict。普通异常转 status=failed；StopRequested 向上传播以停止任务。
     """
+    from core.registration_service import StopRequested
     if not force and not _cfg.ENABLE_CODEX_AUTO:
         return _codex_result(status="skipped", message="ENABLE_CODEX_AUTO=False")
     if not email:
@@ -1855,6 +1876,8 @@ def run_codex_oauth(
                     email_otp = otp_provider(email, after_ts=otp_after_ts)
                     break
                 except Exception as exc:
+                    if isinstance(exc, StopRequested):
+                        raise
                     if email_otp_attempt >= max_email_otp_attempts:
                         raise
                     logger.warning(
@@ -1876,7 +1899,7 @@ def run_codex_oauth(
                         auth_result = retry_result
                         break
             if not password_login_done:
-                logger.info(f"[Codex] 邮箱 OTP 收到：{email_otp}")
+                logger.info("[Codex] 邮箱 OTP 已收到（验证码已隐藏）")
                 human_delay("otp_input")
                 auth_result = _submit_email_otp(session, email_otp)
                 human_delay("api")
@@ -1993,6 +2016,9 @@ def run_codex_oauth(
             message=f"账号已废（{exc.error_code}）",
         )
     except Exception as exc:
+        from core.registration_service import StopRequested
+        if isinstance(exc, StopRequested):
+            raise
         if _is_cpa_callback_reauth_error(exc) and _cpa_reauth_round < 2:
             logger.warning(
                 "[Codex][CPA] callback 返回 Timeout waiting for OAuth callback，重新开启第 %s/2 轮 Codex 授权：%s",
@@ -2012,3 +2038,8 @@ def run_codex_oauth(
             email=email,
             message=f"{type(exc).__name__}: {str(exc)[:200]}",
         )
+    finally:
+        try:
+            close_browser_session(session)
+        except Exception:
+            logger.debug("[Codex] 关闭授权 session 失败", exc_info=True)

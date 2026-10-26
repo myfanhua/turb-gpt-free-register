@@ -48,6 +48,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 cache/roxy-assets/
+cache/sentinel-sdk/
 cache/mailcode/
 
 # 历史调试输出（_xxx.out / _xxx_dump.html）

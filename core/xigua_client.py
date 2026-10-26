@@ -5,6 +5,7 @@ import logging, re, threading, time, uuid
 from dataclasses import dataclass
 import requests
 from config import email as _cfg
+from core.task_control import check_stop_requested as _check_task_stop, sleep as _task_sleep
 from core.otp_utils import extract_otp
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,38 @@ def pick_account() -> XiguaAccount:
 def get_email(): return pick_account().email
 def get_account_context(email):
     with _LOCK: return _CACHE.get(str(email or "").strip().lower())
+
+def get_account_context_metadata(email):
+    account = get_account_context(email)
+    if account is None:
+        return None
+    return {"source": "xigua", "email": account.email, "order_id": account.order_id, "api_base": _base()}
+
+def restore_account_context(email):
+    """先恢复注册时的准确订单，旧账号才回退只读订单列表；不重新下单。"""
+    from core.email_provider import get_saved_email_context_metadata
+    target = str(email or "").strip()
+    cached = get_account_context(target)
+    if cached is not None:
+        return cached
+    metadata = get_saved_email_context_metadata(target, "xigua")
+    order_id = metadata.get("order_id")
+    if metadata and metadata.get("api_base") != _base():
+        raise XiguaError("西瓜 API 地址已变更，停止使用原订单上下文")
+    if isinstance(order_id, str) and order_id.strip():
+        account = XiguaAccount(target, order_id)
+        with _LOCK: _CACHE[target.lower()] = account
+        return account
+    payload = _request("GET", "/api/v1/orders")
+    data = payload.get("data", payload) if isinstance(payload, dict) else payload
+    items = data if isinstance(data, list) else (data.get("items", []) if isinstance(data, dict) else [])
+    for item in items:
+        if (isinstance(item, dict) and str(item.get("email") or "").strip().casefold() == target.casefold()
+                and item.get("id")):
+            account = XiguaAccount(target, str(item["id"]))
+            with _LOCK: _CACHE[target.lower()] = account
+            return account
+    return None
 def release_account(email, status="available", note=None):
     key = str(email or "").strip().lower()
     with _LOCK: account = _CACHE.pop(key, None)
@@ -83,20 +116,8 @@ def release_account(email, status="available", note=None):
     _LAST_CODES.pop(key, None)
 
 def fetch_latest_otp(email, after_ts=0, max_wait=None, poll_interval=None, settle_seconds=None):
-    account = get_account_context(email)
-    if account is None:
-        # 进程重启后按账户邮箱恢复最近订单，避免已注册账号丢失取件上下文。
-        try:
-            payload = _request("GET", "/api/v1/orders")
-            items = payload if isinstance(payload, list) else (payload.get("items", []) if isinstance(payload, dict) else [])
-            target = str(email or "").casefold()
-            for item in items:
-                if str(item.get("email") or "").casefold() == target and item.get("id"):
-                    account = XiguaAccount(str(item["email"]), str(item["id"]))
-                    with _LOCK: _CACHE[target] = account
-                    break
-        except Exception:
-            account = None
+    _check_task_stop()
+    account = get_account_context(email) or restore_account_context(email)
     if account is None: raise XiguaError(f"西瓜邮箱上下文不存在: {email}")
     deadline = time.monotonic() + int(max_wait if max_wait is not None else getattr(_cfg, "OTP_MAX_WAIT", 90) or 90)
     interval = max(1, int(poll_interval if poll_interval is not None else getattr(_cfg, "XIGUA_POLL_INTERVAL", 5) or 5))
@@ -104,6 +125,7 @@ def fetch_latest_otp(email, after_ts=0, max_wait=None, poll_interval=None, settl
     candidate = None
     confirmations = 0
     for _attempt in range(attempts):
+        _check_task_stop()
         if time.monotonic() > deadline:
             break
         data = _unwrap(_request("GET", "/api/v1/orders/" + account.order_id))
@@ -133,5 +155,5 @@ def fetch_latest_otp(email, after_ts=0, max_wait=None, poll_interval=None, settl
                 logger.info("[Xigua] 验证码已连续确认 2 次: %s", code)
                 _LAST_CODES[account.email.lower()] = code
                 return code
-        time.sleep(min(interval, max(0, deadline - time.monotonic())))
+        _task_sleep(min(interval, max(0, deadline - time.monotonic())))
     raise XiguaError(f"西瓜验证码等待超时: {email}")

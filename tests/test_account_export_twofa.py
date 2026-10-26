@@ -58,7 +58,7 @@ class AccountExportTwofaTests(unittest.TestCase):
         session = _OtpSession([_Response(403), _Response(403), _Response(200, {"continue_url":"https://chatgpt.com/callback"})])
         with patch("config.twofa.TWOFA_REAUTH_RETRY_DELAY", 2), \
              patch("config.twofa.TWOFA_REAUTH_MAX_ATTEMPTS", 3), \
-             patch.object(account_export.time, "sleep") as sleep, \
+             patch.object(account_export, "_interruptible_sleep") as sleep, \
              patch("core.openai_auth.send_email_otp") as resend:
             result = account_export._validate_twofa_otp_with_retry(session, "012345")
         self.assertEqual(result, "https://chatgpt.com/callback")
@@ -92,7 +92,7 @@ class AccountExportTwofaTests(unittest.TestCase):
         for response in responses:
             with self.subTest(payload=response.payload, headers=response.headers, text=response.text):
                 session = _OtpSession([response])
-                with patch.object(account_export.time, "sleep") as sleep:
+                with patch.object(account_export, "_interruptible_sleep") as sleep:
                     with self.assertRaises(account_export.TwofaOtpRequestError):
                         account_export._validate_twofa_otp_with_retry(session, "012345")
                 self.assertEqual(len(session.calls), 1)
@@ -101,12 +101,12 @@ class AccountExportTwofaTests(unittest.TestCase):
 
     def test_otp_rate_limit_respects_retry_after_and_does_not_shorten_long_cooldown(self):
         session = _OtpSession([_Response(429, headers={"Retry-After":"10"}), _Response(200, {"continue_url":"ok"})])
-        with patch("config.twofa.TWOFA_REAUTH_RETRY_DELAY", 1), patch.object(account_export.time, "sleep") as sleep:
+        with patch("config.twofa.TWOFA_REAUTH_RETRY_DELAY", 1), patch.object(account_export, "_interruptible_sleep") as sleep:
             self.assertEqual(account_export._validate_twofa_otp_with_retry(session, "012345"), "ok")
         sleep.assert_called_once_with(10)
         for retry_after in ("900", "Wed, 21 Oct 2030 07:28:00 GMT", "9"*100):
             session = _OtpSession([_Response(429, headers={"Retry-After":retry_after})])
-            with patch.object(account_export.time, "sleep") as sleep:
+            with patch.object(account_export, "_interruptible_sleep") as sleep:
                 with self.assertRaises(account_export.TwofaOtpRequestError):
                     account_export._validate_twofa_otp_with_retry(session, "012345")
             sleep.assert_not_called()
@@ -175,7 +175,7 @@ class AccountExportTwofaTests(unittest.TestCase):
         with patch.object(account_export, "_follow_reauth", side_effect=follow), patch(
             "config.twofa.TWOFA_REAUTH_MAX_ATTEMPTS", 3
         ), patch("config.twofa.TWOFA_REAUTH_RETRY_DELAY", 0), patch.object(
-            account_export.time, "sleep"
+            account_export, "_interruptible_sleep"
         ) as sleep:
             result = account_export._follow_reauth_with_retry(
                 session, "https://auth.openai.com/api/accounts/authorize?state=test"
@@ -201,7 +201,7 @@ class AccountExportTwofaTests(unittest.TestCase):
         with patch.object(account_export, "_trigger_reauth", side_effect=trigger), patch(
             "config.twofa.TWOFA_REAUTH_MAX_ATTEMPTS", 3
         ), patch("config.twofa.TWOFA_REAUTH_RETRY_DELAY", 0), patch.object(
-            account_export.time, "sleep"
+            account_export, "_interruptible_sleep"
         ) as sleep:
             with self.assertRaisesRegex(RuntimeError, "HTTP 403"):
                 account_export._trigger_reauth_with_retry(

@@ -18,11 +18,55 @@ EMAIL_SOURCE 支持单个或多个来源：
     ["outlook", "generic_api", "mailnest", "cloudmail", "remail", "xigua"]  # 也兼容列表写法
 """
 import logging
+import json
 from typing import Iterable
 
 logger = logging.getLogger(__name__)
 
 _VALID_SOURCES = ("outlook", "generic_api", "imap", "cloudflare_domain", "cloudflare", "gptmail", "mailnest", "cloudmail", "remail", "xigua", "mailcode")
+
+
+def get_saved_email_context_metadata(email: str, source: str) -> dict:
+    """读取账号专属取件凭证；来源和邮箱必须匹配，不从当前全局来源猜测。"""
+    from core import db
+    row = db.get_account_by_email(email) or {}
+    saved_source = _normalize_explicit_email_source(row.get("email_source"))
+    if saved_source and saved_source != source:
+        return {}
+    raw = row.get("extra_json")
+    try:
+        extra = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return {}
+    metadata = extra.get("email_service") if isinstance(extra, dict) else None
+    if not isinstance(metadata, dict) or metadata.get("source") != source:
+        return {}
+    saved_email = metadata.get("email")
+    if not isinstance(saved_email, str) or saved_email.strip().casefold() != str(email).strip().casefold():
+        return {}
+    return dict(metadata)
+
+
+def get_email_context_metadata(email: str, source: str | None) -> dict:
+    """仅保存无法由邮箱地址+全局配置或已有持久化池恢复的专属凭证。
+
+    不触发领取/购买/远端查询，也不复制全局 API Key。供所有注册驱动及检查点共用。
+    """
+    source = _normalize_explicit_email_source(source)
+    if source not in ("cloudflare", "remail", "xigua"):
+        return {}
+    try:
+        if source == "cloudflare":
+            from core.cf_temp_mail_client import get_account_context_metadata
+        elif source == "xigua":
+            from core.xigua_client import get_account_context_metadata
+        else:
+            from core.remail_client import get_account_context_metadata
+        return get_account_context_metadata(email) or get_saved_email_context_metadata(email, source)
+    except Exception as exc:
+        # 不能把 JWT/service token 或供应商完整响应放入日志。
+        logger.warning("[EmailProvider] 读取邮箱恢复材料失败 source=%s error_type=%s", source, type(exc).__name__)
+        return {}
 
 
 def parse_email_sources(value=None) -> list[str]:
@@ -51,6 +95,8 @@ def parse_email_sources(value=None) -> list[str]:
 
 
 def _pick_from_source(source: str) -> str:
+    from core.task_control import check_stop_requested
+    check_stop_requested()
     if source == "gptmail":
         from core.gptmail_client import pick_account
         return pick_account().email
@@ -87,6 +133,7 @@ def _pick_from_source(source: str) -> str:
 
 def acquire_email() -> str:
     """根据 EMAIL_SOURCE 领取一个用于注册的邮箱地址；多个来源时按顺序兜底。"""
+    from core.registration_service import StopRequested
     sources = parse_email_sources()
     last_exc: Exception | None = None
     for source in sources:
@@ -94,6 +141,8 @@ def acquire_email() -> str:
             email = _pick_from_source(source)
             logger.info(f"[EmailProvider] 使用邮箱来源: {source}, email={email}")
             return email
+        except StopRequested:
+            raise
         except Exception as exc:
             last_exc = exc
             logger.warning(f"[EmailProvider] 来源 {source} 领取邮箱失败: {type(exc).__name__}: {exc}")

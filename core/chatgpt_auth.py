@@ -26,11 +26,11 @@ def _ensure_authorize_context(authorize_url: str, session: BrowserSession, email
     """
     try:
         parsed = urlparse(authorize_url)
-        if not parsed.netloc.endswith("auth.openai.com"):
+        if parsed.scheme != "https" or parsed.hostname != "auth.openai.com":
             return authorize_url
         params = parse_qs(parsed.query, keep_blank_values=True)
-        # 旧实现主动注入该字段；当前成功浏览器 authorize 已不携带。
-        changed = bool(params.pop("ext-passkey-client-capabilities", None))
+        # 只补缺失上下文，不能删改服务端返回的能力列表或本地化选择。
+        changed = False
         language_getter = getattr(session, "navigator_language", None)
         if callable(language_getter):
             ui_locale = str(language_getter() or "en-US")
@@ -49,11 +49,7 @@ def _ensure_authorize_context(authorize_url: str, session: BrowserSession, email
             "auth_return_target_category": "chatgpt_home",
         }
         for key, value in required.items():
-            if key in {"ccaps", "auth_return_target_category", "ui_locales"}:
-                if params.get(key) != [value]:
-                    params[key] = [value]
-                    changed = True
-            elif not params.get(key):
+            if value and key not in params:
                 params[key] = [value]
                 changed = True
         if not changed:
@@ -118,7 +114,9 @@ def get_csrf_token(session: BrowserSession) -> str:
     resp.raise_for_status()
 
     data = resp.json()
-    csrf_token = data.get("csrfToken", "")
+    csrf_token = data.get("csrfToken") if isinstance(data, dict) else None
+    if resp.status_code != 200 or not isinstance(csrf_token, str) or not csrf_token.strip():
+        raise RuntimeError("CSRF Token 获取失败：响应缺少有效 csrfToken")
     logger.info(f"[步骤2] 获取 CSRF Token 成功: {csrf_token[:20]}...")
     return csrf_token
 
@@ -152,6 +150,9 @@ def signin_openai(session: BrowserSession, csrf_token: str, email: str) -> str:
     Returns:
         authorize_url: auth.openai.com 的授权 URL
     """
+    sync = getattr(session, "sync_device_id_from_cookies", None)
+    if callable(sync):
+        sync("chatgpt.com")
     # 构造 URL 查询参数
     query_params = {
         "prompt": "login",
@@ -165,7 +166,6 @@ def signin_openai(session: BrowserSession, csrf_token: str, email: str) -> str:
     # 构造请求头
     headers = session.get_nextauth_headers(referer="https://chatgpt.com/auth/login")
     headers["content-type"] = "application/x-www-form-urlencoded"
-    headers["origin"] = "https://chatgpt.com"
 
     # 构造请求体
     body = urlencode({
@@ -183,6 +183,11 @@ def signin_openai(session: BrowserSession, csrf_token: str, email: str) -> str:
 
     if not authorize_url:
         raise ValueError(f"[步骤3] 未获取到 authorize URL, 响应: {data}")
+
+    from core.protocol_registration import normalize_auth_url
+    authorize_url = normalize_auth_url(authorize_url)
+    if urlparse(authorize_url).hostname != "auth.openai.com":
+        raise RuntimeError("signin 响应未指向 Auth 授权域名")
 
     authorize_url = _ensure_authorize_context(authorize_url, session, email)
     logger.info("[步骤3] 获取 authorize URL 成功，已确认 login_or_signup/oai-did 上下文")

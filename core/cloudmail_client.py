@@ -8,6 +8,7 @@ import re
 import secrets
 import string
 import time
+from core.task_control import check_stop_requested as _check_task_stop, sleep as _task_sleep
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -351,6 +352,7 @@ def fetch_latest_otp(
     poll_interval: int | None = None,
     settle_seconds: int | None = None,
 ) -> str:
+    _check_task_stop()
     target = str(email or "").strip()
     if not target:
         raise CloudMailError("CloudMail 取码缺少邮箱地址")
@@ -366,6 +368,7 @@ def fetch_latest_otp(
 
     logger.info("[CloudMail] 开始轮询邮箱 %s，最长 %ss", target, wait_seconds)
     while time.monotonic() <= deadline:
+        _check_task_stop()
         try:
             mails = _request(
                 "/api/public/emailList",
@@ -410,7 +413,7 @@ def fetch_latest_otp(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        time.sleep(min(interval, remaining))
+        _task_sleep(min(interval, remaining))
 
     if best_otp:
         return best_otp

@@ -29,6 +29,7 @@ import logging
 import os
 import threading
 import time
+from core.task_control import check_stop_requested as _check_task_stop, sleep as _task_sleep
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.header import decode_header
@@ -996,6 +997,7 @@ def fetch_latest_otp(
         subject_includes / subject_excludes: 可选 subject 过滤
         settle_seconds: 抓到第一封后再等多少秒看有没有更新的（默认 8s）
     """
+    _check_task_stop()
     account = get_account_context(email)
     if account is None:
         raise OutlookClientError(f"未找到 {email} 的账号上下文，无法取 OTP")
@@ -1021,6 +1023,7 @@ def fetch_latest_otp(
 
     while time.time() < deadline:
         # 每轮都重新拉，因为可能有新邮件，也可能旧邮件因延迟才出现
+        _check_task_stop()
         all_candidates: list[tuple[str, dict, float, str]] = []
         for protocol in ("graph", "imap"):
             emails = _fetch_via(session, protocol, account)
@@ -1108,7 +1111,7 @@ def fetch_latest_otp(
             logger.info(
                 f"[Outlook] 暂未收到符合条件的 OpenAI 邮件，{interval}s 后重试（剩余 {remaining}s）..."
             )
-        time.sleep(interval)
+        _task_sleep(interval)
 
     # 超时但已经锁定过候选（settle 没等到结束就到 deadline 了）
     if best_otp:

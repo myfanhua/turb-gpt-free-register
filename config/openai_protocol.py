@@ -26,6 +26,9 @@ OPENAI_REDIRECT_URI = "https://chatgpt.com/api/auth/callback/openai"
 
 # Sentinel SDK 版本号（影响 sentinel iframe URL 与 referer header）
 SENTINEL_SV = "20260810913b"
+SENTINEL_SDK_AUTO_UPDATE = True
+SENTINEL_SDK_REFRESH_SECONDS = 86400
+SENTINEL_SO_COLLECTION_MS = 4200
 
 # ChatGPT 页面 build 标识（用于 Sentinel p[6] / documentElement data-build 模拟）
 OPENAI_BUILD_ID = "prod-d4e40d432de549a66bf9feb61d43c262b258386f"
@@ -60,6 +63,9 @@ OPENAI_PREFLIGHT_TIMEOUT = 12.0
 
 
 apply_env_overrides(globals(), {
+    "SENTINEL_SDK_AUTO_UPDATE": "bool",
+    "SENTINEL_SDK_REFRESH_SECONDS": "int",
+    "SENTINEL_SO_COLLECTION_MS": "int",
     "OPENAI_PROXY_RETRY_MAX_ATTEMPTS": "int",
     "OPENAI_PROXY_RETRY_DELAY": "float",
     "OPENAI_PREFLIGHT_TIMEOUT": "float",

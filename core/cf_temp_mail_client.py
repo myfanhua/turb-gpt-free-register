@@ -13,6 +13,7 @@ import secrets
 import string
 import threading
 import time
+from core.task_control import check_stop_requested as _check_task_stop, sleep as _task_sleep
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email import policy
@@ -310,6 +311,35 @@ def get_account_context(email: str) -> CFTempMailAccount | None:
     return _CONTEXT_CACHE.get(_cache_key(email))
 
 
+def get_account_context_metadata(email: str) -> dict | None:
+    account = get_account_context(email)
+    if account is None:
+        return None
+    return {"source": "cloudflare", "email": account.email, "jwt": account.jwt,
+            "domain": account.domain, "created_at": account.created_at, "api_base": _base_url()}
+
+
+def restore_account_context(email: str) -> CFTempMailAccount | None:
+    """恢复原地址的 JWT；绝不调用 new_address 创建一个不同邮箱。"""
+    from core.email_provider import get_saved_email_context_metadata
+    target = str(email or "").strip()
+    cached = get_account_context(target)
+    if cached is not None:
+        return cached
+    metadata = get_saved_email_context_metadata(target, "cloudflare")
+    jwt = metadata.get("jwt")
+    # Worker 不同，其 JWT 不能互传；配置换域后停止而不是把凭证发送到新主机。
+    if not isinstance(jwt, str) or not jwt.strip() or metadata.get("api_base") != _base_url():
+        return None
+    try:
+        created_at = float(metadata.get("created_at") or 0.0)
+    except (TypeError, ValueError):
+        created_at = 0.0
+    account = CFTempMailAccount(target, jwt, target.rsplit("@", 1)[-1].lower(), created_at)
+    _CONTEXT_CACHE[_cache_key(target)] = account
+    return account
+
+
 def release_account(email: str, status: str = "available", note: str | None = None) -> None:
     _CONTEXT_CACHE.pop(_cache_key(email), None)
     logger.info(
@@ -568,14 +598,15 @@ def fetch_latest_otp(
     settle_seconds: int | None = None,
 ) -> str:
     """轮询 Cloudflare 邮箱，返回领取时间后最新的 OpenAI 六位验证码。"""
+    _check_task_stop()
     target = str(email or "").strip()
     if not target:
         raise CFTempMailError("Cloudflare 取码缺少邮箱地址")
 
-    account = get_account_context(target)
+    account = get_account_context(target) or restore_account_context(target)
     if account is None or not account.jwt:
         raise CFTempMailError(
-            f"Cloudflare 邮箱上下文缺失: {target}。请确认该地址由当前进程 cloudflare 来源创建。"
+            f"Cloudflare 邮箱取件凭证缺失或 Worker 地址已变更: {target}。需要原地址创建时返回的 JWT。"
         )
 
     wait_seconds = int(max_wait if max_wait is not None else _email_cfg.OTP_MAX_WAIT)
@@ -594,12 +625,13 @@ def fetch_latest_otp(
     logger.info("[Cloudflare] 开始轮询邮箱 %s，最长 %ss", target, wait_seconds)
 
     while time.monotonic() < deadline:
+        _check_task_stop()
         try:
             messages = list_messages(account.jwt)
         except CFTempMailError as exc:
             last_error = str(exc)
             logger.warning("[Cloudflare] 拉取邮件失败: %s", exc)
-            time.sleep(interval)
+            _task_sleep(interval)
             continue
 
         if messages:
@@ -692,7 +724,7 @@ def fetch_latest_otp(
             )
         if remaining <= 0:
             break
-        time.sleep(min(interval, max(1, remaining)))
+        _task_sleep(min(interval, max(1, remaining)))
 
     if best_otp:
         logger.warning("[Cloudflare] 总超时但已有候选，返回 OTP=%s", best_otp)

@@ -1,328 +1,180 @@
 # -*- coding: utf-8 -*-
-"""
-Sentinel Runner 适配层
-通过 subprocess 调用项目根目录的 sentinel-runner.js，
-让 Node.js 在 vm 沙箱中真实运行 sdk.js，生成可通过校验的 sentinel-token。
+"""目标协议 Sentinel JS 的适配层：stdin JSON 输入，stdout JSON 输出。
 
-工作原理：
-1. Python 端先调用 sentinel.openai.com/backend-api/sentinel/req 拿到 challenge JSON
-2. 把 challenge 写入临时文件
-3. 调用 node sentinel-runner.js --challenge-file <临时文件> ...
-4. 捕获 stdout 即为 openai-sentinel-token 的 value
+网络请求仍由 BrowserSession 完成，JS 只在本地 Node VM 中运行会话固定的 SDK。
+旧 sentinel/sentinel-runner.js 保留为历史资源，不在注册调用链中回退使用。
 """
 import json
 import logging
 import os
+from pathlib import Path
 import subprocess
 import sys
-import tempfile
-from pathlib import Path
+import time
 
+from config import openai_protocol as protocol_settings
 from config import (
-    USER_AGENT,
-    CHROME_MAJOR,
-    CHROME_FULL_VERSION,
-    SEC_CH_UA,
-    SEC_CH_UA_PLATFORM,
-    SEC_CH_UA_FULL_VERSION_LIST,
-    SEC_CH_UA_PLATFORM_VERSION,
-    SEC_CH_UA_ARCH,
-    SEC_CH_UA_BITNESS,
-    SEC_CH_UA_MODEL,
-    TIMEZONE_IANA,
-    TIMEZONE_NAME,
-    TIMEZONE_OFFSET_MINUTES,
-    NAVIGATOR_LANGUAGE,
-    NAVIGATOR_LANGUAGES,
-    SCREEN_WIDTH,
-    SCREEN_HEIGHT,
-    HARDWARE_CONCURRENCY,
-    JS_HEAP_SIZE_LIMIT,
-    DEVICE_MEMORY,
-    SENTINEL_SV,
-    OPENAI_BUILD_ID,
+    USER_AGENT, TIMEZONE_IANA, NAVIGATOR_LANGUAGE, NAVIGATOR_LANGUAGES,
+    SCREEN_WIDTH, SCREEN_HEIGHT, HARDWARE_CONCURRENCY, DEVICE_MEMORY,
 )
 
 logger = logging.getLogger(__name__)
-
-# 项目根目录（core 的上一级）
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-# Node 资源放在项目根的 sentinel/ 子目录下
-_SENTINEL_DIR = _PROJECT_ROOT / "sentinel"
-_RUNNER_PATH = _SENTINEL_DIR / "sentinel-runner.js"
-_SDK_PATH = _SENTINEL_DIR / "sdk.js"
-
-# 各 flow 对应的 page-url（与浏览器实际页面一致，影响 sdk.js 指纹生成）
-_FLOW_PAGE_URL = {
-    "username_password_create": "https://auth.openai.com/create-account/password",
-    "email_otp_validate": "https://auth.openai.com/email-verification",
-    "authorize_continue": "https://auth.openai.com/email-verification",
-    "oauth_create_account": "https://auth.openai.com/about-you",
-}
-
-# Node 子进程超时（秒）。sdk.js 内部可能要做 PoW，留充裕一点
+_SENTINEL_DIR = _PROJECT_ROOT / 'sentinel'
+_RUNNER_PATH = _SENTINEL_DIR / 'openai_sentinel_quickjs.js'
+_SDK_PATH = _SENTINEL_DIR / 'sdk.js'
 _RUNNER_TIMEOUT = 60
 
 
 def _resolve_node_executable() -> str:
-    """
-    解析 Node 可执行文件名。Windows 下默认 node.exe，类 Unix 为 node。
-    允许通过环境变量 NODE_EXECUTABLE 覆盖。
-    """
-    override = os.environ.get("NODE_EXECUTABLE")
-    if override:
-        return override
-    return "node.exe" if sys.platform.startswith("win") else "node"
+    return (os.environ.get('NODE_EXECUTABLE') or os.environ.get('OPENAI_SENTINEL_NODE_PATH')
+            or ('node.exe' if sys.platform.startswith('win') else 'node'))
 
 
-def _ensure_runner_environment() -> None:
-    """启动前的强制检查：runner.js / sdk.js 必须存在。"""
-    if not _RUNNER_PATH.exists():
-        raise FileNotFoundError(f"找不到 sentinel-runner.js: {_RUNNER_PATH}")
-    if not _SDK_PATH.exists():
-        raise FileNotFoundError(f"找不到 sdk.js: {_SDK_PATH}")
+def _ensure_runner_environment(sdk_path=None) -> None:
+    for path in (_RUNNER_PATH, Path(sdk_path or _SDK_PATH)):
+        if not path.is_file():
+            raise FileNotFoundError(f'找不到 Sentinel 资源: {path}')
+
+
+def _run_node(cmd, *, input, cwd, timeout, env):
+    """有界、可停止地通信；停止/超时时 kill 并回收子进程和管道。"""
+    from core.openai_auth import _check_stop_requested
+    _check_stop_requested()
+    deadline = time.monotonic() + timeout
+    with subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True, encoding='utf-8',
+                          cwd=cwd, env=env) as proc:
+        pending_input = input
+        try:
+            while True:
+                _check_stop_requested()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                try:
+                    stdout, stderr = proc.communicate(input=pending_input, timeout=min(0.25, remaining))
+                    _check_stop_requested()
+                    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+                except subprocess.TimeoutExpired:
+                    # communicate 保留上次尚未写完的输入，后续不得重复传入。
+                    pending_input = None
+        except BaseException:
+            if proc.poll() is None:
+                proc.kill()
+            # 异常路径不再解码输出，避免坏UTF-8掩盖原始停止/超时异常。
+            proc.wait()
+            raise
 
 
 def generate_sentinel_token(
-    challenge: dict,
-    flow: str,
-    device_id: str,
-    user_agent: str | None = None,
-    page_url: str | None = None,
-    browser_profile: dict | None = None,
-    sentinel_sid: str | None = None,
-    react_listening_key: str | None = None,
-    react_container_key: str | None = None,
-    react_resources_key: str | None = None,
-    cookie: str | None = None,
+    challenge: dict, flow: str, device_id: str,
+    user_agent: str | None = None, page_url: str | None = None,
+    browser_profile: dict | None = None, sentinel_sid: str | None = None,
+    react_listening_key: str | None = None, react_container_key: str | None = None,
+    react_resources_key: str | None = None, cookie: str | None = None,
+    sdk_path: Path | None = None, action: str = 'token',
 ) -> str:
+    """保持业务接口兼容；目标 JS 使用 requirements/solve 两种 action。
+
+    page_url、React keys 是旧 runner 的兼容参数，目标实现不使用它们；不注入旧环境。
     """
-    把 sentinel.openai.com 返回的 challenge 喂给 sdk.js，生成最终 sentinel-token 字符串。
-
-    Args:
-        challenge: sentinel/req 返回的完整 JSON（含 token / proofofwork / turnstile / so 字段）
-        flow: 流程标识，例如 username_password_create / authorize_continue / oauth_create_account
-        device_id: oai-did，必须与 Python 端 BrowserSession 持有的同一个值
-        user_agent: 必须与 Python 端请求 UA 完全一致；默认读取 config.USER_AGENT
-        page_url: 当前所在页面 URL（影响 referer / location 指纹）；默认按 flow 推断
-
-    Returns:
-        openai-sentinel-token 头的完整字符串值（runner 的 stdout 原样返回，已是 JSON 字符串）
-
-    Raises:
-        FileNotFoundError: runner.js 或 sdk.js 缺失
-        RuntimeError: Node 子进程异常或返回非零退出码
-    """
-    _ensure_runner_environment()
-
-    if not flow:
-        raise ValueError("flow 不能为空")
-    if not device_id:
-        raise ValueError("device_id 不能为空")
-
+    _ensure_runner_environment(sdk_path)
+    if action not in ('token', 'requirements'):
+        raise ValueError('未知 Sentinel runner action')
+    if not flow or not device_id:
+        raise ValueError('flow 和 device_id 不能为空')
+    if not isinstance(challenge, dict):
+        raise ValueError('challenge 必须为对象')
     profile = browser_profile or {}
-    browser_family = str(profile.get("browser_family") or "chrome")
-    request_idle_callback = int((profile.get("window_feature_flags") or {}).get("requestIdleCallback", 0))
-    ua = user_agent or str(profile.get("user_agent") or USER_AGENT)
-    screen_width = int(profile.get("screen_width", SCREEN_WIDTH))
-    screen_height = int(profile.get("screen_height", SCREEN_HEIGHT))
-    hardware_concurrency = int(profile.get("hardware_concurrency", HARDWARE_CONCURRENCY))
-    js_heap_size_limit = int(profile.get("js_heap_size_limit", JS_HEAP_SIZE_LIMIT))
-    device_memory = int(profile.get("device_memory", DEVICE_MEMORY))
-    device_pixel_ratio = float(profile.get("device_pixel_ratio", 2))
-    screen_avail_width = int(profile.get("screen_avail_width", screen_width))
-    screen_avail_height = int(profile.get("screen_avail_height", max(0, screen_height - 25)))
-    outer_width = int(profile.get("outer_width", screen_avail_width))
-    outer_height = int(profile.get("outer_height", screen_avail_height))
-    inner_width = int(profile.get("inner_width", profile.get("viewport_width", outer_width)))
-    inner_height = int(profile.get(
-        "inner_height", profile.get("viewport_height", max(0, outer_height - 87))
-    ))
-    color_depth = int(profile.get("color_depth", 24))
-    navigator_language = str(profile.get("navigator_language", NAVIGATOR_LANGUAGE))
-    navigator_languages = list(profile.get("navigator_languages", NAVIGATOR_LANGUAGES))
-    chrome_major = str(profile.get("chrome_major", CHROME_MAJOR))
-    chrome_full_version = str(profile.get("chrome_full_version", CHROME_FULL_VERSION))
-    sec_ch_ua = str(profile.get("sec_ch_ua", SEC_CH_UA))
-    sec_ch_ua_platform = str(profile.get("sec_ch_ua_platform", SEC_CH_UA_PLATFORM))
-    navigator_platform = str(profile.get("navigator_platform", "MacIntel"))
-    navigator_vendor = str(profile.get("navigator_vendor", "Google Inc."))
-    user_agent_data_platform = str(profile.get("user_agent_data_platform", sec_ch_ua_platform.strip('\"') or "macOS"))
-    sec_ch_ua_full_version_list = str(profile.get("sec_ch_ua_full_version_list", SEC_CH_UA_FULL_VERSION_LIST))
-    sec_ch_ua_platform_version = str(profile.get("sec_ch_ua_platform_version", SEC_CH_UA_PLATFORM_VERSION))
-    sec_ch_ua_arch = str(profile.get("sec_ch_ua_arch", SEC_CH_UA_ARCH))
-    sec_ch_ua_bitness = str(profile.get("sec_ch_ua_bitness", SEC_CH_UA_BITNESS))
-    sec_ch_ua_model = str(profile.get("sec_ch_ua_model", SEC_CH_UA_MODEL))
-    build_id = str(profile.get("build_id", OPENAI_BUILD_ID))
-    # Auth 页面 Sentinel token 的 documentElement 通常没有 data-build；
-    # ChatGPT 页面 prepare/finalize 的 p 才带前端 build。
-    runner_build_id = "" if page_url is None and flow in {
-        "email_otp_validate", "authorize_continue", "oauth_create_account", "username_password_create"
-    } else build_id
-    timezone_iana = str(profile.get("timezone_iana", TIMEZONE_IANA))
-    timezone_name = str(profile.get("timezone_name", TIMEZONE_NAME))
-    timezone_offset_minutes = int(profile.get("timezone_offset_minutes", TIMEZONE_OFFSET_MINUTES))
-    runner_cookie = cookie or f"oai-did={device_id}"
-
-    page = page_url or _FLOW_PAGE_URL.get(
-        flow, "https://auth.openai.com/create-account/password"
-    )
-
-    # dx 是用发起 sentinel/req 时的 p 混淆的。该 proof 只在本地传给 runner，
-    # 不应作为 challenge 的额外字段暴露给 SDK。
-    challenge_proof = str(challenge.get("_request_p") or "") if isinstance(challenge, dict) else ""
-    challenge_payload = (
-        {k: v for k, v in challenge.items() if k != "_request_p"}
-        if isinstance(challenge, dict) else challenge
-    )
-
-    # 把 challenge 写入临时文件，避免命令行长度 / 转义问题
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".json",
-        prefix=f"sentinel-challenge-{flow}-",
-        delete=False,
-        encoding="utf-8",
-    )
+    ua = user_agent or str(profile.get('user_agent') or USER_AGENT)
+    platform = profile.get('navigator_platform')
+    if not platform:
+        platform = 'iPhone' if 'iPhone' in ua else ('Win32' if 'Windows' in ua else ('MacIntel' if 'Mac' in ua else 'Linux x86_64'))
+    vendor = profile.get('navigator_vendor')
+    if vendor is None:
+        vendor = '' if 'Firefox' in ua else ('Google Inc.' if 'Chrome' in ua else 'Apple Computer, Inc.')
+    payload = {
+        'action': 'requirements' if action == 'requirements' else 'solve',
+        'flow': flow, 'device_id': device_id, 'user_agent': ua,
+        'screen_width': profile.get('screen_width', SCREEN_WIDTH),
+        'screen_height': profile.get('screen_height', SCREEN_HEIGHT),
+        'language': profile.get('navigator_language', NAVIGATOR_LANGUAGE),
+        'languages': list(profile.get('navigator_languages', NAVIGATOR_LANGUAGES)),
+        'platform': platform, 'vendor': vendor,
+        'hardware_concurrency': profile.get('hardware_concurrency', HARDWARE_CONCURRENCY),
+        'device_memory': profile.get('device_memory', DEVICE_MEMORY),
+        'max_touch_points': profile.get('max_touch_points', 0),
+        'device_pixel_ratio': profile.get('device_pixel_ratio', 2),
+        'timezone': profile.get('timezone_iana', TIMEZONE_IANA),
+        'behavior_duration_ms': max(0, min(10000, int(protocol_settings.SENTINEL_SO_COLLECTION_MS))),
+        'challenge': {k: v for k, v in challenge.items() if k != '_request_p'},
+        'request_p': challenge.get('_request_p') or '',
+        'cookie': cookie if cookie is not None else f'oai-did={device_id}',
+        'sentinel_sid': sentinel_sid or '',
+    }
+    env = os.environ.copy()
+    env['OPENAI_SENTINEL_SDK_FILE'] = str(Path(sdk_path or _SDK_PATH).resolve())
+    env['TZ'] = str(payload['timezone'])
+    logger.info('[SentinelRunner] Node 协议执行器 action=%s flow=%s', payload['action'], flow)
     try:
-        json.dump(challenge_payload, tmp, ensure_ascii=False)
-        tmp.flush()
-        tmp.close()
-
-        cmd = [
-            _resolve_node_executable(),
-            str(_RUNNER_PATH),
-            "--challenge-file", tmp.name,
-            "--flow", flow,
-            "--device-id", device_id,
-            "--sentinel-sid", sentinel_sid or "",
-            "--challenge-proof", challenge_proof,
-            "--react-listening-key", react_listening_key or "",
-            "--react-container-key", react_container_key or str(profile.get("react_container_key") or ""),
-            "--react-resources-key", react_resources_key or str(profile.get("react_resources_key") or ""),
-            "--page-url", page,
-            "--user-agent", ua,
-            "--browser-family", browser_family,
-            "--navigator-platform", navigator_platform,
-            "--navigator-vendor", navigator_vendor,
-            "--user-agent-data-platform", user_agent_data_platform,
-            "--request-idle-callback", "1" if request_idle_callback else "0",
-            "--sdk", str(_SDK_PATH),
-            # challenge 请求的初始 p[5] 都来自版本化 SDK；最终提交头则由
-            # Auth 页包装 SDK 生成：密码/资料页为 backend-api，OTP 页为版本化地址。
-            "--script-src", (
-                f"https://sentinel.openai.com/sentinel/{SENTINEL_SV}/sdk.js"
-                if flow == "email_otp_validate"
-                else "https://sentinel.openai.com/backend-api/sentinel/sdk.js"
-            ),
-            "--build-id", runner_build_id,
-            # 与 config.browser / core.sentinel.py 中的指纹默认值保持一致
-            "--width", str(screen_width),
-            "--height", str(screen_height),
-            "--avail-width", str(screen_avail_width),
-            "--avail-height", str(screen_avail_height),
-            "--outer-width", str(outer_width),
-            "--outer-height", str(outer_height),
-            "--inner-width", str(inner_width),
-            "--inner-height", str(inner_height),
-            "--color-depth", str(color_depth),
-            "--cores", str(hardware_concurrency),
-            "--language", navigator_language,
-            "--languages", ",".join(navigator_languages),
-            "--time-zone", timezone_iana,
-            "--timezone-name", timezone_name,
-            "--timezone-offset-minutes", str(timezone_offset_minutes),
-            "--js-heap-size-limit", str(js_heap_size_limit),
-            "--device-memory", str(device_memory),
-            "--device-pixel-ratio", str(device_pixel_ratio),
-            "--chrome-major", chrome_major,
-            "--chrome-full-version", chrome_full_version,
-            "--sec-ch-ua", sec_ch_ua,
-            "--sec-ch-ua-platform", sec_ch_ua_platform,
-            "--sec-ch-ua-full-version-list", sec_ch_ua_full_version_list,
-            "--sec-ch-ua-platform-version", sec_ch_ua_platform_version,
-            "--sec-ch-ua-arch", sec_ch_ua_arch,
-            "--sec-ch-ua-bitness", sec_ch_ua_bitness,
-            "--sec-ch-ua-model", sec_ch_ua_model,
-            "--webgl-vendor", str(profile.get("webgl_vendor") or ""),
-            "--webgl-renderer", str(profile.get("webgl_renderer") or ""),
-            "--cookie", runner_cookie,
-        ]
-
-        logger.info(f"[SentinelRunner] 调用 Node 生成 token, flow={flow}")
-        logger.debug(f"[SentinelRunner] 命令: {' '.join(cmd)}")
-
-        # 关键：禁用 sentinel.config.json 自动发现（避免外部配置干扰）
-        env = os.environ.copy()
-        env.pop("SENTINEL_CONFIG", None)
-        env["SENTINEL_CONFIG"] = "__none__"  # 故意指向不存在的文件，跳过 fallback 列表
-        env["TZ"] = timezone_iana  # 让 Node VM 里的 Date.toString() 与 Python p 指纹时区一致
-
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                cwd=str(_PROJECT_ROOT),
-                timeout=_RUNNER_TIMEOUT,
-                env=env,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
-                f"sentinel-runner.js 执行超时（>{_RUNNER_TIMEOUT}s），flow={flow}"
-            ) from exc
-        except FileNotFoundError as exc:
-            raise RuntimeError(
-                "未找到 Node 可执行文件，请确认已安装 Node.js 并加入 PATH，"
-                "或通过 NODE_EXECUTABLE 环境变量指定绝对路径。"
-            ) from exc
-
-        if proc.returncode != 0:
-            stderr = (proc.stderr or "").strip()
-            stdout = (proc.stdout or "").strip()
-            raise RuntimeError(
-                f"sentinel-runner.js 退出码 {proc.returncode}\n"
-                f"stderr: {stderr}\n"
-                f"stdout: {stdout}"
-            )
-
-        token_text = (proc.stdout or "").strip()
-        if not token_text:
-            raise RuntimeError(
-                f"sentinel-runner.js 输出为空, stderr: {(proc.stderr or '').strip()}"
-            )
-
-        # 简单合法性校验：必须是合法 JSON 且包含关键字段
-        try:
-            parsed = json.loads(token_text)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"runner 输出不是合法 JSON: {token_text[:200]}"
-            ) from exc
-
-        for required_key in ("p", "c", "id", "flow"):
-            if required_key not in parsed:
-                raise RuntimeError(
-                    f"runner 输出缺少字段 {required_key}: {token_text[:200]}"
-                )
-
-        # 详细诊断：打印输出 JSON 的所有顶层字段名 + 值长度
-        field_summary = {
-            k: (len(v) if isinstance(v, str) else type(v).__name__)
-            for k, v in parsed.items()
-        }
-        logger.info(
-            f"[SentinelRunner] token 生成成功, flow={flow}, "
-            f"包含 turnstile={'t' in parsed and bool(parsed.get('t'))}, "
-            f"包含 so={bool(parsed.get('_so') or parsed.get('so'))}, "
-            f"字段: {field_summary}"
+        proc = _run_node(
+            [_resolve_node_executable(), str(_RUNNER_PATH)],
+            input=json.dumps(payload, ensure_ascii=False), cwd=str(_PROJECT_ROOT),
+            timeout=_RUNNER_TIMEOUT, env=env,
         )
-        return token_text
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f'协议 Sentinel 执行超时（>{_RUNNER_TIMEOUT}s），flow={flow}') from exc
+    except FileNotFoundError as exc:
+        raise RuntimeError('未找到 Node 可执行文件，请安装 Node.js 或设置 NODE_EXECUTABLE') from exc
+    if proc.returncode:
+        # stdout 可能包含令牌；不记录 payload/Cookie 或完整 SDK 输出。
+        raise RuntimeError(f'协议 Sentinel 退出码 {proc.returncode}: {(proc.stderr or "unknown error").strip()[:1500]}')
+    try:
+        result = json.loads(proc.stdout or '')
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError('协议 Sentinel 输出不是合法 JSON') from exc
+    if not isinstance(result, dict):
+        raise RuntimeError('协议 Sentinel 输出必须为 JSON 对象')
+    if action == 'requirements':
+        proof = result.get('request_p')
+        if not isinstance(proof, str) or not proof.strip() or proof != proof.strip():
+            raise RuntimeError('SDK requirements 未返回有效 request_p')
+        return proof
+    token = result.get('token')
+    try:
+        parsed = json.loads(token) if isinstance(token, str) else token
+    except ValueError as exc:
+        raise RuntimeError('SDK token 不是合法 JSON') from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError('SDK token 必须为 JSON 对象')
+    if 'e' in parsed or 'error' in parsed:
+        raise RuntimeError('SDK 返回错误 token，停止提交')
+    if parsed.get('id') != device_id or parsed.get('flow') != flow:
+        raise RuntimeError('SDK token 的 device_id/flow 与当前请求不匹配')
+    if any(not isinstance(parsed.get(k), str) or not parsed[k].strip() for k in ('p', 'c')):
+        raise RuntimeError('SDK token 缺少有效 proof/challenge')
+    if parsed['c'] != challenge.get('token'):
+        raise RuntimeError('SDK token 的 challenge 与当前请求不匹配')
+    turnstile = challenge.get('turnstile')
+    if isinstance(turnstile, dict) and (turnstile.get('required') is True or turnstile.get('dx')):
+        if not isinstance(parsed.get('t'), str) or not parsed['t'].strip():
+            raise RuntimeError('SDK 未返回当前 challenge 要求的 turnstile token')
+    so = result.get('so_token')
+    if so is not None and not isinstance(so, str):
+        raise RuntimeError('SDK SO token 必须为字符串')
+    if isinstance(so, str) and so and not so.strip():
+        raise RuntimeError('SDK SO token 不能为空白字符串')
+    so_required = isinstance(challenge.get('so'), dict) and challenge['so'].get('required') is True
+    if so_required and not so:
+        raise RuntimeError('SDK 未返回 SO token')
+    if so:
+        parsed['_so'] = so
+    logger.info('[SentinelRunner] token 生成成功 flow=%s turnstile=%s so=%s fallback=%s',
+                flow, bool(parsed.get('t')), bool(so), bool(result.get('fallback')))
+    return json.dumps(parsed, separators=(',', ':'), ensure_ascii=False)
 
-    finally:
-        # 清理临时文件
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
+
+def generate_sentinel_requirements(*, flow, device_id, sentinel_sid, browser_profile, sdk_path, cookie=None):
+    return generate_sentinel_token({}, flow, device_id, browser_profile=browser_profile,
+                                   sentinel_sid=sentinel_sid, sdk_path=sdk_path, cookie=cookie, action='requirements')

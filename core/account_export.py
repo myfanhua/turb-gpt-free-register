@@ -22,8 +22,16 @@ import pyotp
 from core.session import BrowserSession
 from core.humanize import delay as human_delay
 from core.http_diagnostics import response_summary
+from core.openai_auth import _check_stop_requested, _interruptible_sleep
 
 logger = logging.getLogger(__name__)
+
+
+def _checkpoint_totp(session, *, secret=None, pending=None) -> None:
+    callback = getattr(session, "_registration_credential_checkpoint", None)
+    # MagicMock/旧会话没有显式安装的回调，不应意外执行动态属性。
+    if "_registration_credential_checkpoint" in vars(session) and callable(callback):
+        callback(totp_secret=secret, pending=pending)
 
 
 def _clear_twofa_session_circuit(
@@ -56,6 +64,9 @@ _RETRYABLE_REAUTH_HINTS = (
 
 def _is_retryable_reauth_error(exc: BaseException) -> bool:
     """仅重试限流、服务端错误和传输故障，不重试普通业务 4xx。"""
+    from core.registration_service import StopRequested
+    if isinstance(exc, StopRequested):
+        return False
     response = getattr(exc, "response", None)
     try:
         status = int(getattr(response, "status_code", 0) or 0)
@@ -80,6 +91,7 @@ def _trigger_reauth_with_retry(session: BrowserSession, email: str) -> str:
     last_exc: BaseException | None = None
 
     for attempt in range(1, max_attempts + 1):
+        _check_stop_requested()
         try:
             auth_url = _trigger_reauth(session, email)
             if attempt > 1:
@@ -108,7 +120,7 @@ def _trigger_reauth_with_retry(session: BrowserSession, email: str) -> str:
                 attempt, max_attempts, type(exc).__name__, str(exc)[:200], delay,
             )
             if delay > 0:
-                time.sleep(delay)
+                _interruptible_sleep(delay)
 
     assert last_exc is not None
     raise last_exc
@@ -131,6 +143,7 @@ def _follow_reauth_with_retry(session: BrowserSession, auth_url: str) -> str:
     _warm_auth_document_for_reauth(session)
 
     for attempt in range(1, max_attempts + 1):
+        _check_stop_requested()
         try:
             result = _follow_reauth(session, auth_url)
             if attempt > 1:
@@ -155,19 +168,21 @@ def _follow_reauth_with_retry(session: BrowserSession, auth_url: str) -> str:
                 attempt, max_attempts, type(exc).__name__, str(exc)[:200], delay,
             )
             if delay > 0:
-                time.sleep(delay)
+                _interruptible_sleep(delay)
 
     raise RuntimeError("authorize 导航重试耗尽")
 
 
 def _warm_auth_document_for_reauth(session: BrowserSession) -> None:
     """预热 auth.openai.com 顶层文档；403 时保留新 Cookie 后有限重试。"""
+    from core.registration_service import StopRequested
     get_headers = getattr(session, "get_auth_navigate_headers", None)
     request_get = getattr(session, "get", None)
     if not callable(get_headers) or not callable(request_get):
         return
     headers = get_headers(referer="", user_initiated=False)
     for attempt in range(1, 3):
+        _check_stop_requested()
         try:
             resp = request_get(
                 "https://auth.openai.com/log-in",
@@ -179,11 +194,13 @@ def _warm_auth_document_for_reauth(session: BrowserSession) -> None:
                 logger.info("[2FA] Auth document 预热完成")
                 return
             logger.info("[2FA] Auth document 预热返回 HTTP %s，保留响应 Cookie", status)
+        except StopRequested:
+            raise
         except Exception as exc:
             logger.debug("[2FA] Auth document 预热异常：%s: %s", type(exc).__name__, str(exc)[:160])
         _clear_twofa_session_circuit(session, source="Auth document 预热")
         if attempt < 2:
-            time.sleep(float(attempt))
+            _interruptible_sleep(float(attempt))
     logger.info("[2FA] Auth document 预热未通过，继续正式 authorize 重试链")
 
 
@@ -225,7 +242,7 @@ def post_register_dwell(
     if seconds <= 0:
         return
     logger.info("[%s] 注册成功后随机停留 %.1fs：%s", label, seconds, email)
-    time.sleep(seconds)
+    _interruptible_sleep(seconds)
 
 
 def _account_material_line(email: str, row: dict | None = None) -> str:
@@ -359,14 +376,27 @@ def fetch_session(session: BrowserSession) -> dict:
     logger.info("[Session] 拉取 ChatGPT session 信息...")
     resp = session.get(url, headers=headers)
     resp.raise_for_status()
+    if resp.status_code != 200:
+        raise RuntimeError(f"session 返回非预期状态: {resp.status_code}")
     data = resp.json()
+
+    if not isinstance(data, dict):
+        raise RuntimeError("session 返回非对象 JSON")
+    token = data.get("accessToken") or data.get("access_token")
+    if token and not isinstance(token, str):
+        raise RuntimeError("session 返回无效 accessToken 类型")
+    if data.get("error") or data.get("success") is False:
+        raise RuntimeError("session 返回业务失败")
+    if token:
+        data["accessToken"] = token
 
     if not data.get("accessToken"):
         logger.error(f"[Session] 响应中没有 accessToken: {data}")
         raise RuntimeError("未拿到 accessToken，登录态可能未建立")
 
-    user = data.get("user") or {}
-    account = data.get("account") or {}
+    user = data.get("user") if isinstance(data.get("user"), dict) else {}
+    account = data.get("account") if isinstance(data.get("account"), dict) else {}
+    data["user"], data["account"] = user, account
     logger.info(
         f"[Session] 成功，user_id={user.get('id')}, email={user.get('email')}, "
         f"plan={account.get('planType')}, mfa={user.get('mfa')}"
@@ -385,7 +415,10 @@ def _trigger_reauth(session: BrowserSession, email: str) -> str:
     if csrf_resp.status_code >= 400:
         logger.warning("[2FA] CSRF 请求被拒绝：%s", response_summary(csrf_resp))
     csrf_resp.raise_for_status()
-    csrf_token = csrf_resp.json()["csrfToken"]
+    data = csrf_resp.json()
+    csrf_token = data.get("csrfToken") if isinstance(data, dict) else None
+    if csrf_resp.status_code != 200 or not isinstance(csrf_token, str) or not csrf_token.strip():
+        raise RuntimeError("重认证 CSRF 响应缺少有效 csrfToken")
     logger.info(f"[2FA] 重认证 CSRF: {csrf_token[:20]}...")
 
     # POST /api/auth/signin/openai 带 reauth 参数
@@ -413,10 +446,12 @@ def _trigger_reauth(session: BrowserSession, email: str) -> str:
     if resp.status_code >= 400:
         logger.warning("[2FA] signin 请求被拒绝：%s", response_summary(resp))
     resp.raise_for_status()
-    auth_url = resp.json().get("url")
+    data = resp.json()
+    auth_url = data.get("url") if isinstance(data, dict) else None
     if not auth_url:
         raise RuntimeError(f"未拿到 reauth authorize URL: {resp.text}")
-    return auth_url
+    from core.openai_auth import _auth_page_url
+    return _auth_page_url(auth_url)
 
 
 def _follow_reauth(session: BrowserSession, auth_url: str) -> str:
@@ -476,6 +511,7 @@ def _validate_twofa_otp_with_retry(session: BrowserSession, code: str) -> str:
     attempts = max(1, min(8, int(getattr(cfg, "TWOFA_REAUTH_MAX_ATTEMPTS", 3) or 3)))
     delay = max(0.0, min(60.0, float(getattr(cfg, "TWOFA_REAUTH_RETRY_DELAY", 3.0) or 0.0)))
     for attempt in range(1, attempts + 1):
+        _check_stop_requested()
         try:
             return _validate_reauth_otp(session, code)
         except TwofaOtpRequestError as exc:
@@ -490,7 +526,7 @@ def _validate_twofa_otp_with_retry(session: BrowserSession, code: str) -> str:
             logger.warning("[2FA] OTP 请求临时拒绝 HTTP %s，%.1fs 后复用原会话重试（%s/%s），不重新发码",
                            exc.status_code, wait, attempt, attempts)
             if wait:
-                time.sleep(wait)
+                _interruptible_sleep(wait)
             _clear_twofa_session_circuit(session, source="OTP 临时拒绝")
     raise RuntimeError("2FA OTP 重试耗尽")
 
@@ -529,6 +565,9 @@ def _exchange_new_token(session: BrowserSession, continue_url: str) -> str:
     # 拿新的 accessToken
     new_session = fetch_session(session)
     new_token = new_session["accessToken"]
+    session._latest_authenticated_session = new_session
+    pending = getattr(session, "_pending_totp_enrollment", None)
+    _checkpoint_totp(session, pending=pending if isinstance(pending, dict) else None)
     logger.info("[2FA] 已获取重认证后的新 accessToken")
     return new_token
 
@@ -550,11 +589,20 @@ def _enroll_totp(session: BrowserSession, access_token: str) -> tuple[str, str]:
     if resp.status_code != 200:
         logger.error(f"[2FA] enroll 失败 {resp.status_code}: {resp.text}")
         resp.raise_for_status()
-    data = resp.json()
+    from core.openai_auth import parse_auth_step_response
+    data = parse_auth_step_response(resp, "mfa/enroll")
     secret = data.get("secret")
     session_id = data.get("session_id")
-    if not secret or not session_id:
+    if not isinstance(secret, str) or not secret or not isinstance(session_id, str) or not session_id:
         raise RuntimeError(f"enroll 响应字段缺失: {data}")
+    factor = data.get("factor")
+    session._totp_enrollment_factor_id = factor.get("id", "") if isinstance(factor, dict) else ""
+    session._pending_totp_enrollment = {
+        "secret": secret, "session_id": session_id,
+        "factor_id": session._totp_enrollment_factor_id,
+    }
+    # secret 仅在 enroll 返回一次；必须先落库再发激活请求。
+    _checkpoint_totp(session, pending=session._pending_totp_enrollment)
     logger.info(f"[2FA] TOTP secret 已获取: {secret[:4]}...{secret[-4:]}")
     return secret, session_id
 
@@ -586,10 +634,102 @@ def _activate_totp(
     if resp.status_code != 200:
         logger.error(f"[2FA] activate 失败 {resp.status_code}: {resp.text}")
         resp.raise_for_status()
-    data = resp.json()
+    from core.openai_auth import parse_auth_step_response
+    data = parse_auth_step_response(resp, "mfa/activate_enrollment")
     if not data.get("success"):
         raise RuntimeError(f"激活返回 success=false: {data}")
+    session._pending_totp_enrollment = None
+    session._registration_totp_secret = secret
+    _checkpoint_totp(session, secret=secret)
+    # 与目标成功链一致：激活确认并保存后补一次只读复核，失败不丢失 secret。
+    from core.registration_service import StopRequested
+    try:
+        info = _read_totp_info(session, access_token)
+        if not info.get("mfa_enabled"):
+            logger.warning("[2FA] 激活接口已确认成功，但 mfa_info 尚未显示启用")
+    except StopRequested:
+        raise
+    except Exception:
+        logger.warning("[2FA] 激活已确认并保存，mfa_info 可选复核失败")
     return True
+
+
+def _read_totp_info(session: BrowserSession, access_token: str) -> dict:
+    from core.openai_auth import parse_auth_step_response
+    headers = session.get_chatgpt_headers(referer="https://chatgpt.com/")
+    headers["authorization"] = f"Bearer {access_token}"
+    response = session.get("https://chatgpt.com/backend-api/accounts/mfa_info", headers=headers)
+    return parse_auth_step_response(response, "mfa_info")
+
+
+def _totp_factor(info: dict) -> dict:
+    factors = info.get("factors")
+    factor = factors.get("totp") if isinstance(factors, dict) else None
+    return factor if isinstance(factor, dict) else {}
+
+
+def _try_inline_totp(session: BrowserSession, access_token: str) -> str | None:
+    """复用刚完成认证的注册会话；只有 enroll 前的认证不足可回落重认证。"""
+    from core.registration_service import StopRequested
+    from core.openai_auth import _check_stop_requested
+    _check_stop_requested()
+    pending = getattr(session, "_pending_totp_enrollment", None)
+    pending = pending if isinstance(pending, dict) and pending else None
+    if pending and any(not isinstance(pending.get(key), str) or not pending[key] for key in ("secret", "session_id")):
+        raise RuntimeError("待恢复的 TOTP enrollment 信息无效，停止自动重绑")
+    try:
+        info = _read_totp_info(session, access_token)
+        factors = info.get("factors")
+        if info.get("mfa_enabled") and isinstance(factors, dict) and factors.get("totp"):
+            if (pending and pending.get("factor_id") and pending.get("secret")
+                    and _totp_factor(info).get("id") == pending["factor_id"]):
+                secret = pending["secret"]
+                session._pending_totp_enrollment = None
+                session._registration_totp_secret = secret
+                _checkpoint_totp(session, secret=secret)
+                return secret
+            # 已开启时 secret 不可再次读取，更不能新 enroll 覆盖未知 secret。
+            raise RuntimeError("账号已启用 TOTP，未取得已保存 secret，不重复 enroll")
+        if pending:
+            secret, enrollment_id = pending.get("secret"), pending.get("session_id")
+            if not isinstance(secret, str) or not secret or not isinstance(enrollment_id, str) or not enrollment_id:
+                raise RuntimeError("待恢复的 TOTP enrollment 信息无效，停止自动重绑")
+            session._totp_enrollment_factor_id = pending.get("factor_id") or ""
+        else:
+            secret, enrollment_id = _enroll_totp(session, access_token)
+    except StopRequested:
+        raise
+    except Exception as exc:
+        response = getattr(exc, "response", None)
+        if getattr(response, "status_code", None) == 401:
+            logger.info("[2FA] 注册 session 认证不足，回落邮箱重认证")
+            return None
+        raise
+    # enroll 后无论激活结果如何都不能重新 enroll：新 secret 只返回一次。
+    _check_stop_requested()
+    try:
+        _activate_totp(session, access_token, secret, enrollment_id)
+    except StopRequested:
+        raise
+    except Exception:
+        # 激活响应丢失时，只能用本次 factor_id 精确确认，不能凭已有 MFA 判成功。
+        factor_id = getattr(session, "_totp_enrollment_factor_id", "")
+        if not isinstance(factor_id, str) or not factor_id:
+            raise
+        try:
+            info = _read_totp_info(session, access_token)
+        except StopRequested:
+            raise
+        except Exception:
+            raise RuntimeError("TOTP 激活未确认，停止自动重绑") from None
+        if not (info.get("mfa_enabled") and _totp_factor(info).get("id") == factor_id):
+            raise RuntimeError("TOTP 激活未确认，服务端 factor_id 不匹配") from None
+        logger.info("[2FA] 激活响应异常，已按本次 factor_id 确认启用")
+    logger.info("[2FA] 已使用注册 session 完成 TOTP，无需再次收取邮箱 OTP")
+    session._pending_totp_enrollment = None
+    session._registration_totp_secret = secret
+    _checkpoint_totp(session, secret=secret)
+    return secret
 
 
 def setup_2fa(
@@ -597,10 +737,13 @@ def setup_2fa(
     email: str,
     otp_code: str | None = None,
     access_token: str | None = None,
+    *,
+    prefer_inline: bool = False,
 ) -> str:
     """
     完整的 2FA 设置流程。
-    会触发再发一份邮箱验证码：
+    默认通过邮箱 OTP 重认证；注册后可用 prefer_inline 优先复用新鲜 session。
+    重认证时会触发再发一份邮箱验证码：
         - USE_EMAIL_SERVICE=True 时自动从 Outlook 账号池拉取
         - 否则需要用户手动输入
 
@@ -608,6 +751,8 @@ def setup_2fa(
         session: 已完成注册的会话
         email: 账号邮箱（用作 login_hint）
         otp_code: 邮箱验证码（None 则按上述策略获取）
+        access_token: 已有 accessToken
+        prefer_inline: 注册后优先直接 enroll，仅认证不足且尚未 enroll 时回落
 
     Returns:
         TOTP secret（Base32 字符串），可直接用于 pyotp.TOTP() 生成 6 位动态码
@@ -615,10 +760,18 @@ def setup_2fa(
     # 用模块属性读，支持 WebUI 热加载
     from config import email as _email_cfg
     from core.chatgpt_bootstrap import authenticated_bootstrap
+    from core.registration_service import StopRequested, _THREAD_CTX
 
     logger.info("=" * 60)
     logger.info("开始设置 2FA")
     logger.info("=" * 60)
+
+    if prefer_inline and access_token:
+        secret = _try_inline_totp(session, access_token)
+        if secret:
+            return secret
+        # 快路径已经确认认证不足，不再用该 token 批量预热非关键接口。
+        access_token = None
 
     if access_token:
         try:
@@ -626,6 +779,8 @@ def setup_2fa(
             authenticated_bootstrap(session, access_token, strict=False)
             human_delay("navigate")
             logger.info("[2FA] accessToken 可选预热流程结束（不代表网页登录态已建立）")
+        except StopRequested:
+            raise
         except Exception as exc:
             logger.warning("[2FA] accessToken 预热失败，继续按重认证流程执行：%s: %s", type(exc).__name__, str(exc)[:180])
         finally:
@@ -651,12 +806,12 @@ def setup_2fa(
     human_delay("navigate")
 
     if otp_code is None:
-        if _email_cfg.USE_EMAIL_SERVICE:
+        if _email_cfg.USE_EMAIL_SERVICE or getattr(_THREAD_CTX, "job_id", None) is not None:
             from core.email_provider import wait_for_otp
             logger.info("[2FA] 自动等待邮箱重认证 OTP...")
             try:
                 otp_code = wait_for_otp(email, after_ts=reauth_otp_after_ts)
-            except Exception as first_wait_exc:
+            except TimeoutError as first_wait_exc:
                 # 重认证页本身没有可靠的 resend API；重新发起一次 authorize
                 # 流程会让 auth.openai.com 再发送一封新的 OTP。只自动重发一次，
                 # 避免邮箱服务异常时无限重复触发验证码。
@@ -716,6 +871,12 @@ def setup_2fa(
 
     # 阶段二：enroll + activate
     logger.info("[2FA] 阶段2：开始 enroll TOTP")
+    pending = getattr(session, "_pending_totp_enrollment", None)
+    if isinstance(pending, dict) and pending:
+        secret = _try_inline_totp(session, new_token)
+        if not secret:
+            raise RuntimeError("重认证后仍无法恢复待确认的 TOTP enrollment")
+        return secret
     secret, session_id = _enroll_totp(session, new_token)
     logger.info("[2FA] enroll 成功，session_id=%s", session_id)
     human_delay("form")
@@ -739,6 +900,7 @@ def save_account_data(
     proxy_used: str | None = None,
     batch_dir: Path | None = None,
     auto_plan_check: bool | None = None,
+    auto_twofa: bool | None = None,
 ) -> int:
     """
     将账号信息保存到 SQLite；output_path 仅为兼容旧调用方保留。
@@ -746,27 +908,14 @@ def save_account_data(
     """
     from core.db import insert_account
     extra = dict(extra or {})
-    # Remail 的 service token 只存在进程内上下文中。注册成功后把订单上下文
-    # 一并保存到账号 extra_json，服务重启时查活即可恢复，不再依赖“同一进程
-    # 中先领取邮箱”。普通账号列表不会返回 extra_json。
-    if str(email_source or "").strip().lower() == "remail":
-        try:
-            from core.remail_client import get_account_context_metadata
-
-            remail_metadata = get_account_context_metadata(email)
-            if remail_metadata:
-                existing_service = extra.get("email_service")
-                merged_service = dict(existing_service) if isinstance(existing_service, dict) else {}
-                merged_service.update(remail_metadata)
-                extra["email_service"] = merged_service
-        except Exception as exc:
-            # 订单上下文保存失败不应让已经完成的注册失败；后续查活仍会
-            # 尝试用 API Key 按邮箱搜索 Remail 订单恢复凭证。
-            logger.warning(
-                "[Save] 保存 Remail 订单上下文失败，后续将尝试按邮箱恢复：%s: %s",
-                type(exc).__name__,
-                str(exc)[:180],
-            )
+    # 所有注册驱动共享邮箱恢复材料；按供应商决定是否需要专属凭证。
+    from core.email_provider import get_email_context_metadata
+    metadata = get_email_context_metadata(email, email_source)
+    if metadata:
+        existing_service = extra.get("email_service")
+        # 来源改变时不把旧供应商的 token 混入新的上下文。
+        same_source = isinstance(existing_service, dict) and existing_service.get("source") == metadata.get("source")
+        extra["email_service"] = {**(existing_service if same_source else {}), **metadata}
     user = extra.get("user") or {}
     account = extra.get("account") or {}
     # 从 extra.codex 抽出顶层 codex 状态/错误，方便 WebUI 直接读账号字段
@@ -802,13 +951,14 @@ def save_account_data(
     )
     logger.info("[Save] 账号及凭证已保存到 SQLite, id=%s, email=%s", row_id, email)
 
-    auto_twofa = False
-    try:
-        from config import twofa as _twofa_cfg
-
-        auto_twofa = bool(getattr(_twofa_cfg, "ENABLE_2FA", False))
-    except Exception:
-        auto_twofa = False
+    if auto_twofa is None:
+        try:
+            from config import twofa as _twofa_cfg
+            auto_twofa = bool(getattr(_twofa_cfg, "ENABLE_2FA", False))
+        except Exception:
+            auto_twofa = False
+    if extra.get("pending_totp_enrollment"):
+        auto_twofa = False  # 未确认的 enrollment 必须先复核，不能后台重新绑定。
     if auto_twofa and not str(totp_secret or "").strip():
         try:
             from core.twofa_service import enqueue_account_totp_setup

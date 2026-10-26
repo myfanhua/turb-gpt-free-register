@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -115,6 +116,32 @@ def _append_log(email: str, line: str, *, clear: bool = False) -> None:
         f.write(f"{stamp} [INFO] {line}\n")
 
 
+def _restore_registration_enrollment(session, account_id: int, email: str, access_token: str) -> bool:
+    """手动补跑必须复用注册留下的 enrollment，而不是丢弃 pending 重新绑定。"""
+    row = db.get_account(account_id) or {}
+    raw = row.get("extra_json")
+    try:
+        extra = json.loads(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        extra = {}
+    extra = extra if isinstance(extra, dict) else {}
+    pending = extra.get("pending_totp_enrollment")
+    if not pending:
+        return False
+    if str(row.get("email") or "").strip().casefold() != email.strip().casefold():
+        raise RuntimeError("账号身份已变更，停止恢复旧 TOTP enrollment")
+    if not isinstance(pending, dict) or any(not isinstance(pending.get(k), str) or not pending[k]
+                                           for k in ("secret", "session_id")):
+        raise RuntimeError("已保存的 TOTP enrollment 恢复材料无效，不自动重绑")
+    from core.protocol_registration import install_registration_checkpoint
+    info = {k: extra.get(k) for k in ("user", "account", "expires")}
+    info["accessToken"] = access_token
+    checkpoint = install_registration_checkpoint(session, email, info, access_token, None)
+    checkpoint(pending=pending)
+    logger.info("[2FA] 已恢复注册时的待确认 enrollment，不重新 enroll")
+    return True
+
+
 def _run_twofa(
     *, account_id: int, email: str, access_token: str, proxy: str | None,
     trigger: str,
@@ -152,7 +179,10 @@ def _run_twofa(
             f"source={proxy_source} device_id={session.device_id}",
         )
         _append_log(email, f"[2FA] 指纹摘要：{session.fingerprint_summary_text()}")
-        secret = setup_2fa(session, email, access_token=access_token)
+        if _restore_registration_enrollment(session, account_id, email, access_token):
+            secret = setup_2fa(session, email, access_token=access_token, prefer_inline=True)
+        else:
+            secret = setup_2fa(session, email, access_token=access_token)
         db.update_account_totp_secret(
             account_id,
             {"ok": True, "status": "success", "totp_secret": secret, "message": "2FA 设置完成"},

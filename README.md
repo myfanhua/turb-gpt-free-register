@@ -12,7 +12,7 @@ ChatGPT / OpenAI 账号自动注册与 Codex OAuth 授权工具。当前项目�
 
 ### 协议 HTTP 客户端
 
-WebUI → 配置 → 功能开关 → **纯协议 HTTP 客户端**，选择 `curl_cffi`（默认）或 `wreq`。也可在 `.env` 设置：
+WebUI → 配置 → 协议配置 → **纯协议 HTTP 客户端**，选择 `curl_cffi`（默认）或 `wreq`。也可在 `.env` 设置：
 
 ```dotenv
 PROTOCOL_HTTP_CLIENT="wreq"

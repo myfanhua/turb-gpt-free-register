@@ -17,6 +17,7 @@ import logging
 import re
 import threading
 import time
+from core.task_control import check_stop_requested as _check_task_stop, sleep as _task_sleep
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -491,6 +492,7 @@ def _wait_for_order_credentials(order: dict) -> tuple[str, str, str]:
     deadline = time.monotonic() + _order_wait_seconds()
     latest = order
     while time.monotonic() <= deadline:
+        _check_task_stop()
         try:
             latest = _unwrap_order(_request("GET", f"/v1/open/orders/{order_no}"))
         except RemailError:
@@ -508,7 +510,7 @@ def _wait_for_order_credentials(order: dict) -> tuple[str, str, str]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        time.sleep(min(1, remaining))
+        _task_sleep(min(1, remaining))
 
     status = str(latest.get("status") or "unknown")
     raise RemailError(f"Remail 订单等待 service token 超时: order={order_no}, status={status}")
@@ -634,6 +636,7 @@ def fetch_latest_otp(
     settle_seconds: int | None = None,
 ) -> str:
     """轮询 Remail pickup，返回领取时间之后最新的六位验证码。"""
+    _check_task_stop()
     target = str(email or "").strip()
     if not target:
         raise RemailError("Remail 取码缺少邮箱地址")
@@ -666,6 +669,7 @@ def fetch_latest_otp(
 
     logger.info("[Remail] 开始轮询邮箱 %s，最长 %ss", target, wait_seconds)
     while time.monotonic() <= deadline:
+        _check_task_stop()
         try:
             payload = _request(
                 "GET",
@@ -712,7 +716,7 @@ def fetch_latest_otp(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        time.sleep(min(interval, remaining))
+        _task_sleep(min(interval, remaining))
 
     if best_otp:
         return best_otp

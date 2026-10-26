@@ -3717,7 +3717,6 @@ function renderConfigPanel() {
   $('#configForm').innerHTML = `
     <div class="config-panel">
       <h3>${esc(CONFIG_ACTIVE_GROUP)}</h3>
-      ${CONFIG_ACTIVE_GROUP === '功能开关' ? '<p class="hint">纯协议 HTTP 客户端可选 curl_cffi / wreq；也用于后台开启 2FA，不改变 Roxy 注册驱动。保存后新会话生效。</p>' : ''}
       ${renderRoxyWorkspaceTools()}
       ${renderConfigFields(fields)}
     </div>

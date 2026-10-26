@@ -6099,7 +6099,7 @@ function emailConfigSectionForKey(key) {
 }
 
 function smsConfigSectionForKey(key) {
-  if (['SMS_PROVIDER','SMS_COUNTRY','SMS_SERVICE','SMS_MAX_PRICE','SMS_MAX_RETRIES','SMS_CODE_WAIT'].includes(key)) {
+  if (key.startsWith('PROTOCOL_PHONE_') || ['SMS_PROVIDER','SMS_COUNTRY','SMS_SERVICE','SMS_MAX_PRICE','SMS_MAX_RETRIES','SMS_CODE_WAIT'].includes(key)) {
     return ['通用接码', '接码通道选择、国家/服务代码、价格、等待和重试参数；SMSBower 的 OpenAI 服务代码为 dr，openai/chatgpt 会自动转换'];
   }
   if (key === 'SMS_API_KEY') return ['GrizzlySMS', 'GrizzlySMS 平台 API Key 配置'];
@@ -6195,6 +6195,7 @@ function getConfigGroupNames() {
 function configSectionIntro(name) {
   if (name === '网站配置') return '配置网站登录授权码与 Session 签名密钥。';
   if (name === '功能开关') return '';
+  if (name === '协议配置') return '';
   if (name === '注册方式') return '选择账号注册时使用的自动化方式。';
   if (name === 'CloakBrowser') return '本地指纹浏览器运行参数、语言时区与代理设置。';
   if (name === 'Browser Use') return 'Browser Use Cloud 远端浏览器与代理参数。';

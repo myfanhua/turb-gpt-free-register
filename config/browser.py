@@ -67,7 +67,7 @@ SEC_CH_UA_ARCH = '"arm"'
 SEC_CH_UA_BITNESS = '"64"'
 SEC_CH_UA_MODEL = '""'
 SEND_CLIENT_HINTS = True
-SEND_HIGH_ENTROPY_CLIENT_HINTS = False
+SEND_HIGH_ENTROPY_CLIENT_HINTS = True
 
 # ---------- 语言 / 时区 ----------
 BROWSER_LOCALE_PROFILE = "jp"
@@ -417,4 +417,4 @@ def validate_browser_profile(profile: dict) -> list[str]:
     return issues
 
 # ---- .env overrides for WebUI editable fields ----
-apply_env_overrides(globals(), {'PROTOCOL_HTTP_CLIENT': 'str', 'CURL_CFFI_IMPERSONATE': 'str', 'WREQ_EMULATION': 'str', 'BROWSER_LOCALE_PROFILE': 'str', 'AUTO_BROWSER_LOCALE_FROM_IP': 'bool', 'IP_GEO_TIMEOUT': 'float', 'REJECT_CLOUD_PROXY': 'bool', 'BROWSER_DATA_SAVER_MODE': 'bool', 'BROWSER_DATA_SAVER_BLOCKED_PROXY_HOSTS': 'list_str_multiline', 'BROWSER_DATA_SAVER_DEEP_MODE': 'bool', 'BROWSER_DATA_SAVER_BLOCKED_RESOURCE_TYPES': 'list_str_multiline', 'BROWSER_DATA_SAVER_BLOCKED_URL_PATTERNS': 'list_str_multiline', 'BROWSER_TRAFFIC_DETAIL_LOG': 'bool', 'BROWSER_TRAFFIC_DETAIL_MAX_ENTRIES': 'int', 'BROWSER_JS_COVERAGE_LOG': 'bool', 'BROWSER_JS_COVERAGE_MAX_ENTRIES': 'int'})
+apply_env_overrides(globals(), {'SEND_HIGH_ENTROPY_CLIENT_HINTS': 'bool', 'PROTOCOL_HTTP_CLIENT': 'str', 'CURL_CFFI_IMPERSONATE': 'str', 'WREQ_EMULATION': 'str', 'BROWSER_LOCALE_PROFILE': 'str', 'AUTO_BROWSER_LOCALE_FROM_IP': 'bool', 'IP_GEO_TIMEOUT': 'float', 'REJECT_CLOUD_PROXY': 'bool', 'BROWSER_DATA_SAVER_MODE': 'bool', 'BROWSER_DATA_SAVER_BLOCKED_PROXY_HOSTS': 'list_str_multiline', 'BROWSER_DATA_SAVER_DEEP_MODE': 'bool', 'BROWSER_DATA_SAVER_BLOCKED_RESOURCE_TYPES': 'list_str_multiline', 'BROWSER_DATA_SAVER_BLOCKED_URL_PATTERNS': 'list_str_multiline', 'BROWSER_TRAFFIC_DETAIL_LOG': 'bool', 'BROWSER_TRAFFIC_DETAIL_MAX_ENTRIES': 'int', 'BROWSER_JS_COVERAGE_LOG': 'bool', 'BROWSER_JS_COVERAGE_MAX_ENTRIES': 'int'})

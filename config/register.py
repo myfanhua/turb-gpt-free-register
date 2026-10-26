@@ -26,6 +26,14 @@ AUTO_PLAN_CHECK_AFTER_REGISTER = False
 #   True  = 同一邮箱重复注册或补跑时复用稳定指纹；不同邮箱仍彼此独立
 PROTOCOL_REUSE_FINGERPRINT_BY_EMAIL = False
 
+# 只有注册认证链明确要求 add-phone 时才运行；与 Codex 自动授权开关独立。
+# 复用 config.codex 的 SMS_* 供应商和有界取号/等待配置。
+PROTOCOL_REGISTRATION_PHONE_ENABLED = False
+# 同号等待期间有界重发；0 次可禁用重发，错误码重试不额外延长单号等待上限。
+PROTOCOL_PHONE_RESEND_INTERVAL = 20
+PROTOCOL_PHONE_MAX_RESENDS = 3
+PROTOCOL_PHONE_CODE_ATTEMPTS = 3
+
 # 注册成功并拿到 accessToken 后，在浏览器里随机停留一段时间再关闭连接。
 # 格式：最小秒,最大秒。设为 "0,0" 表示不额外停留。
 POST_REGISTER_DWELL_SECONDS_RANGE = "5,15"
@@ -36,5 +44,9 @@ apply_env_overrides(globals(), {
     'REGISTER_NAME': 'str',
     'AUTO_PLAN_CHECK_AFTER_REGISTER': 'bool',
     'PROTOCOL_REUSE_FINGERPRINT_BY_EMAIL': 'bool',
+    'PROTOCOL_REGISTRATION_PHONE_ENABLED': 'bool',
+    'PROTOCOL_PHONE_RESEND_INTERVAL': 'int',
+    'PROTOCOL_PHONE_MAX_RESENDS': 'int',
+    'PROTOCOL_PHONE_CODE_ATTEMPTS': 'int',
     'POST_REGISTER_DWELL_SECONDS_RANGE': 'str',
 })

@@ -66,6 +66,20 @@ def _deactivate_job(job_id: int) -> None:
         pass
 
 
+def _finish_active_job(job_id: int, *, status: str, **fields) -> str | None:
+    """停止与终态提交竞争时保留停止；CAS不覆盖已结束/已取消的任务。"""
+    with _STOP_LOCK:
+        event = _STOP_EVENTS.get(int(job_id))
+        if status == 'stopped' or (event is not None and event.is_set()):
+            fields['error'] = '用户手动停止'
+            return 'stopped' if db.update_job(job_id, status='stopped', expected_statuses=('running', 'stopping'), **fields) else None
+        # 跨进程停止无法共享Event，先只允许running转终态；若stopping先提交则改落stopped。
+        if db.update_job(job_id, status=status, expected_statuses=('running',), **fields):
+            return status
+        fields['error'] = '用户手动停止'
+        return 'stopped' if db.update_job(job_id, status='stopped', expected_statuses=('stopping',), **fields) else None
+
+
 def is_stop_requested(job_id: int | None = None) -> bool:
     if job_id is None:
         job_id = getattr(_THREAD_CTX, "job_id", None)
@@ -311,9 +325,9 @@ def _run_one_job(job_id: int, log_file: str) -> None:
             )
             if is_stop_requested(job_id):
                 _release_unconsumed_job_email(email, "用户手动停止")
-                db.update_job(
+                _finish_active_job(
                     job_id,
-                    status="stopped", expected_statuses=("running", "stopping"),
+                    status="stopped",
                     network_traffic=(result or {}).get("network_traffic") if isinstance(result, dict) else None,
                     error="用户手动停止",
                     completed_at=datetime.now().isoformat(timespec="seconds"),
@@ -321,22 +335,25 @@ def _run_one_job(job_id: int, log_file: str) -> None:
                 log_logger.warning(f"[Job {job_id}] 已按用户请求停止")
                 return
             if isinstance(result, dict) and result.get("success"):
-                db.update_job(
+                finished = _finish_active_job(
                     job_id,
-                    status="success", expected_statuses=("running", "stopping"),
+                    status="success",
                     email=result.get("email"),
                     account_id=result.get("account_id"),
                     network_traffic=result.get("network_traffic"),
                     completed_at=datetime.now().isoformat(timespec="seconds"),
                 )
-                log_logger.info(f"[Job {job_id}] 成功: {result.get('email')}")
+                if finished == 'success':
+                    log_logger.info(f"[Job {job_id}] 成功: {result.get('email')}")
+                elif finished == 'stopped':
+                    log_logger.warning(f"[Job {job_id}] 收尾前收到停止信号，凭证保留，任务已停止")
             else:
                 # 注意：失败也可能伴随 account_id（如 Codex 失败但账号已注册成功）
                 err = (result or {}).get("error") if isinstance(result, dict) else "unknown"
                 result_email = (result or {}).get("email") if isinstance(result, dict) else None
-                db.update_job(
+                _finish_active_job(
                     job_id,
-                    status="failed", expected_statuses=("running", "stopping"),
+                    status="failed",
                     email=result_email,
                     account_id=(result or {}).get("account_id") if isinstance(result, dict) else None,
                     network_traffic=(result or {}).get("network_traffic") if isinstance(result, dict) else None,
@@ -352,9 +369,9 @@ def _run_one_job(job_id: int, log_file: str) -> None:
     except StopRequested as exc:
         _release_unconsumed_job_email(email, str(exc))
         log_logger.warning(f"[Job {job_id}] 已停止: {exc}")
-        db.update_job(
+        _finish_active_job(
             job_id,
-            status="stopped", expected_statuses=("running", "stopping"),
+            status="stopped",
             error="用户手动停止",
             completed_at=datetime.now().isoformat(timespec="seconds"),
         )
@@ -366,17 +383,17 @@ def _run_one_job(job_id: int, log_file: str) -> None:
             _release_unconsumed_job_email(email, err_text)
         if is_stop_requested(job_id):
             log_logger.warning(f"[Job {job_id}] 停止中捕获异常，按停止处理: {type(exc).__name__}: {exc}")
-            db.update_job(
+            _finish_active_job(
                 job_id,
-                status="stopped", expected_statuses=("running", "stopping"),
+                status="stopped",
                 error="用户手动停止",
                 completed_at=datetime.now().isoformat(timespec="seconds"),
             )
             return
         log_logger.exception(f"[Job {job_id}] 异常")
-        db.update_job(
+        _finish_active_job(
             job_id,
-            status="failed", expected_statuses=("running", "stopping"),
+            status="failed",
             error=f"{type(exc).__name__}: {exc}"[:500],
             completed_at=datetime.now().isoformat(timespec="seconds"),
         )
@@ -401,28 +418,32 @@ def _run_codex_retry_job(job_id: int, log_file: str, email: str, account_id: int
         )
         now_iso = datetime.now().isoformat(timespec="seconds")
         if is_stop_requested(job_id) or result.get("status") == "stopped":
-            db.update_job(job_id, status="stopped", expected_statuses=("running", "stopping"), email=email, account_id=account_id, error=str(result.get("message") or "用户手动停止")[:500], completed_at=now_iso)
+            _finish_active_job(job_id, status="stopped", email=email, account_id=account_id, error=str(result.get("message") or "用户手动停止")[:500], completed_at=now_iso)
         elif result.get("ok"):
-            db.update_job(
+            _finish_active_job(
                 job_id,
-                status="success", expected_statuses=("running", "stopping"),
+                status="success",
                 email=email,
                 account_id=account_id,
                 completed_at=now_iso,
             )
         else:
-            db.update_job(
+            _finish_active_job(
                 job_id,
-                status="failed", expected_statuses=("running", "stopping"),
+                status="failed",
                 email=email,
                 account_id=account_id,
                 error=str(result.get("message") or "Codex 补跑失败")[:500],
                 completed_at=now_iso,
             )
+    except StopRequested:
+        _finish_active_job(job_id, status="stopped",
+                           completed_at=datetime.now().isoformat(timespec="seconds"))
+        codex_retry_service.release(email)
     except Exception as exc:
-        db.update_job(
+        _finish_active_job(
             job_id,
-            status="failed", expected_statuses=("running", "stopping"),
+            status="failed",
             error=f"{type(exc).__name__}: {exc}"[:500],
             completed_at=datetime.now().isoformat(timespec="seconds"),
         )

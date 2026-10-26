@@ -36,7 +36,7 @@ class AuthorizeRetryTests(unittest.TestCase):
         session = _Session()
         cookies = session.cookie_jar_identity
         with patch.object(openai_auth, "_proxy_retry_config", return_value=(3, 0.1)), \
-             patch.object(openai_auth.time, "sleep") as sleep:
+             patch.object(openai_auth, "_interruptible_sleep") as sleep:
             url = openai_auth.follow_authorize(session, "https://auth.openai.com/authorize?state=test")
         self.assertEqual(url, "https://auth.openai.com/email-verification")
         self.assertEqual(session.calls, 2)
@@ -52,7 +52,7 @@ class AuthorizeRetryTests(unittest.TestCase):
                 error.response = SimpleNamespace(status_code=status)
                 with patch.object(session, "get", side_effect=error) as get, \
                      patch.object(openai_auth, "_proxy_retry_config", return_value=(3, 0.1)), \
-                     patch.object(openai_auth.time, "sleep") as sleep:
+                     patch.object(openai_auth, "_interruptible_sleep") as sleep:
                     with self.assertRaises(RuntimeError) as raised:
                         openai_auth.follow_authorize(session, "https://auth.openai.com/authorize")
                 self.assertIs(raised.exception, error)
@@ -65,7 +65,7 @@ class AuthorizeRetryTests(unittest.TestCase):
         error = RuntimeError("HTTP Error 400")
         error.response = SimpleNamespace(status_code=400)
         with patch.object(session, "get", side_effect=error) as get, \
-             patch.object(openai_auth.time, "sleep") as sleep:
+             patch.object(openai_auth, "_interruptible_sleep") as sleep:
             with self.assertRaises(RuntimeError):
                 openai_auth.follow_authorize(session, "https://auth.openai.com/authorize")
         get.assert_called_once()

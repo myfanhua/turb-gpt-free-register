@@ -196,6 +196,7 @@ def _ensure_sqlite() -> None:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_registration_jobs_root_status ON registration_jobs(CAST(json_extract(payload, '$.root_job_id') AS INTEGER), status, id DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_accounts_email_lower ON accounts(account_email_lower(email), id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_email_pool_source_status ON email_pool(source, status, id DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_email_pool_email_lower ON email_pool(account_email_lower(email), source, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_accounts_archived ON codex_accounts(archived, id DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_accounts_email ON codex_accounts(email COLLATE NOCASE)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_codex_accounts_created ON codex_accounts(created_at DESC)")
@@ -1183,22 +1184,35 @@ def insert_account(
     codex_status: str | None = None,   # success / failed / skipped / missing
     codex_error: str | None = None,    # 失败原因（仅 codex_status=failed 时有意义）
 ) -> int:
-    """插入或更新注册成功账号，返回本地文件中的 id。"""
-    with _LOCK:
-        accounts = _load_accounts()
-        outlook_rows = _load_outlook()
-        existing = _find_by_email(accounts, email)
-        outlook_row = _find_by_email(outlook_rows, email)
+    """单行保存成功账号；账号与关联Outlook素材在同一事务内提交。"""
+    _ensure_sqlite()
+    with _LOCK, closing(_sqlite_conn()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = _select_account(conn, email=email)
+        record = conn.execute(
+            "SELECT payload FROM email_pool WHERE account_email_lower(email)=? AND source=? ORDER BY id LIMIT 1",
+            ((email or "").lower(), _EMAIL_SOURCES["outlook"]),
+        ).fetchone()
+        outlook_row = json.loads(record['payload']) if record else None
+        # 协议注册检查点包含恢复上下文；最终保存只覆盖本次明确更新的字段。
+        if existing and extra and extra.get("registration_stage") == "complete":
+            try:
+                previous = json.loads(existing.get("extra_json") or "{}")
+            except (TypeError, ValueError):
+                previous = {}
+            extra = {**(previous if isinstance(previous, dict) else {}), **extra}
         extra_json = json.dumps(extra, ensure_ascii=False) if extra else None
 
         if existing is None:
-            row_id = _next_account_id()
+            mark = conn.execute("SELECT value FROM storage_meta WHERE key='account_id_high_watermark'").fetchone()
+            maximum = int(conn.execute("SELECT COALESCE(MAX(id),0) FROM accounts").fetchone()[0])
+            row_id = max(int(mark[0]) if mark else 0, maximum) + 1
+            _reserve_account_id_floor(conn, row_id)
             row = {
                 "id": row_id,
                 "email": email,
                 "created_at": _now(),
             }
-            accounts.append(row)
         else:
             row = existing
             row_id = int(row["id"])
@@ -1214,7 +1228,7 @@ def insert_account(
             "email_source": email_source if email_source is not None else row.get("email_source"),
             "extra_json": extra_json if extra_json is not None else row.get("extra_json"),
             "codex_status": codex_status if codex_status is not None else row.get("codex_status"),
-            "codex_error": codex_error if codex_error is not None else row.get("codex_error"),
+            "codex_error": codex_error if codex_error is not None or codex_status is not None else row.get("codex_error"),
             "updated_at": _now(),
         })
 
@@ -1228,13 +1242,77 @@ def insert_account(
             outlook_row["registered_account_id"] = row_id
             outlook_row["access_token"] = access_token
             outlook_row["completed_at"] = _now()
+            outlook_row["updated_at"] = datetime.now().isoformat(timespec="microseconds")
             if totp_secret:
                 outlook_row["totp_secret"] = totp_secret
 
         row["copy_line"] = _account_line(row)
-        _save_accounts(accounts)
-        _save_outlook(outlook_rows)
+        conn.execute(
+            "INSERT INTO accounts(id,email,status,archived,created_at,updated_at,payload) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET email=excluded.email,status=excluded.status,archived=excluded.archived,"
+            "updated_at=excluded.updated_at,payload=excluded.payload",
+            (row_id, str(row.get('email') or ''), str(row.get('status') or ''), int(bool(row.get('archived'))),
+             str(row.get('created_at') or ''), str(row.get('updated_at') or ''), json.dumps(row, ensure_ascii=False)),
+        )
+        if outlook_row:
+            conn.execute(
+                "UPDATE email_pool SET status=?,updated_at=?,payload=? WHERE id=? AND source=?",
+                (outlook_row['status'], str(outlook_row.get('updated_at') or ''),
+                 json.dumps(outlook_row, ensure_ascii=False), int(outlook_row['id']), _EMAIL_SOURCES['outlook']),
+            )
         return row_id
+
+
+def checkpoint_registration_account(*, email: str, access_token: str, extra: dict,
+                                    totp_secret: str | None = None,
+                                    email_source: str | None = None,
+                                    proxy_used: str | None = None) -> int:
+    """注册凭证单行检查点，不触发导出/2FA/查套；事务内合并，不扫描账号集合。"""
+    password_only = (extra.get("registration_stage") == "password_registered"
+                     and isinstance(extra.get("registration_password"), str) and extra["registration_password"])
+    if not email or not isinstance(access_token, str) or (not access_token and not password_only):
+        raise ValueError("注册检查点需要邮箱和有效 accessToken")
+    _ensure_sqlite()
+    with _LOCK, closing(_sqlite_conn()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = _select_account(conn, email=email)
+        if row is None:
+            mark = conn.execute("SELECT value FROM storage_meta WHERE key='account_id_high_watermark'").fetchone()
+            maximum = int(conn.execute("SELECT COALESCE(MAX(id),0) FROM accounts").fetchone()[0])
+            rid = max(int(mark[0]) if mark else 0, maximum) + 1
+            _reserve_account_id_floor(conn, rid)
+            row = {"id": rid, "email": email, "created_at": _now(), "codex_status": "missing"}
+        raw = row.get("extra_json")
+        try:
+            merged = json.loads(raw) if isinstance(raw, str) else raw
+        except ValueError:
+            merged = {}
+        merged = dict(merged) if isinstance(merged, dict) else {}
+        merged.update(extra)
+        row.update(extra_json=json.dumps(merged, ensure_ascii=False), updated_at=_now())
+        if access_token or "access_token" not in row:
+            row["access_token"] = access_token
+        for key, value in (("totp_secret", totp_secret), ("email_source", email_source), ("proxy_used", proxy_used)):
+            if value is not None:
+                row[key] = value
+        user = extra.get("user")
+        if isinstance(user, dict):
+            row["user_id"] = user.get("id") or row.get("user_id")
+            row["user_name"] = user.get("name") or row.get("user_name")
+        account = extra.get("account")
+        if isinstance(account, dict):
+            row["plan_type"] = account.get("planType") or row.get("plan_type")
+        if extra.get("expires"):
+            row["expires_at"] = extra["expires"]
+        row["copy_line"] = _account_line(row)
+        conn.execute("""INSERT INTO accounts(id,email,status,archived,created_at,updated_at,payload)
+                        VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                        email=excluded.email,status=excluded.status,archived=excluded.archived,
+                        updated_at=excluded.updated_at,payload=excluded.payload""",
+                     (int(row["id"]), row["email"], str(row.get("status") or ""),
+                      int(bool(row.get("archived"))), row["created_at"], row["updated_at"],
+                      json.dumps(row, ensure_ascii=False)))
+        return int(row["id"])
 
 
 def update_account_codex_status(email: str, codex_status: str, codex_error: str | None = None) -> bool:

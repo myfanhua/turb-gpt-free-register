@@ -33,5 +33,6 @@ def delay(kind: str = "api", *, minimum: float | None = None, maximum: float | N
     hi = max(lo, float(maximum) * factor)
     seconds = random.uniform(lo, hi)
     logger.debug(f"[Humanize] delay kind={kind}, seconds={seconds:.2f}")
-    time.sleep(seconds)
+    from core.task_control import sleep
+    sleep(seconds)
     return seconds

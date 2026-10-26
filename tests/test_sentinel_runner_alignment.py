@@ -1,75 +1,47 @@
 # -*- coding: utf-8 -*-
+import json
 import subprocess
 import unittest
 from unittest.mock import patch
 
-from core import sentinel_runner
+from core import sentinel_runner as runner
 
 
 class SentinelRunnerAlignmentTests(unittest.TestCase):
-    def test_password_flow_uses_auth_wrapper_sdk_and_real_screen_shape(self):
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout='{"p":"proof","c":"challenge","id":"device-id","flow":"username_password_create"}\n',
-            stderr="",
-        )
-        profile = {
-            "screen_width": 1680,
-            "screen_height": 1050,
-            "screen_avail_width": 1680,
-            "screen_avail_height": 1025,
-            "viewport_width": 1680,
-            "viewport_height": 938,
-            "color_depth": 24,
-            "hardware_concurrency": 4,
-            "webgl_vendor": "Google Inc. (Apple)",
-            "webgl_renderer": "ANGLE (Apple, Apple M2, OpenGL 4.1)",
-        }
-        with patch.object(sentinel_runner.subprocess, "run", return_value=completed) as run:
-            sentinel_runner.generate_sentinel_token(
-                challenge={"token": "challenge", "_request_p": "request-proof"},
-                flow="username_password_create",
-                device_id="device-id",
-                browser_profile=profile,
-            )
+    def test_target_executor_receives_session_profile_and_proof_over_stdin(self):
+        token = {'p': 'proof', 'c': 'challenge', 'id': 'device', 'flow': 'flow'}
+        completed = subprocess.CompletedProcess([], 0, json.dumps({'token': json.dumps(token), 'so_token': 'so'}), '')
+        profile = {'screen_width': 1680, 'screen_height': 1050,
+                   'hardware_concurrency': 4, 'navigator_platform': 'MacIntel',
+                   'navigator_vendor': '', 'timezone_iana': 'Asia/Tokyo',
+                   'navigator_language': 'ja-JP', 'navigator_languages': ['ja-JP', 'en'],
+                   'device_memory': 8, 'device_pixel_ratio': 2}
+        with patch.object(runner, '_run_node', return_value=completed) as run:
+            output = json.loads(runner.generate_sentinel_token(
+                {'token': 'challenge', '_request_p': 'bound-proof', 'so': {'required': True}},
+                'flow', 'device', browser_profile=profile, sentinel_sid='sid', cookie='oai-did=device; test=x'))
+        self.assertEqual(output['_so'], 'so')
+        self.assertEqual(len(run.call_args.args[0]), 2)
+        self.assertTrue(run.call_args.args[0][1].endswith('openai_sentinel_quickjs.js'))
+        body = json.loads(run.call_args.kwargs['input'])
+        for key, value in {'screen_width':1680, 'screen_height':1050, 'hardware_concurrency':4,
+                           'platform':'MacIntel', 'vendor':'', 'timezone':'Asia/Tokyo',
+                           'language':'ja-JP', 'languages':['ja-JP', 'en'], 'sentinel_sid':'sid',
+                           'request_p':'bound-proof', 'action':'solve', 'cookie':'oai-did=device; test=x'}.items():
+            self.assertEqual(body[key], value)
+        self.assertNotIn('_request_p', body['challenge'])
+        self.assertEqual(run.call_args.kwargs['env']['TZ'], 'Asia/Tokyo')
+        self.assertEqual(run.call_args.kwargs['env']['OPENAI_SENTINEL_SDK_FILE'], str(runner._SDK_PATH))
 
-        cmd = run.call_args.args[0]
-        values = {cmd[i]: cmd[i + 1] for i in range(0, len(cmd) - 1) if cmd[i].startswith("--")}
-        self.assertEqual(
-            values["--script-src"],
-            "https://sentinel.openai.com/backend-api/sentinel/sdk.js",
-        )
-        self.assertEqual(values["--avail-width"], "1680")
-        self.assertEqual(values["--avail-height"], "1025")
-        self.assertEqual(values["--outer-width"], "1680")
-        self.assertEqual(values["--outer-height"], "1025")
-        self.assertEqual(values["--inner-width"], "1680")
-        self.assertEqual(values["--inner-height"], "938")
-        self.assertEqual(values["--color-depth"], "24")
-        self.assertEqual(values["--cores"], "4")
-        self.assertEqual(values["--challenge-proof"], "request-proof")
-        self.assertEqual(values["--webgl-vendor"], "Google Inc. (Apple)")
-        self.assertEqual(values["--webgl-renderer"], "ANGLE (Apple, Apple M2, OpenGL 4.1)")
-
-    def test_otp_flow_uses_versioned_sdk(self):
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout='{"p":"proof","c":"challenge","id":"device-id","flow":"email_otp_validate"}\n',
-            stderr="",
-        )
-        with patch.object(sentinel_runner.subprocess, "run", return_value=completed) as run:
-            sentinel_runner.generate_sentinel_token(
-                challenge={"token": "challenge"},
-                flow="email_otp_validate",
-                device_id="device-id",
-            )
-        cmd = run.call_args.args[0]
-        index = cmd.index("--script-src")
-        self.assertEqual(
-            cmd[index + 1],
-            "https://sentinel.openai.com/sentinel/20260810913b/sdk.js",
-        )
+    def test_empty_vendor_is_not_replaced_for_firefox(self):
+        result = subprocess.CompletedProcess([], 0, '{"request_p":"proof"}', '')
+        with patch.object(runner, '_run_node', return_value=result) as run:
+            runner.generate_sentinel_requirements(flow='flow', device_id='device', sentinel_sid='sid',
+                browser_profile={'navigator_vendor':'', 'user_agent':'Firefox/140'}, sdk_path=runner._SDK_PATH)
+        body = json.loads(run.call_args.kwargs['input'])
+        self.assertEqual(body['vendor'], '')
+        self.assertEqual(body['action'], 'requirements')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     unittest.main()

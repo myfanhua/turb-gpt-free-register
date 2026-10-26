@@ -8,6 +8,7 @@ import logging
 import re
 import threading
 import time
+from core.task_control import check_stop_requested as _check_task_stop, sleep as _task_sleep
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -81,6 +82,7 @@ def _request(method, path, *, params=None, body=None, idempotency_key=None):
 def _pages(path):
     offset = 0
     while True:
+        _check_task_stop()
         rows = _request("GET", path, params={"offset": offset, "limit": 100})
         if not isinstance(rows, list):
             raise MailCodeError("MailCode 分页响应 data 不是数组")
@@ -179,6 +181,7 @@ def _prepare(account):
     """首次取码按需初始化 IMAP；READY 后才将地址交给注册流程。"""
     deadline = time.monotonic() + max(1, int(_cfg.MAILCODE_CHANNEL_WAIT_SECONDS))
     while True:
+        _check_task_stop()
         try:
             data = get_codes(account.mailbox_id)  # 不传游标取得最新水位，不读取全部历史。
         except MailCodeError as exc:
@@ -187,7 +190,7 @@ def _prepare(account):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise
-            time.sleep(min(max(5, exc.retry_after), remaining))
+            _task_sleep(min(max(5, exc.retry_after), remaining))
             continue
         account.next_sequence = _cursor(data, account.next_sequence)
         if data.get("channel_status") == "READY":
@@ -198,7 +201,7 @@ def _prepare(account):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise MailCodeError("MailCode 取码通道初始化超时；已购邮箱保留，下次领取继续初始化，不重新购买")
-        time.sleep(min(5, remaining))
+        _task_sleep(min(5, remaining))
 
 
 def _pending_path(product):
@@ -224,6 +227,7 @@ def pick_account():
         _save_pending(path, pending)  # 必须在发起扣款前保存。
         if "item" not in pending:
             for attempt in range(3):
+                _check_task_stop()
                 try:
                     data = _request("POST", "/orders", body={"product_id": product, "count": 1}, idempotency_key=pending["key"])
                     if not isinstance(data, dict) or data.get("status") != "COMPLETED" or len(data.get("items") or []) != 1:
@@ -242,7 +246,7 @@ def pick_account():
                         raise
                     if attempt == 2:
                         raise MailCodeError(f"{exc}；购买结果未确认，已保存幂等键，下次继续原请求") from exc
-                    time.sleep(max(1, exc.retry_after))
+                    _task_sleep(max(1, exc.retry_after))
         item = pending["item"]
         account = _remember(MailCodeAccount(item["email"], item["mailbox_id"], pending.get("order_id", "")))
         _prepare(account)
@@ -274,6 +278,7 @@ def _restore(email):
 
 
 def fetch_latest_otp(email, after_ts=None, max_wait=None, poll_interval=None, settle_seconds=None):
+    _check_task_stop()
     account = get_account_context(email) or _restore(str(email).strip())
     deadline = time.monotonic() + max(0, int(_cfg.OTP_MAX_WAIT if max_wait is None else max_wait))
     interval = max(5, int(_cfg.OTP_POLL_INTERVAL if poll_interval is None else poll_interval))
@@ -282,6 +287,7 @@ def fetch_latest_otp(email, after_ts=None, max_wait=None, poll_interval=None, se
     last_error = "尚无新验证码"
     with account.lock:
         while True:
+            _check_task_stop()
             delay = interval
             try:
                 data = get_codes(account.mailbox_id, account.next_sequence)
@@ -316,7 +322,7 @@ def fetch_latest_otp(email, after_ts=None, max_wait=None, poll_interval=None, se
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            time.sleep(min(delay, remaining))
+            _task_sleep(min(delay, remaining))
     if best:
         return best
     raise MailCodeError(f"等待 MailCode 验证码超时：{email}；{last_error}")

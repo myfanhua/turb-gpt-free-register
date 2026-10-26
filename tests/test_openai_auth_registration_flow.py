@@ -69,6 +69,12 @@ class _ProtocolSession:
 
 
 class OpenAIRegistrationFlowTests(unittest.TestCase):
+    def setUp(self):
+        self.sdk = patch.object(openai_auth, 'resolve_sentinel_sdk',
+                                return_value=Path(__file__).resolve().parents[1] / 'sentinel' / 'sdk.js')
+        self.sdk.start()
+        self.addCleanup(self.sdk.stop)
+
     def test_network_preflight_uses_address_bar_navigation_shape(self):
         class Session:
             def __init__(self):
@@ -224,19 +230,18 @@ class OpenAIRegistrationFlowTests(unittest.TestCase):
         session = _ProtocolSession()
         captured = []
 
-        def fake_requirements(sid, *, profile):
-            captured.append((sid, profile))
+        def fake_requirements(**kwargs):
+            captured.append((kwargs['sentinel_sid'], kwargs['browser_profile']))
             return "p-value"
 
-        with patch.object(openai_auth, "generate_requirements_token", side_effect=fake_requirements):
+        with patch.object(openai_auth, "generate_sentinel_requirements", side_effect=fake_requirements):
             openai_auth.request_sentinel_token(session, "username_password_create")
             openai_auth.request_sentinel_token(session, "email_otp_validate")
             openai_auth.request_sentinel_token(session, "oauth_create_account")
 
-        # 同一个 SDK context 会缓存同一份 p；password iframe 与 top-level
-        # 各生成一次，top-level 的两个 flow 复用。
+        # 每个业务 flow 重新执行 SDK requirements，不跨 flow 复用初始 p。
         self.assertEqual([item[0] for item in captured], [
-            "iframe-sid", "top-level-sid",
+            "iframe-sid", "top-level-sid", "top-level-sid",
         ])
         self.assertEqual(
             captured[0][1]["script_src_samples"],
@@ -257,7 +262,7 @@ class OpenAIRegistrationFlowTests(unittest.TestCase):
 
     def test_password_page_sentinel_bundle_reuses_same_iframe_p(self):
         session = _ProtocolSession()
-        with patch.object(openai_auth, "generate_requirements_token", return_value="shared-p") as generate:
+        with patch.object(openai_auth, "generate_sentinel_requirements", return_value="shared-p") as generate:
             result = openai_auth.request_password_sentinel_bundle(session)
 
         self.assertEqual(result["token"], "challenge")

@@ -56,6 +56,9 @@ def _send_sync(access_token: str) -> dict:
     """实际同步执行 HTTP POST，并返回可统计的结果。"""
     if not access_token:
         return _flow_result(status="skipped", message="access_token 为空")
+    from core.task_control import check_stop_requested
+    from core.registration_service import StopRequested
+    check_stop_requested()
 
     body = dict(_cfg.FLOW_TRIGGER_PAYLOAD)
     body["access_token"] = access_token
@@ -68,6 +71,8 @@ def _send_sync(access_token: str) -> dict:
             timeout=_cfg.FLOW_TRIGGER_TIMEOUT,
             verify=False,
         )
+    except StopRequested:
+        raise
     except Exception as exc:
         return _flow_result(status="failed", message=f"{type(exc).__name__}: {exc}")
 

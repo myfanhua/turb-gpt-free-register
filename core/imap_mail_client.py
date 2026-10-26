@@ -6,6 +6,7 @@ import email as email_lib
 import imaplib
 import logging
 import time
+from core.task_control import check_stop_requested as _check_task_stop, sleep as _task_sleep
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -170,6 +171,7 @@ def fetch_latest_otp(
     poll_interval: int | None = None,
     settle_seconds: int | None = None,
 ) -> str:
+    _check_task_stop()
     account = get_account_context(email)
     if account is None:
         raise ImapMailError(f"邮箱池中找不到 IMAP 账号: {email}")
@@ -189,6 +191,7 @@ def fetch_latest_otp(
                 email, account.server, account.port, account.use_ssl, account.mailbox, max_wait)
     try:
         while time.monotonic() < deadline:
+            _check_task_stop()
             if best_otp and settle_until is not None and time.monotonic() >= settle_until:
                 return best_otp
             rounds += 1
@@ -238,7 +241,7 @@ def fetch_latest_otp(
             if settle_until is not None:
                 delay = min(delay, max(0, settle_until - time.monotonic()))
             if delay > 0:
-                time.sleep(delay)
+                _task_sleep(delay)
     finally:
         _disconnect(mail)
 

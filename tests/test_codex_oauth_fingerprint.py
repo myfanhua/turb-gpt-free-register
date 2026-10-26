@@ -62,7 +62,7 @@ class CodexOauthFingerprintTests(unittest.TestCase):
 
     def test_auth_preflight_retries_403_in_same_session(self):
         session = _CodexSession()
-        with patch.object(codex.time, "sleep") as sleep:
+        with patch.object(codex, "_interruptible_sleep") as sleep:
             codex._codex_auth_preflight(session)
 
         self.assertEqual(len(session.calls), 2)

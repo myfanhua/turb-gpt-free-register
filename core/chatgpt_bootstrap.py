@@ -141,9 +141,8 @@ def _maybe_chat_requirements_finalize(session: BrowserSession, base: str, refere
 def anonymous_bootstrap(session: BrowserSession, *, strict: bool = False) -> None:
     """注册前匿名态登录页初始化。
 
-    2026-09-14 Web 轨迹在登录页只读取 accounts/check、CES settings、me
-    和地区定价配置；旧版的匿名 chat-requirements/models/conversation/init
-    并未发生。这里避免为“像浏览器”反而发送浏览器没有发送的额外请求。
+    仅保留 accounts/check、CES settings 和 me；不再请求匿名地区定价配置。
+    不额外发送匿名 chat-requirements/models/conversation/init 请求。
     """
     referer = "https://chatgpt.com/auth/login"
     tz = session.js_timezone_offset_min()
@@ -157,19 +156,6 @@ def anonymous_bootstrap(session: BrowserSession, *, strict: bool = False) -> Non
         headers=session.get_nextauth_headers(referer=referer),
     ), strict=strict)
     _safe_request("anon me", lambda: session.get(f"{_ANON_BASE}/me", headers=session.get_chatgpt_headers(referer=referer)), strict=strict)
-    profile = getattr(session, "browser_profile", {}) or {}
-    country = str((profile.get("geo") or {}).get("country") or "").upper()
-    if not country:
-        # GeoIP 查询失败时仍按最终浏览器 locale 取地区配置，避免 JP 画像却
-        # 完全没有加载 /checkout_pricing_config/configs/JP。
-        language = str(profile.get("navigator_language") or "")
-        if "-" in language:
-            country = language.rsplit("-", 1)[-1].upper()
-    if country:
-        _safe_request("anon pricing config", lambda: session.get(
-            f"{_ANON_BASE}/checkout_pricing_config/configs/{country}",
-            headers=session.get_chatgpt_headers(referer=referer),
-        ), strict=strict)
     if not strict:
         # best-effort 预热中的可选接口即使返回 403，也不能让本地熔断器阻断
         # 后续正式的 NextAuth 注册链路。

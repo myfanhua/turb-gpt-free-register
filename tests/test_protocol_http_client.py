@@ -98,6 +98,13 @@ class WreqIntegrationTests(unittest.TestCase):
         self.assertEqual(response.headers['location'], '/echo')
         self.assertIn('q=a+b', self.client.get(self.url + '/echo', params={'q': 'a b'}).json()['path'])
 
+    def test_host_only_response_cookie_has_the_response_scope(self):
+        response = self.client.get(self.url + '/redirect')
+        cookie = next(c for c in response.cookies if c.name == 'redirect_cookie')
+        self.assertEqual(cookie.domain, '127.0.0.1')
+        self.assertFalse(cookie.domain_specified)
+        self.assertTrue(cookie.has_nonstandard_attr('HttpOnly'))
+
     def test_form_raw_and_json_bodies(self):
         self.assertEqual(self.client.post(self.url, data={'name': 'a b'}).json()['body'], 'name=a+b')
         self.assertEqual(self.client.post(self.url, data='raw').json()['body'], 'raw')

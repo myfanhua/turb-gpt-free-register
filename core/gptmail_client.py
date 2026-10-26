@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from core.task_control import check_stop_requested as _check_task_stop, sleep as _task_sleep
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -131,6 +132,7 @@ def fetch_latest_otp(
     settle_seconds: int | None = None,
 ) -> str:
     """轮询 GPTMail，返回领取时间后最新的 OpenAI 六位验证码。"""
+    _check_task_stop()
     target = str(email or "").strip()
     if not target:
         raise GPTMailError("GPTMail 取码缺少邮箱地址")
@@ -146,6 +148,7 @@ def fetch_latest_otp(
 
     logger.info("[GPTMail] 开始轮询邮箱 %s，最长 %ss", target, wait_seconds)
     while time.monotonic() <= deadline:
+        _check_task_stop()
         try:
             data = _get("/api/emails", params={"email": target})
             emails = data.get("emails")
@@ -195,7 +198,7 @@ def fetch_latest_otp(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        time.sleep(min(interval, remaining))
+        _task_sleep(min(interval, remaining))
 
     if best_otp:
         return best_otp

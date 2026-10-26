@@ -1391,6 +1391,8 @@ function createBrowserContext(options) {
 
 async function main(argv = process.argv.slice(2), writeOutput = true) {
   const args = readArgs(argv);
+  const action = args.action || "token";
+  if (!["token", "requirements"].includes(action)) throw new Error("未知 runner action");
   if (args.help === "1" || args.h === "1") {
     const helpText = [
       "用法：",
@@ -1446,6 +1448,9 @@ async function main(argv = process.argv.slice(2), writeOutput = true) {
   }
 
   let cachedChallenge = null;
+  let capturedProof = "";
+  let resolveProof;
+  const proofReady = new Promise(resolve => { resolveProof = resolve; });
   const options = {
     flow,
     challengeProof: pick(
@@ -1532,6 +1537,12 @@ async function main(argv = process.argv.slice(2), writeOutput = true) {
         throw new Error(`未知 iframe 消息类型：${message.type}`);
       }
       const proof = message.p;
+      if (action === "requirements") {
+        if (typeof proof !== "string" || !proof) throw new Error("SDK init 未提供 proof");
+        capturedProof = proof;
+        resolveProof(proof);
+        return { cachedProof: proof, cachedChatReq: {} };
+      }
       if (challengeFile) {
         cachedChallenge ||= readChallengeFile(challengeFile);
       } else {
@@ -1597,7 +1608,23 @@ async function main(argv = process.argv.slice(2), writeOutput = true) {
       "(()=>{const __o=Cn.get(e),__p=Cn.get(r);if(!__o||!__o[__p])console.error('[dx bind missing]',typeof __o,__p,Object.prototype.toString.call(__o));return Cn.set(n,__o[__p].bind(__o))})()"
     );
   }
-  vm.runInContext(sdkCode, context, { filename: sdkPath });
+  vm.runInContext(sdkCode, context, { filename: sdkPath, timeout: 10000 });
+  if (action === "requirements") {
+    if (typeof context.SentinelSDK?.init !== "function") throw new Error("SDK 缺少 init");
+    let timer;
+    try {
+      Promise.resolve(context.SentinelSDK.init(flow)).catch(() => {});
+      await Promise.race([proofReady, new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("SDK requirements 超时")), 8000);
+      })]);
+      const output = JSON.stringify({ request_p: capturedProof });
+      if (writeOutput) process.stdout.write(`${output}\n`);
+      return output;
+    } finally {
+      clearTimeout(timer);
+      clearTimers();
+    }
+  }
   if (!context.SentinelSDK?.token) {
     throw new Error("SDK 加载后没有暴露 SentinelSDK.token");
   }
@@ -1607,6 +1634,11 @@ async function main(argv = process.argv.slice(2), writeOutput = true) {
   // SO collector 与主 token 是两条独立输出。浏览器随后调用
   // sessionObserverToken(flow)，并把结果放进 openai-sentinel-so-token。
   if (context.SentinelSDK.sessionObserverToken) {
+    if (cachedChallenge?.so?.required === true) {
+      const duration = Math.max(0, Math.min(10000, Number(args["behavior-duration-ms"] ?? 4200)));
+      if (!Number.isFinite(duration)) throw new Error("非法 SO 采集时长");
+      await collectBehavior(context, duration);
+    }
     const soText = await context.SentinelSDK.sessionObserverToken(flow);
     if (soText) {
       try {
@@ -1626,6 +1658,23 @@ async function main(argv = process.argv.slice(2), writeOutput = true) {
     process.stdout.write(`${outputText}\n`);
   }
   return outputText;
+}
+
+async function collectBehavior(context, duration) {
+  const count = Math.min(20, Math.max(1, Math.ceil(duration / 200)));
+  for (let i = 0; i < count; i++) {
+    if (duration) await new Promise(resolve => setTimeout(resolve, duration / count));
+    const event = { type: "pointermove", clientX: 300 + i * 9, clientY: 240 + i * 3,
+      screenX: 300 + i * 9, screenY: 240 + i * 3, movementX: 9, movementY: 3, buttons: 0 };
+    context.document.dispatchEvent(event);
+    context.window.dispatchEvent(event);
+  }
+  for (const event of [{ type: "click", clientX: 420, clientY: 280, button: 0 },
+    { type: "scroll" }, { type: "wheel", deltaY: 80, deltaX: 0 },
+    { type: "keydown", key: "Tab", code: "Tab", repeat: false }]) {
+    context.document.dispatchEvent(event);
+    context.window.dispatchEvent(event);
+  }
 }
 
 if (require.main === module) {

@@ -23,16 +23,58 @@ class WreqCookies:
             name, str(value), domain=domain, path=path, secure=secure, **kwargs
         ), origin)
 
+    @staticmethod
+    def _snapshot(cookies, *, host="", path="/"):
+        jar = RequestsCookieJar()
+        for cookie in cookies:
+            item = create_cookie(
+                cookie.name, cookie.value, domain=cookie.domain or host,
+                path=cookie.path or path, secure=cookie.secure,
+                expires=int(cookie.expires.timestamp()) if cookie.expires else None,
+                rest={"HttpOnly": None} if cookie.http_only else {},
+            )
+            if cookie.domain is None:
+                item.domain_specified = False
+            jar.set_cookie(item)
+        return jar
+
     @property
     def jar(self):
-        # 仅用于现有代码枚举 Cookie；原生 Jar 负责重定向中的 Cookie 更新及发送。
-        jar = RequestsCookieJar()
+        # get_all 对 host-only Cookie 不返回来源域名；此快照只用于无域枚举。
+        return self._snapshot(self.native.get_all())
+
+    def jar_for_url(self, url):
+        """按URL重建快照。Jar.get是域/路径键查找，并非HTTP可见性筛选。"""
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        request_path = parsed.path or "/"
+        # 原生get_all没有host-only来源域；仅向目标主机查询，禁止全域复制。
+        # 未显式Path的Cookie也没有default-path元数据，按请求路径祖先探测其存储键。
+        ancestors = {"/", request_path}
+        for index, char in enumerate(request_path):
+            if char == "/":
+                ancestors.update((request_path[:index] or "/", request_path[:index + 1]))
+        lookups = set()
         for cookie in self.native.get_all():
-            jar.set_cookie(create_cookie(
-                cookie.name, cookie.value, domain=cookie.domain or "",
-                path=cookie.path or "/", secure=cookie.secure,
-                expires=int(cookie.expires.timestamp()) if cookie.expires else None,
-            ))
+            domain = (cookie.domain or host).lstrip(".").lower()
+            if domain != host and not host.endswith("." + domain):
+                continue
+            paths = [cookie.path] if cookie.path else ancestors
+            for path in paths:
+                if request_path == path or (request_path.startswith(path)
+                        and (path.endswith("/") or request_path[len(path):].startswith("/"))):
+                    lookups.add((cookie.name, domain, path))
+        jar = RequestsCookieJar()
+        for name, domain, path in sorted(lookups, key=lambda item: (-len(item[2]), item)):
+            netloc = f"[{domain}]" if ":" in domain else domain
+            cookie = self.native.get(name, f"{parsed.scheme}://{netloc}{path}")
+            if cookie is None or (cookie.secure and parsed.scheme != "https"):
+                continue
+            if cookie.domain is None and domain != host:
+                continue
+            for item in self._snapshot([cookie], host=domain, path=path):
+                if not item.is_expired():
+                    jar.set_cookie(item)
         return jar
 
     def get(self, name, default=None, domain=None, path=None):
@@ -98,7 +140,7 @@ class WreqSession:
                 response._content = bytes(raw.bytes())
                 response._content_consumed = True
                 response.encoding = get_encoding_from_headers(response.headers)
-                response.cookies = self.cookies.jar
+                response.cookies = self.cookies.jar_for_url(response.url)
                 return response
         except self._wreq.TimeoutError as exc:
             raise exceptions.Timeout(str(exc)) from exc
