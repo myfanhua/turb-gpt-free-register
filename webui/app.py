@@ -2919,6 +2919,18 @@ def create_app(auth_code: str | None = None) -> Flask:
     def api_config_get():
         return jsonify(config_editor.get_config())
 
+    @app.get("/api/sms/tiger/catalog")
+    def api_tiger_sms_catalog():
+        """只读查询项目及项目下有库存的国家，不触发取号或扣费。"""
+        from core.sms_provider import get_tiger_catalog, SmsProviderError
+        try:
+            result = get_tiger_catalog(service=request.args.get("service"))
+            return jsonify({"ok": True, **result})
+        except SmsProviderError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except Exception:
+            return jsonify({"ok": False, "error": "Tiger SMS 目录查询失败，请检查网络后重试"}), 502
+
     @app.get("/api/mailcode/catalog")
     def api_mailcode_catalog():
         """使用已保存的服务配置查询商品及余额，不购买邮箱。"""

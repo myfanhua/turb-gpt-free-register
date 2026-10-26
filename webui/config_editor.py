@@ -779,7 +779,7 @@ EDITABLE_FIELDS = [
 
     {
         "key": "SMS_PROVIDER", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "接码通道", "help": "grizzly / smsbower / l / h；smsbower 使用 SMSBower handler_api，l/h 使用本地取号服务",
+        "label": "接码通道", "help": "grizzly / smsbower / tiger / l / h；tiger 使用 Tiger SMS API；smsbower 使用 SMSBower handler_api，l/h 使用本地取号服务",
     },
     {
         "key": "SMS_COUNTRY", "file": "codex.py", "type": "str", "group": "接码平台",
@@ -791,7 +791,7 @@ EDITABLE_FIELDS = [
     },
     {
         "key": "SMS_MAX_PRICE", "file": "codex.py", "type": "str", "group": "接码平台",
-        "label": "最高号码价格", "help": "透传给接码平台的 maxPrice；留空不限。SMSBower 可用它筛选价格/号码等级",
+        "label": "最高号码价格", "help": "透传给接码平台的 maxPrice；留空不限。Tiger SMS 单位 USD，必须大于0，取号严格携带上限，不自动加价；也可在 Tiger SMS 面板设置。SMSBower 可用它筛选价格/号码等级",
     },
     {
         "key": "SMS_MAX_RETRIES", "file": "codex.py", "type": "int", "group": "接码平台",
@@ -816,6 +816,15 @@ EDITABLE_FIELDS = [
     {
         "key": "SMS_API_KEY", "file": "codex.py", "type": "str", "group": "接码平台",
         "label": "GrizzlySMS API密钥", "help": "GrizzlySMS 平台 API Key，保存在 .env（SMS_API_KEY），不写回 config/*.py",
+        "storage": "env", "secret": True,
+    },
+    {
+        "key": "TIGER_SMS_API_BASE", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "Tiger SMS API 地址", "help": "默认 https://api.tiger-sms.com/stubs/handler_api.php",
+    },
+    {
+        "key": "TIGER_SMS_API_KEY", "file": "codex.py", "type": "str", "group": "接码平台",
+        "label": "Tiger SMS API密钥", "help": "Tiger SMS 控制台 API Key，保存在 .env；国家代码按 Tiger SMS 国家表填写，OpenAI/ChatGPT 服务代码为 dr",
         "storage": "env", "secret": True,
     },
     {

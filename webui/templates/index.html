@@ -6074,6 +6074,7 @@ let CONFIG_EMAIL_ACTIVE_SECTION_V2 = '通用邮箱 / OTP';
 let CONFIG_SMS_ACTIVE_SECTION_V2 = '通用接码';
 let CONFIG_CODEX_ACTIVE_SECTION_V2 = '基础配置';
 const CONFIG_PENDING_UPDATES = {};
+{% include "sms_tiger_catalog.js" %}
 
 function configGroups() {
   const groups = {};
@@ -6103,6 +6104,7 @@ function smsConfigSectionForKey(key) {
     return ['通用接码', '接码通道选择、国家/服务代码、价格、等待和重试参数；SMSBower 的 OpenAI 服务代码为 dr，openai/chatgpt 会自动转换'];
   }
   if (key === 'SMS_API_KEY') return ['GrizzlySMS', 'GrizzlySMS 平台 API Key 配置'];
+  if (key.startsWith('TIGER_SMS_')) return ['Tiger SMS', 'Tiger SMS API 地址与密钥配置；服务代码 dr，国家按平台国家表填写'];
   if (key.startsWith('SMSBOWER_')) return ['SMSBower', 'SMSBower handler_api、V2取号和供应商/价格筛选配置'];
   if (key.startsWith('H_')) return ['H 接码', 'H_API.md 本地 H 取号服务配置；项目ID/国家留空时复用通用字段'];
   if (key.startsWith('L_')) return ['L 接码', 'L_API.md 本地 L 取号服务配置'];
@@ -6450,7 +6452,7 @@ function renderConfigPlainFieldV2(f) {
     : field;
   const mailCodeTools = f.key === 'MAILCODE_PRODUCT_ID'
     ? '<div><button type="button" class="btn" onclick="loadMailCodeCatalog(this)">查询商品与余额（请先保存密钥）</button><pre style="white-space:pre-wrap" hidden></pre></div>' : '';
-  return decorated + renderConfigRecommendedLinks(f) + mailCodeTools;
+  return decorated + renderConfigRecommendedLinks(f) + mailCodeTools + (f.key === 'TIGER_SMS_API_KEY' ? renderTigerCatalogTools() : '');
 }
 function renderMixedConfigSectionV2(name, fields, intro) {
   const slug = configGroupSlug(name);
@@ -6771,7 +6773,7 @@ function renderConfigSectionV2(name, fields) {
       name,
       fields,
       smsConfigSectionForKey,
-      ['通用接码', 'GrizzlySMS', 'SMSBower', 'H 接码', 'L 接码', '其他接码配置'],
+      ['通用接码', 'GrizzlySMS', 'SMSBower', 'Tiger SMS', 'H 接码', 'L 接码', '其他接码配置'],
       { get: () => CONFIG_SMS_ACTIVE_SECTION_V2, set: v => { CONFIG_SMS_ACTIVE_SECTION_V2 = v; } },
       'sms-section-v2'
     );
@@ -6796,6 +6798,7 @@ function renderConfigLayoutV2() {
     </button>
   `).join('');
   sections.innerHTML = names.map(name => renderConfigSectionV2(name, groups[name] || [])).join('');
+  if (typeof mountTigerCatalog === 'function') mountTigerCatalog();
   renderRegistrationDriverCard();
   const sectionMount = document.getElementById('configRegistrationSelectV2');
   if (sectionMount) renderRegistrationEpSelect(sectionMount, 'configRegistrationSelectV2');
