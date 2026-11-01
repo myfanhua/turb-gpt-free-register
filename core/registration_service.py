@@ -303,6 +303,7 @@ def _run_one_job(job_id: int, log_file: str) -> None:
         return
 
     email: str | None = None
+    resume = False
     try:
         with _JobLogContext(log_file):
             from main import run_registration
@@ -374,7 +375,7 @@ def _run_one_job(job_id: int, log_file: str) -> None:
                     completed_at=datetime.now().isoformat(timespec="seconds"),
                 )
                 email_to_handle = str(result_email or email or "").strip()
-                if _should_disable_failed_registration_email(err):
+                if not resume and _should_disable_failed_registration_email(err):
                     _disable_job_email(email_to_handle, str(err))
                 else:
                     _release_unconsumed_job_email(email_to_handle, str(err))
@@ -390,7 +391,7 @@ def _run_one_job(job_id: int, log_file: str) -> None:
         )
     except Exception as exc:
         err_text = f"{type(exc).__name__}: {exc}"
-        if _should_disable_failed_registration_email(err_text):
+        if not resume and _should_disable_failed_registration_email(err_text):
             _disable_job_email(email, err_text)
         else:
             _release_unconsumed_job_email(email, err_text)

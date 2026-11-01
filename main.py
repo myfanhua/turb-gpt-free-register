@@ -766,8 +766,8 @@ def run_registration(
                         note=f"账号已废弃，邮箱不可用: {str(e)[:180]}",
                     )
                     logger.warning(f"[邮箱:{src}] {email} 账号已废弃，标记为 failed，不再重新注册")
-                elif credentials_saved or password_saved:
-                    logger.info("[注册] 已保存可恢复凭证，保留账号和邮箱状态供补跑：%s", email)
+                elif credentials_saved or password_saved or resume_registration:
+                    logger.info("[注册] 已保存可恢复凭证，保留账号和邮箱状态供继续注册/补跑：%s", email)
                 elif create_acknowledged:
                     src = release_email(
                         email, status="failed",

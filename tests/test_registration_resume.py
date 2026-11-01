@@ -65,6 +65,18 @@ class RegistrationResumeTests(unittest.TestCase):
         self.assertTrue(run.call_args.kwargs['resume_registration'])
         self.assertEqual(db.get_job(job['id'])['status'], 'success')
 
+    def test_resume_worker_does_not_disable_mailbox_for_login_failure(self):
+        job, _ = db.create_registration_resume_job(3624)
+        result = {'success': False, 'email': self.account['email'],
+                  'error': '登录失败: https://auth.openai.com/log-in/password'}
+        with patch('main.run_registration', return_value=result), \
+             patch.object(svc, '_disable_job_email') as disable:
+            svc._run_one_job(job['id'], job['log_file'])
+        disable.assert_not_called()
+        self.assertEqual(db.get_job(job['id'])['status'], 'failed')
+        self.assertTrue(db._matches_codex_status_filter(db.get_account(3624), 'password_registered'))
+        self.assertTrue(svc.get_retry_info(db.get_job(job['id']))['retryable'])
+
     def test_rejects_missing_complete_and_deactivated_accounts(self):
         self.assertEqual(svc.submit_registration_resume(999)['status'], 404)
         for field, value in [('extra_json', '{"registration_stage":"complete"}'),
@@ -142,6 +154,25 @@ class ResumeProtocolChainTests(unittest.TestCase):
     def setUp(self):
         from tests.test_protocol_registration_alignment import RegistrationChainTests
         RegistrationChainTests.setUp(self)
+
+    def test_resume_password_rejected_preserves_mailbox_and_saved_account(self):
+        import main
+        self.patches['continue_existing_login'].side_effect = RuntimeError(
+            '/api/accounts/password/verify 认证失败: status=401, code=invalid_password, flow=password_verify')
+        result = main.run_registration('a@example.com', 'Test User', '1990-01-01', resume_registration=True)
+        self.assertFalse(result['success'])
+        self.assertIn('invalid_password', result['error'])
+        self.release.assert_not_called()
+        self.patches['register_user'].assert_not_called()
+
+    def test_resume_explicit_deactivation_still_marks_mailbox_failed(self):
+        import main
+        from core.openai_auth import AccountUnusableError
+        self.patches['continue_existing_login'].side_effect = AccountUnusableError(
+            '账号已废弃', error_code='account_deactivated')
+        result = main.run_registration('a@example.com', 'Test User', '1990-01-01', resume_registration=True)
+        self.assertFalse(result['success'])
+        self.assertEqual(self.release.call_args.kwargs['status'], 'failed')
 
     def test_resume_never_registers_password_again_and_completes_about_you(self):
         import main

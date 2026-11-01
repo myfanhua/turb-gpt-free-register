@@ -165,7 +165,22 @@ def _post(session, path: str, body: dict | None, referer: str, flow: str = "") -
             headers["openai-sentinel-so-token"] = so
     kwargs = {} if body is None else {"data": json.dumps(body)}
     response = session.post(_AUTH + path, headers=headers, **kwargs)
-    return auth.parse_auth_step_response(response, path, accepted_statuses=(200, 201))
+    try:
+        return auth.parse_auth_step_response(response, path, accepted_statuses=(200, 201))
+    except auth.AccountUnusableError:
+        raise  # 保留明确的废号判断，不能降级成普通认证失败。
+    except Exception as exc:
+        if response.status_code < 400:
+            raise
+        # 仅输出结构化错误码，不打印响应体、密码或认证 Cookie。
+        raw_code = auth._extract_error_code(response)
+        code = raw_code if re.fullmatch(r"[A-Za-z0-9_.-]{1,100}", raw_code) else "unknown"
+        error = RuntimeError(
+            f"{path} 认证失败: status={response.status_code}, code={code}, flow={flow or '-'}"
+        )
+        error.response = response
+        error.error_code = code
+        raise error from exc
 
 
 def resolve_signup_step(session, email: str, landing_url: str) -> tuple[str, dict]:
@@ -255,7 +270,7 @@ def continue_existing_login(session, email: str, kind: str, data: dict) -> tuple
     if kind == "login_password" or page == "login_password" or (url and landing_step(url) == "login_password"):
         if password:
             data = _post(session, "/api/accounts/password/verify", {"password": password},
-                         _AUTH + "/log-in/password", "authorize_continue")
+                         _AUTH + "/log-in/password", "password_verify")
         else:
             data = _post(session, "/api/accounts/passwordless/send-otp", None,
                          _AUTH + "/log-in/password", "authorize_continue")
