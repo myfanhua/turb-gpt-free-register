@@ -3404,6 +3404,45 @@ def create_job(email_source: str) -> dict:
     return create_jobs(1, email_source)[0]
 
 
+def create_registration_resume_job(account_id: int, source_job_id: int | None = None) -> tuple[dict, bool]:
+    """按账号原子去重续注册任务，不从邮箱池领取新地址。"""
+    with _LOCK:
+        _ensure_sqlite()
+        with closing(_sqlite_conn()) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            account = _select_account(conn, acc_id=account_id)
+            if account is None:
+                raise LookupError("账号不存在")
+            if not _matches_codex_status_filter(account, "password_registered"):
+                raise ValueError("该账号不是已设密码但注册未完成状态")
+            if account.get("live_check_status") == "deactivated":
+                raise ValueError("账号已废号，不能继续注册")
+            active = conn.execute(
+                "SELECT payload FROM registration_jobs WHERE status IN ('pending','running','stopping') "
+                "AND json_extract(payload, '$.email') = ? ORDER BY id LIMIT 1",
+                (account['email'],),
+            ).fetchone()
+            if active:
+                return json.loads(active['payload']), False
+            source = None
+            if source_job_id is not None:
+                record = conn.execute("SELECT payload FROM registration_jobs WHERE id=?", (source_job_id,)).fetchone()
+                source = json.loads(record['payload']) if record else None
+                if not source or source.get('status') not in ('failed', 'stopped', 'cancelled'):
+                    raise ValueError("原任务不存在或尚未结束")
+            row = _new_job_row(
+                [], job_id=_allocate_job_ids(conn, 1), email_source=account.get('email_source') or '',
+                job_type='registration_resume', email=account['email'], account_id=account_id,
+                parent_job_id=source_job_id,
+                root_job_id=(source.get('root_job_id') or source['id']) if source else None,
+                retry_attempt=int(source.get('retry_attempt') or 0) + 1 if source else 0,
+                retry_action='registration_resume',
+            )
+            row['updated_at'] = datetime.now().isoformat(timespec='microseconds')
+            _insert_job_rows(conn, [row])
+            return row, True
+
+
 def _finish_jobs_in_statuses(statuses: tuple[str, ...], status: str, error: str) -> int:
     """按状态索引批量转换，SQLite 写事务保证不会取消已领取的任务。"""
     with _LOCK:
@@ -3620,7 +3659,9 @@ def get_job_retry_context(jobs: list[dict]) -> dict[int, dict]:
                 chunk = values[start:start + 400]
                 marks = ','.join('?' for _ in chunk)
                 for row in conn.execute(
-                    f"SELECT id,email,json_extract(payload, '$.codex_status') AS codex_status FROM accounts WHERE {column} IN ({marks}) ORDER BY id", chunk):
+                    f"SELECT id,email,json_extract(payload, '$.codex_status') AS codex_status, "
+                    f"json_extract(payload, '$.live_check_status') AS live_check_status, "
+                    f"json_extract(payload, '$.extra_json') AS extra_json FROM accounts WHERE {column} IN ({marks}) ORDER BY id", chunk):
                     account = dict(row)
                     accounts[int(row['id'])] = account
                     email_key = str(row['email'] or '').lower()

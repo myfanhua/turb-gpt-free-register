@@ -607,7 +607,9 @@
           </div>
           <div class="btn-group">
             <span class="btn-group-title">批量</span>
-            <button class="btn primary" id="btnSetupSelectedTotp" disabled title="给选中的账号批量开启 2FA，并在完成后写回 TOTP 密钥">批量开2FA</button>
+            <button type="button" class="btn primary" id="btnResumeSelectedRegistration" disabled title="使用原邮箱和已保存密码批量继续注册，非待注册账号自动跳过">批量继续注册</button>
+          <label title="批量继续注册的并发线程数（1-16）">续注册线程 <input id="registrationResumeWorkers" type="number" min="1" max="16" step="1" value="1" style="width:60px;"></label>
+          <button class="btn primary" id="btnSetupSelectedTotp" disabled title="给选中的账号批量开启 2FA，并在完成后写回 TOTP 密钥">批量开2FA</button>
             <button class="btn primary" id="btnChangeSelectedEmails" disabled title="为选中的账号从指定来源领取新邮箱并换绑">批量换邮箱</button>
             <button class="btn good" id="btnNoteSelectedAccounts" disabled title="给选中的账号统一设置备注，留空可清空备注">备注</button>
             <button class="btn good" id="btnCopySelectedLines" disabled title="复制选中账号的完整整行，每个账号一行">复制行</button>
@@ -1029,7 +1031,7 @@ function renderJobs() {
             <button class="good" data-submit-otp-job="${esc(j.id)}" data-email="${esc(j.email)}">提交验证码</button>
           ` : ''}
           ${['pending','running','stopping'].includes(j.status) ? `<button class="danger" data-stop-job="${esc(j.id)}">${j.status === 'stopping' ? '停止/修复' : '停止'}</button>` : ''}
-          ${j.retryable ? `<button class="good" data-retry-job="${esc(j.id)}" title="${esc(j.retry_action === 'codex' ? '账号已创建，仅补跑 Codex 授权' : '创建新的注册任务，不覆盖原任务')}">${esc(j.retry_label || '重试')}</button>` : ''}
+          ${j.retryable ? `<button class="good" data-retry-job="${esc(j.id)}" title="${esc(j.retry_action === 'codex' ? '账号已创建，仅补跑 Codex 授权' : (j.retry_label || '创建新的注册任务，不覆盖原任务'))}">${esc(j.retry_label || '重试')}</button>` : ''}
           <button class="danger" data-delete-job="${esc(j.id)}" ${['running','stopping'].includes(j.status) ? 'disabled title="运行中的任务不能删除；如需删除请先停止"' : ''}>删除</button>
         </div>
       </td>
@@ -1260,7 +1262,7 @@ async function deleteSelectedJobs() {
 async function retryJob(jobId, btn) {
   const job = JOBS.find(j => Number(j.id) === Number(jobId));
   if (!job || !job.retryable) { showToast('该任务当前不可重试'); return; }
-  const actionText = job.retry_action === 'codex' ? '仅补跑 Codex 授权' : '创建新的完整注册任务';
+  const actionText = job.retry_action === 'codex' ? '仅补跑 Codex 授权' : (job.retry_action === 'registration_resume' ? '使用原邮箱和已保存密码继续注册' : '创建新的完整注册任务');
   if (!confirm(`确定${job.retry_label || '重试'}任务 #${jobId}？\n\n${actionText}\n原任务记录和日志会保留。`)) return;
   btn.disabled = true;
   try {
@@ -1280,7 +1282,7 @@ async function retryJob(jobId, btn) {
 
 async function retrySelectedJobs() {
   const ids = Array.from(JOB_SELECTED);
-  if (!confirm(`确定重试选中的 ${ids.length} 个任务吗？\n\n后端会逐条校验；已创建账号的任务只补跑 Codex，其余任务重新入队注册，不能重试的会自动跳过。`)) return;
+  if (!confirm(`确定重试选中的 ${ids.length} 个任务吗？\n\n后端会逐条校验；注册未完成的账号用原邮箱继续注册，完整账号只补跑 Codex，其余任务重新入队注册，不能重试的会自动跳过。`)) return;
   const btn = $('#btnRetrySelectedJobs');
   btn.disabled = true;
   try {
@@ -1633,6 +1635,12 @@ function _extractLinkAction(r) {
   return `<button class="good" data-extract-link="${esc(r.id)}" title="${esc(failedReason ? '重新提链；上次失败原因：' + failedReason : '为该 free(可Plus试用) 账号创建 PIX/UPI/KAKAO_PAY/IDEAL 提链任务')}">提链</button>`;
 }
 function _codexAction(r) {
+  let extra = r.extra_json || {};
+  if (typeof extra === 'string') { try { extra = JSON.parse(extra); } catch (_) { extra = {}; } }
+  if ((r.registration_stage || (extra || {}).registration_stage) === 'password_registered') {
+    if (r.live_check_status === 'deactivated') return '';
+    return `<button class="good" data-registration-resume="${esc(r.id)}" title="使用原邮箱和已保存密码继续验证、补完资料并获取 Token">继续注册</button>`;
+  }
   const s = r.codex_status || '';
   if (s === 'retrying') {
     return `<button class="danger" data-codex-stop="${esc(r.email)}" title="停止该账号正在进行的 Codex 补跑">停止补跑</button> <button data-codex-reset-retrying="${esc(r.email)}" title="只重置状态；不会向运行线程发送停止信号">重置状态</button>`;
@@ -1719,6 +1727,8 @@ function updateAccountSelectionUi(pageRows = null) {
   if (hint) hint.textContent = `已选 ${ACCOUNT_SELECTED.size}`;
   if (bulkBtn) bulkBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (retryBulkBtn) retryBulkBtn.disabled = ACCOUNT_SELECTED.size === 0;
+  const resumeBulkBtn = $('#btnResumeSelectedRegistration');
+  if (resumeBulkBtn) resumeBulkBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (stopCodexBulkBtn) stopCodexBulkBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (downloadCpaBtn) downloadCpaBtn.disabled = ACCOUNT_SELECTED.size === 0;
   if (extractLinksBtn) extractLinksBtn.disabled = ACCOUNT_SELECTED.size === 0;
@@ -2067,6 +2077,23 @@ $('#accountsBody').addEventListener('click', async (e) => {
     return;
   }
 
+  const resumeBtn = e.target.closest('[data-registration-resume]');
+  if (resumeBtn) {
+    if (!confirm('使用该账号原邮箱和已保存密码继续注册？\n会按服务端状态完成邮箱验证、资料提交和 Token 获取，任务日志可在任务列表查看。')) return;
+    resumeBtn.disabled = true;
+    try {
+      const r = await api(`/api/accounts/${encodeURIComponent(resumeBtn.dataset.registrationResume)}/continue-registration`, {method:'POST'});
+      showToast(r.message || '已提交继续注册任务');
+      if (r.job && r.job.id) openLog(r.job.id);
+      refreshJobs();
+      loadAccounts();
+    } catch (err) {
+      showToast('继续注册失败: ' + err.message);
+      resumeBtn.disabled = false;
+    }
+    return;
+  }
+
   const btn = e.target.closest('[data-codex-retry]');
   if (!btn) return;
   const email = btn.dataset.codexRetry;
@@ -2110,6 +2137,7 @@ $('#btnNoteSelectedAccounts').addEventListener('click', noteSelectedAccounts);
 $('#btnSetupSelectedTotp').addEventListener('click', setupSelectedTotp);
 $('#btnChangeSelectedEmails').addEventListener('click', () => changeAccountEmails(Array.from(ACCOUNT_SELECTED)));
 $('#btnExtractSelectedLinks').addEventListener('click', extractSelectedLinks);
+$('#btnResumeSelectedRegistration').addEventListener('click', resumeSelectedRegistration);
 $('#btnRetrySelectedCodex').addEventListener('click', retrySelectedCodex);
 $('#btnDownloadSelectedCpa').addEventListener('click', downloadSelectedCpa);
 $('#btnStopSelectedCodex').addEventListener('click', stopSelectedCodex);
@@ -2854,6 +2882,39 @@ async function stopSelectedCodex() {
     if (retryLogEmail) pollRetryLog();
   } catch(err) {
     showToast('停止选中补跑失败: ' + err.message);
+    updateAccountSelectionUi();
+  }
+}
+
+let registrationResumeBulkSubmitting = false;
+async function resumeSelectedRegistration() {
+  if (registrationResumeBulkSubmitting) return;
+  const ids = Array.from(ACCOUNT_SELECTED);
+  if (!ids.length) { showToast('请先选择账号'); return; }
+  if (ids.length > 500) { showToast('单次最多选择 500 个账号'); return; }
+  const workersEl = $('#registrationResumeWorkers');
+  const workers = Number(workersEl?.value || 1);
+  if (!Number.isInteger(workers) || workers < 1 || workers > 16) { showToast('续注册线程必须是 1-16 的整数'); return; }
+  if (!confirm(`批量继续注册选中的 ${ids.length} 个账号？\n并发线程数：${workers}\n使用原邮箱和已保存密码，不重新领取邮箱或设置密码。\n已完成注册、已废号等账号会自动跳过，已有任务不会重复创建。`)) return;
+  const btn = $('#btnResumeSelectedRegistration');
+  registrationResumeBulkSubmitting = true;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api('/api/accounts/continue-registration-bulk', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({account_ids: ids, workers}),
+    });
+    showToast(r.message || '已提交批量继续注册');
+    const details = [...(r.skipped || []), ...(r.failed || [])];
+    if (details.length) alert((r.message || '批量继续注册结果') + '\n\n' + details.slice(0, 20).map(item => `#${item.id}: ${item.reason}`).join('\n') + (details.length > 20 ? '\n其余结果请查看任务列表。' : ''));
+    const first = (r.created || [])[0] || (r.reused || [])[0];
+    if (first && first.job_id) openLog(first.job_id);
+    refreshJobs();
+    loadAccounts();
+  } catch (err) {
+    showToast('批量继续注册失败: ' + err.message);
+  } finally {
+    registrationResumeBulkSubmitting = false;
     updateAccountSelectionUi();
   }
 }

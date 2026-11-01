@@ -206,6 +206,7 @@ def run_registration(
     otp_code: str = None,
     batch_dir=None,
     on_email_acquired: Callable[[str], None] | None = None,
+    resume_registration: bool = False,
 ):
     """
     执行 ChatGPT 密码注册；已有账号按服务端状态恢复密码/OTP/MFA 登录。
@@ -228,6 +229,10 @@ def run_registration(
     #   browser_use  = Browser Use Cloud stealth Chromium + Playwright
     #   skyvern      = Skyvern Browser Sessions + Playwright
     driver_mode = str(getattr(_roxy_cfg, "REGISTRATION_DRIVER", "protocol") or "protocol").strip().lower()
+    if resume_registration:
+        if not str(email or "").strip():
+            raise ValueError("继续注册必须指定原账号邮箱")
+        driver_mode = "protocol"
     if driver_mode in ("roxy", "roxybrowser", "fingerprint", "browser"):
         from core.roxy_registration import run_roxy_registration
         return run_roxy_registration(
@@ -377,6 +382,10 @@ def run_registration(
 
         # 按服务端落点分流；已登录/已有账号不重复 user/register。
         signup_kind, initial_step = resolve_signup_step(session, email, authorize_final_url)
+        if resume_registration and signup_kind == "new":
+            # 未验证的半成品也可能落在 email-verification；重新建立登录状态，
+            # 禁止重复 user/register 或生成新密码覆盖已保存凭证。
+            signup_kind, initial_step = "login", {}
         validate_result = None
         otp_after_ts = authorize_started_at
         if signup_kind == "new":
