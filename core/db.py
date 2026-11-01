@@ -587,7 +587,12 @@ def _account_filter_sql(
     status_expr = "lower(COALESCE(CAST(json_extract(payload, '$.codex_status') AS TEXT), ''))"
     live_status_expr = "lower(COALESCE(CAST(json_extract(payload, '$.live_check_status') AS TEXT), ''))"
     if codex and codex not in {"all", "*"}:
-        if codex == "deactivated":
+        if codex == "password_registered":
+            # extra_json 兼容 JSON 字符串和对象；历史脏值按空对象处理。
+            extra_expr = "json_extract(payload, '$.extra_json')"
+            safe_extra = f"CASE WHEN json_valid({extra_expr}) THEN {extra_expr} ELSE '{{}}' END"
+            where.append(f"json_extract({safe_extra}, '$.registration_stage') = ?")
+        elif codex == "deactivated":
             where.append(f"{live_status_expr} = ?")
         else:
             where.append(f"{status_expr} = ?")
@@ -1792,6 +1797,14 @@ def _matches_codex_status_filter(row: dict, codex_filter: str | None) -> bool:
     live_status = str(row.get("live_check_status") or "").strip().lower()
     if codex_filter in {"all", "*"}:
         return True
+    if codex_filter == "password_registered":
+        extra = row.get("extra_json")
+        if isinstance(extra, str):
+            try:
+                extra = json.loads(extra)
+            except ValueError:
+                extra = None
+        return isinstance(extra, dict) and extra.get("registration_stage") == "password_registered"
     if codex_filter == "deactivated":
         return live_status == "deactivated"
     return status == codex_filter
