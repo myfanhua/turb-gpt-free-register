@@ -9,6 +9,7 @@ import logging
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Callable
+from urllib.parse import urlparse
 
 from config import REGISTER_EMAIL, REGISTER_NAME  # 这两个一般不在 WebUI 改
 # 可热改的，按模块属性方式读
@@ -50,6 +51,7 @@ from core.protocol_registration import (
     follow_registration_callback, step_info, landing_step, recover_registration_disallowed,
     install_registration_checkpoint,
     checkpoint_registration_password,
+    saved_registration_password,
     reauthorize_registration_session,
 )
 
@@ -382,16 +384,24 @@ def run_registration(
 
         # 按服务端落点分流；已登录/已有账号不重复 user/register。
         signup_kind, initial_step = resolve_signup_step(session, email, authorize_final_url)
-        if resume_registration and signup_kind == "new":
-            # 未验证的半成品也可能落在 email-verification；重新建立登录状态，
-            # 禁止重复 user/register 或生成新密码覆盖已保存凭证。
-            signup_kind, initial_step = "login", {}
+        if resume_registration and signup_kind == "new" and needs_email_otp(initial_step):
+            # 邮箱验证落点不能证明需要重新登录，保留当前 challenge。
+            signup_kind = "existing_otp"
+        page, next_url = step_info(initial_step)
+        logger.info("[注册分流] resume=%s kind=%s page=%s path=%s",
+                    resume_registration, signup_kind, page or "-",
+                    urlparse(next_url).path if next_url else "-")
         validate_result = None
         otp_after_ts = authorize_started_at
         if signup_kind == "new":
+            if resume_registration:
+                registration_password = saved_registration_password(email)
+                if not registration_password:
+                    raise RuntimeError("继续注册缺少已保存的注册密码，停止提交以免覆盖原凭证")
             navigate_create_account_password(session, authorize_final_url)
             human_delay("navigate")
-            registration_password = generate_registration_password()
+            if not resume_registration:
+                registration_password = generate_registration_password()
             password_sentinel = request_password_sentinel_bundle(session)
             password_sentinel_header, password_so_header = build_sentinel_header(
                 session, password_sentinel, "username_password_create"

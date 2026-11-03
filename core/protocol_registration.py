@@ -243,8 +243,8 @@ def resend_registration_otp(session, *, existing: bool = False) -> None:
     auth.send_email_otp(session)
 
 
-def continue_existing_login(session, email: str, kind: str, data: dict) -> tuple[str | None, dict]:
-    """只用已保存凭证登录，不猜密码；无密码时使用服务端支持的邮箱 OTP。"""
+def saved_registration_password(email: str) -> str | None:
+    """只读取注册密码，不能把邮箱池的取件密码作为账号凭证。"""
     from core import db
     account = db.get_account_by_email(email) or {}
     extra = account.get("extra_json") or {}
@@ -256,7 +256,14 @@ def continue_existing_login(session, email: str, kind: str, data: dict) -> tuple
     extra = extra if isinstance(extra, dict) else {}
     # account.password 可能是 Outlook/邮箱池取件密码，不能提交到 ChatGPT 登录接口。
     password = extra.get("registration_password")
-    password = password if isinstance(password, str) and password else None
+    return password if isinstance(password, str) and password else None
+
+
+def continue_existing_login(session, email: str, kind: str, data: dict) -> tuple[str | None, dict]:
+    """只用已保存凭证登录，不猜密码；无密码时使用服务端支持的邮箱 OTP。"""
+    from core import db
+    account = db.get_account_by_email(email) or {}
+    password = saved_registration_password(email)
     secret = str(account.get("totp_secret") or "")
     if secret:
         session._registration_totp_secret = secret

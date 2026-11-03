@@ -157,6 +157,7 @@ class ResumeProtocolChainTests(unittest.TestCase):
 
     def test_resume_password_rejected_preserves_mailbox_and_saved_account(self):
         import main
+        self.patches['follow_authorize'].return_value = 'https://auth.openai.com/log-in/password'
         self.patches['continue_existing_login'].side_effect = RuntimeError(
             '/api/accounts/password/verify 认证失败: status=401, code=invalid_password, flow=password_verify')
         result = main.run_registration('a@example.com', 'Test User', '1990-01-01', resume_registration=True)
@@ -168,6 +169,7 @@ class ResumeProtocolChainTests(unittest.TestCase):
     def test_resume_explicit_deactivation_still_marks_mailbox_failed(self):
         import main
         from core.openai_auth import AccountUnusableError
+        self.patches['follow_authorize'].return_value = 'https://auth.openai.com/log-in/password'
         self.patches['continue_existing_login'].side_effect = AccountUnusableError(
             '账号已废弃', error_code='account_deactivated')
         result = main.run_registration('a@example.com', 'Test User', '1990-01-01', resume_registration=True)
@@ -190,3 +192,47 @@ class ResumeProtocolChainTests(unittest.TestCase):
         p['create_account'].assert_called_once()
         self.assertEqual(p['save_account_data'].call_args.kwargs['extra']['registration_stage'], 'complete')
         self.assertEqual(p['save_account_data'].call_args.kwargs['extra']['registration_password'], 'saved-password')
+
+    def test_resume_email_verification_preserves_current_challenge(self):
+        import main
+        from core import protocol_registration as flow
+        p = self.patches
+        p['continue_existing_login'].side_effect = flow.continue_existing_login
+        account = {'extra_json': json.dumps({'registration_password': 'saved-password'})}
+        with patch.object(db, 'get_account_by_email', return_value=account):
+            result = main.run_registration('a@example.com', 'Test User', '1990-01-01',
+                                           otp_code='123456', resume_registration=True)
+        self.assertTrue(result['success'])
+        self.assertEqual(p['continue_existing_login'].call_args.args[2], 'existing_otp')
+        p['BrowserSession'].return_value.post.assert_not_called()
+        p['register_user'].assert_not_called()
+        p['generate_registration_password'].assert_not_called()
+        p['validate_email_otp'].assert_called_once()
+        self.assertEqual(p['save_account_data'].call_args.kwargs['extra']['registration_password'], 'saved-password')
+
+    def test_resume_explicit_signup_reuses_saved_password(self):
+        import main
+        p = self.patches
+        p['follow_authorize'].return_value = 'https://auth.openai.com/create-account/password'
+        account = {'extra_json': json.dumps({'registration_password': 'saved-password'})}
+        with patch.object(db, 'get_account_by_email', return_value=account):
+            result = main.run_registration('a@example.com', 'Test User', '1990-01-01',
+                                           otp_code='123456', resume_registration=True)
+        self.assertTrue(result['success'])
+        self.assertEqual(p['register_user'].call_args.args[2], 'saved-password')
+        p['generate_registration_password'].assert_not_called()
+        p['continue_existing_login'].assert_not_called()
+        p['checkpoint_registration_password'].assert_called_once()
+
+    def test_resume_explicit_signup_without_password_stops_before_submit(self):
+        import main
+        p = self.patches
+        p['follow_authorize'].return_value = 'https://auth.openai.com/create-account/password'
+        with patch.object(db, 'get_account_by_email', return_value={'password': 'mailbox-password'}):
+            result = main.run_registration('a@example.com', 'Test User', '1990-01-01',
+                                           otp_code='123456', resume_registration=True)
+        self.assertFalse(result['success'])
+        self.assertIn('缺少已保存的注册密码', result['error'])
+        p['register_user'].assert_not_called()
+        p['generate_registration_password'].assert_not_called()
+        self.release.assert_not_called()
