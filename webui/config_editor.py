@@ -825,6 +825,8 @@ EDITABLE_FIELDS = [
     {
         "key": "TIGER_SMS_API_KEY", "file": "codex.py", "type": "str", "group": "接码平台",
         "label": "Tiger SMS API密钥", "help": "Tiger SMS 控制台 API Key，保存在 .env；国家代码按 Tiger SMS 国家表填写，OpenAI/ChatGPT 服务代码为 dr",
+        "external_url": "https://tiger-sms.com/r/7v3xsfzh",
+        "external_label": "打开官网",
         "storage": "env", "secret": True,
     },
     {
